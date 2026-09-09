@@ -1,0 +1,16 @@
+# NOTICE
+
+Neiro downloads model weights at runtime — none are vendored in this repository.
+This file is updated by `neiro licences` and lists every model in use, its
+source, and its licence. Nothing here has been fetched yet (Stage 0 in
+progress); entries are added as `modelspec.py` gains them.
+
+Allowed licence set for anything this project depends on or ships:
+Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, CC0-1.0, CC-BY-4.0.
+
+| Component | Source | Licence | Notes |
+|---|---|---|---|
+| (none fetched yet) | | | |
+
+See also `ASSETS.md` for the avatar's separate licence (VRoid-derived
+assets are not covered by this repo's Apache-2.0 licence).

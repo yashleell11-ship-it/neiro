@@ -1,0 +1,31 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# editor / local tooling
+.claude/
+.vscode/
+.idea/
+
+# models and generated weights — never vendored, see modelspec.py
+*.gguf
+*.onnx
+!tests/audio/fixtures/*.onnx
+
+# raw voice recordings — biometric, never leaves the machine
+data/voice/**/*.wav
+data/voice/**/*.flac
+
+# avatar binaries (fetched by `neiro fetch-models`, see ASSETS.md)
+web/public/avatar/
+
+# web build
+web/node_modules/
+web/dist/
+
+# local state / logs
+/tmp/neiro-*.wav
+*.log
