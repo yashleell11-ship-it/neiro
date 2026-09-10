@@ -12,6 +12,9 @@ dependencies = [
     "rich>=14",
     "pydantic>=2.11",
     "pydantic-settings>=2.7",
+    "faster-whisper==1.2.1",
+    "ctranslate2>=4.7.0",
+    "nvidia-cublas-cu12>=12.9.2.10",
 ]
 
 [project.scripts]
