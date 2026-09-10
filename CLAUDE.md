@@ -81,9 +81,12 @@ detail: `docs/CORRECTIONS.md` (what changed and why) and
     `@anthropic.com` author. This is a standing instruction, not a
     per-session choice.
 
-11. **Commit every small working step, and push each sitting.** One
-    commit per task or sub-step that leaves the tree working — a
-    scaffold, a contract file, a passing test, a gate verdict in
-    `docs/DECISIONS.md`. Never batch an evening into one commit. Push to
-    the default branch: that is what the contribution graph counts, and
-    the graph is part of why this repo is public.
+11. **Commit every small working step, and `git push` after every single
+    commit** — not each sitting, every commit. One commit per task or
+    sub-step that leaves the tree working — a scaffold, a contract file,
+    a passing test, a gate verdict in `docs/DECISIONS.md`. Never batch
+    an evening into one commit, and never leave a commit sitting local.
+    Remote: `origin` → github.com/yashleell11-ship-it/neiro, public,
+    default branch `master`. Only pushed commits on `master` count
+    toward the contribution graph, which is part of why this repo is
+    public.
