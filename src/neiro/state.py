@@ -67,7 +67,7 @@ class NeiroState:
     arousal: float = 0.0
 
     @classmethod
-    def from_label(cls, label: EmotionLabel, intensity: float) -> "NeiroState":
+    def from_label(cls, label: EmotionLabel, intensity: float) -> NeiroState:
         v, a = _VALENCE_AROUSAL[label]
         return cls(label=label, intensity=intensity, valence=v, arousal=a)
 
@@ -157,5 +157,5 @@ class Turn:
         self.timeline[name] = time.perf_counter()
 
     @classmethod
-    def new(cls, turn_id: int = 0) -> "Turn":
+    def new(cls, turn_id: int = 0) -> Turn:
         return cls(id=turn_id)

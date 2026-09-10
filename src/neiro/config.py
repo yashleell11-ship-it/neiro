@@ -10,7 +10,12 @@ silently ignoring stale keys.
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 
 class AudioDeviceProfile(BaseModel):
@@ -70,3 +75,25 @@ class Neiro(BaseSettings):
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     affect: AffectConfig = Field(default_factory=AffectConfig)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Without this, `toml_file` in model_config is inert — pydantic-settings
+        # warns "Config key `toml_file` is set ... but will be ignored" and
+        # `neiro doctor` never actually reads ~/.config/neiro/config.toml,
+        # which is exactly why Task 0's "audio device profiles named" check
+        # kept failing even after config.toml was written by hand.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )

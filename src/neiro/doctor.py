@@ -29,7 +29,7 @@ class Check:
 
 def _run(cmd: list[str]) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5, check=False).stdout
     except FileNotFoundError:
         return ""
 
@@ -97,9 +97,12 @@ def audio_inventory() -> int:
 
     console.print(
         "\n[bold]Next step:[/bold] copy the exact node names above into "
-        "~/.config/neiro/config.toml under [audio.profiles.earbuds] and "
-        "[audio.profiles.speakers], then set active_profile. Never leave a "
-        "profile pointed at 'default' — see config.py's AudioDeviceProfile."
+        r"~/.config/neiro/config.toml under \[audio.profiles.earbuds] and "
+        r"\[audio.profiles.speakers], then set active_profile under \[audio] "
+        r"itself — a bare active_profile = ... line placed after a "
+        r"\[audio.profiles.*] table header attaches to THAT table, not "
+        r"\[audio] (a real TOML footgun, not just a style note). Never leave "
+        "a profile pointed at 'default' — see config.py's AudioDeviceProfile."
     )
     return 0
 
@@ -129,7 +132,11 @@ def run_doctor(audio_inventory_only: bool = False) -> int:
     try:
         cfg = Neiro()
         has_profiles = bool(cfg.audio.active_profile) and bool(cfg.audio.profiles)
-    except Exception:
+    except Exception:  # noqa: BLE001 — a preflight check must report a red
+        # row, never crash the doctor command itself. A malformed
+        # config.toml can fail in several ways (TOML parse error, a
+        # pydantic ValidationError on a bad type, a permissions OSError);
+        # all of them mean the same thing here: "not configured yet".
         has_profiles = False
     checks.append(
         Check(
@@ -141,7 +148,6 @@ def run_doctor(audio_inventory_only: bool = False) -> int:
     )
 
     # mute state (only meaningful once a profile is set — otherwise informational)
-    defaults = _defaults()
     vol_out = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
     vol_in = _run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"])
     sink_muted = "MUTED" in vol_out

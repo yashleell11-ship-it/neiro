@@ -7,7 +7,20 @@ from __future__ import annotations
 
 import typer
 
-app = typer.Typer(add_completion=False, help="Neiro — an anime character who lives on your machine.")
+app = typer.Typer(
+    add_completion=False, help="Neiro — an anime character who lives on your machine."
+)
+
+
+@app.callback()
+def _main() -> None:
+    """Neiro — an anime character who lives on your machine.
+
+    A no-op callback. Without it, Typer collapses a single-command app so
+    `neiro doctor` fails with "unexpected extra argument (doctor)" — this
+    keeps `doctor` (and every command added in later stages) addressable
+    by name.
+    """
 
 
 @app.command()
