@@ -37,6 +37,12 @@ class AudioConfig(BaseModel):
     input_blocksize: int = 512  # exactly one 32 ms Silero window @16 kHz
     output_samplerate: int = 24000
     output_blocksize: int = 240  # 10 ms @24 kHz
+    pre_roll_s: float = 0.3  # Task 4: audio already in the ring before you
+    # press the key, prepended so the first syllable is never clipped
+    ring_buffer_seconds: float = 2.0  # Task 4's terminal PTT only needs a
+    # couple of seconds of pre-roll headroom; Stage 1's real endpointer
+    # widens this — see docs/ARCHITECTURE.md's "30s ring, Whisper needs
+    # the whole utterance" note
 
 
 class SttConfig(BaseModel):

@@ -113,5 +113,20 @@ def mic_test(
     )
 
 
+@app.command()
+def ptt() -> None:
+    """Stage 0 Task 4: push-to-talk in the terminal. SPACE to start/stop
+    recording, q to quit — writes each recording to /tmp/neiro-last.wav.
+
+    The system-wide version (a Hyprland keybind, no terminal needed) is
+    Task 11. This one exists so the loop can be proven before adding a
+    compositor bind, a socket, and a compiled helper on top of it.
+    """
+    from neiro.audio.ptt import run as run_ptt
+    from neiro.config import Neiro
+
+    raise typer.Exit(code=run_ptt(Neiro()))
+
+
 if __name__ == "__main__":
     app()
