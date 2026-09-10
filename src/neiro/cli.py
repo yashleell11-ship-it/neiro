@@ -114,6 +114,57 @@ def mic_test(
 
 
 @app.command()
+def stt(
+    wav_path: str = typer.Argument(..., help="WAV file to transcribe, e.g. /tmp/neiro-last.wav"),
+) -> None:
+    """Stage 0 Task 5: transcribe a WAV file with faster-whisper, print
+    the result and how long it took.
+
+    Composes with `neiro ptt`: record with ptt, transcribe the result
+    with `neiro stt /tmp/neiro-last.wav`.
+    """
+    import asyncio
+    import time
+
+    import soundfile as sf
+    from rich.console import Console
+
+    from neiro.config import Neiro
+    from neiro.stt.faster_whisper import FasterWhisperStt
+
+    console = Console()
+    cfg = Neiro()
+
+    audio, sr = sf.read(wav_path, dtype="float32")
+    if audio.ndim > 1:
+        audio = audio[:, 0]
+    if sr != cfg.audio.input_samplerate:
+        console.print(
+            f"[yellow]Warning:[/yellow] '{wav_path}' is {sr} Hz, STT expects "
+            f"{cfg.audio.input_samplerate} Hz — no resampling is applied here, "
+            "the transcript may be affected."
+        )
+
+    engine = FasterWhisperStt(cfg)
+    try:
+        t0 = time.perf_counter()
+        text = asyncio.run(engine.transcribe(audio))
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+    if text:
+        console.print(f"[bold]{text}[/bold]")
+    else:
+        console.print(
+            "[yellow]didn't catch that[/yellow] "
+            "(silence, low confidence, or a known hallucination — see stt/faster_whisper.py)"
+        )
+    console.print(f"({elapsed_ms:.0f} ms)")
+
+
+@app.command()
 def ptt() -> None:
     """Stage 0 Task 4: push-to-talk in the terminal. SPACE to start/stop
     recording, q to quit — writes each recording to /tmp/neiro-last.wav.
