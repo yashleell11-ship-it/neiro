@@ -1,0 +1,50 @@
+# Neiro's TRAINING environment — deliberately a separate uv project from
+# the runtime at the repo root.
+#
+# Why separate: the runtime venv must never contain CUDA torch. ctranslate2
+# (STT) loads cuBLAS 12 via LD_LIBRARY_PATH and Kokoro uses CPU-index
+# torch precisely so there is no CUDA-12/13 coexistence problem on the
+# machine that has to answer in under a second. Training is the opposite
+# trade: it wants CUDA torch, transformers, peft, and doesn't care about
+# startup time. Two venvs, zero shared CUDA surface.
+#
+# Same file works on the 3090 Ti box (Windows) — uv sync there too. On
+# Windows, PyPI torch is CPU-only, so uncomment the cu130 index block
+# below before syncing on the box.
+#
+#   cd training && uv sync
+#   uv run python -c "import torch; print(torch.cuda.get_device_name())"
+
+[project]
+name = "neiro-training"
+version = "0.0.1"
+description = "Fine-tuning recipes for Neiro's STT, SER, TTS, LLM persona, wake word, and endpointer"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "neiro-voice",              # the dataset manifest + state contracts, editable from ../
+  "torch>=2.8",
+  "torchaudio",
+  "transformers>=4.50",
+  "datasets>=3.0",
+  "peft>=0.15",
+  "accelerate",
+  "jiwer",                    # WER, same definition as evals/wer.py
+  "soundfile",
+  "librosa",
+  "scikit-learn",
+  "huggingface-hub",
+]
+
+[tool.uv.sources]
+neiro-voice = { path = "..", editable = true }
+# --- Windows (3090 Ti box): PyPI torch is CPU-only there. Uncomment: ---
+# torch = { index = "pytorch-cu130" }
+# torchaudio = { index = "pytorch-cu130" }
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu130"
+# url = "https://download.pytorch.org/whl/cu130"
+# explicit = true
+
+[tool.uv]
+package = false
