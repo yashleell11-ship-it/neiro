@@ -164,6 +164,121 @@ def stt(
     console.print(f"({elapsed_ms:.0f} ms)")
 
 
+@app.command(name="record-set")
+def record_set(
+    name: str = typer.Option("wer", "--name", help="Dataset name, e.g. 'wer' or 'emotion'."),
+    count: int = typer.Option(30, "--count", help="How many takes to record in total."),
+) -> None:
+    """Stage 0 Task 6: record an evaluation set in your own voice.
+
+    Prompts for the reference transcript before each take, so it's
+    captured while you still remember what you said. Resumes where it
+    left off if you stop partway. Raw WAVs are gitignored (voice is
+    biometric); only refs.jsonl is committed.
+    """
+    from neiro.config import Neiro
+    from neiro.recordset import run as run_record_set
+
+    raise typer.Exit(code=run_record_set(name=name, count=count, cfg=Neiro()))
+
+
+@app.command()
+def wer(
+    name: str = typer.Option("wer", "--name", help="Dataset name under data/voice/."),
+) -> None:
+    """Stage 0 Gate G3a: score the current STT against your own voice.
+
+    Every STT swap for the life of this project gets scored against this
+    same set — it is the only ground truth that will ever exist for how
+    the model performs on *your* voice, in *your* room, on *your* mic.
+    """
+    import asyncio
+    import time
+    from pathlib import Path
+
+    import soundfile as sf
+    from rich.console import Console
+    from rich.table import Table
+
+    from neiro.config import Neiro
+    from neiro.evals.wer import load_references, score
+    from neiro.recordset import DATA_ROOT
+    from neiro.stt.faster_whisper import FasterWhisperStt
+
+    console = Console()
+    cfg = Neiro()
+
+    refs_path = Path(DATA_ROOT) / name / "refs.jsonl"
+    if not refs_path.exists():
+        console.print(
+            f"[red]No dataset at {refs_path}[/red]\n"
+            f"Record one first:  neiro record-set --name {name} --count 30"
+        )
+        raise typer.Exit(code=1)
+
+    entries = load_references(refs_path)
+    console.print(f"Scoring [bold]{len(entries)}[/bold] utterances from {refs_path}\n")
+
+    engine = FasterWhisperStt(cfg)
+    try:
+        warm_s = engine.warm()
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"(model warmed in {warm_s:.1f}s)\n")
+
+    pairs = []
+    total_ms = 0.0
+    for entry in entries:
+        wav_path = refs_path.parent / entry["file"]
+        if not wav_path.exists():
+            console.print(f"[yellow]missing {wav_path}, skipping[/yellow]")
+            continue
+        audio, file_sr = sf.read(wav_path, dtype="float32")
+        if audio.ndim > 1:
+            audio = audio[:, 0]
+        if file_sr != cfg.audio.input_samplerate:
+            # Would silently produce garbage transcripts and a garbage
+            # WER — loud is better than a quietly wrong number.
+            console.print(
+                f"[red]{entry['file']} is {file_sr} Hz, expected "
+                f"{cfg.audio.input_samplerate} Hz — skipping rather than "
+                "reporting a wrong score.[/red]"
+            )
+            continue
+        t0 = time.perf_counter()
+        hypothesis = asyncio.run(engine.transcribe(audio))
+        total_ms += (time.perf_counter() - t0) * 1000
+        pairs.append((entry["file"], entry["reference"], hypothesis))
+
+    if not pairs:
+        console.print("[red]No audio files found to score.[/red]")
+        raise typer.Exit(code=1)
+
+    result = score(pairs)
+
+    table = Table(title=f"WER — {cfg.stt.model_id}")
+    table.add_column("file")
+    table.add_column("WER", justify="right")
+    table.add_column("reference")
+    table.add_column("heard")
+    for u in result.utterances:
+        colour = "green" if u.wer == 0 else ("yellow" if u.wer < 0.3 else "red")
+        heard = u.hypothesis or "[dim](rejected)[/dim]"
+        table.add_row(u.name, f"[{colour}]{u.wer:.1%}[/{colour}]", u.reference, heard)
+    console.print(table)
+
+    console.print(
+        f"\n[bold]Corpus WER: {result.wer:.2%}[/bold] "
+        f"({result.total_errors} errors / {result.total_ref_words} reference words)"
+    )
+    console.print(f"Mean transcribe time: {total_ms / len(pairs):.0f} ms per utterance")
+    console.print(
+        "\nUnder ~10% is fine. Over ~15% means mic gain or room, not the model — "
+        "check the peak levels in refs.jsonl before blaming the STT."
+    )
+
+
 @app.command()
 def ptt() -> None:
     """Stage 0 Task 4: push-to-talk in the terminal. SPACE to start/stop
