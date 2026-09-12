@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import typer
 
 app = typer.Typer(
@@ -296,3 +298,91 @@ def ptt() -> None:
 
 if __name__ == "__main__":
     app()
+
+
+@app.command(name="fetch-models")
+def fetch_models(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the plan with real sizes read from the Hub; download nothing.",
+    ),
+    purpose: str = typer.Option(
+        None,
+        "--purpose",
+        help="'runtime' (loaded to answer a turn) or 'training' (fine-tunable safetensors).",
+    ),
+    runs: str = typer.Option(
+        None,
+        "--runs",
+        help="'local' (the machine you're sitting at) or 'box' (the 3090 Ti). Models marked 'both' are always included.",
+    ),
+    component: str = typer.Option(
+        None, "--component", help="llm / stt / tts / vad / turn / ser / avatar."
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-fetch even if already marked complete."),
+    only: Annotated[
+        list[str] | None,
+        typer.Option("--only", help="Model name(s) from modelspec.py. Repeatable."),
+    ] = None,
+) -> None:
+    """Download the models in `modelspec.py`, resumably.
+
+    Start with `--dry-run` — it asks the Hub for the real byte count of
+    exactly the files each spec would pull, which is how the recorded
+    sizes get corrected when a repo changes under us.
+    """
+    import sys
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "scripts"))
+    from fetch_models import main as fetch_main
+
+    argv: list[str] = []
+    if dry_run:
+        argv.append("--dry-run")
+    if force:
+        argv.append("--force")
+    for flag, value in (("--purpose", purpose), ("--runs", runs), ("--component", component)):
+        if value:
+            argv += [flag, value]
+    for name in only or []:
+        argv += ["--only", name]
+    raise typer.Exit(code=fetch_main(argv))
+
+
+@app.command(name="fetch-datasets")
+def fetch_datasets(
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the plan and totals; download nothing."
+    ),
+    tier: int = typer.Option(
+        1, "--tier", help="Priority ceiling: 1 essentials (default), 2, or 3 for everything."
+    ),
+    target: str = typer.Option(None, "--target", help="One training target, e.g. 'tts_voice'."),
+    force: bool = typer.Option(False, "--force", help="Re-fetch even if already marked complete."),
+    only: Annotated[
+        list[str] | None,
+        typer.Option("--only", help="Dataset name(s) from data/datasets.toml. Repeatable."),
+    ] = None,
+) -> None:
+    """Download the training datasets in `data/datasets.toml`.
+
+    Gated datasets are never fetched silently: the run ends by printing
+    the exact URL where each one's terms must be accepted, because that
+    acceptance is a licence decision a person makes, not a script.
+    """
+    import sys
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "scripts"))
+    from fetch_datasets import main as fetch_main
+
+    argv: list[str] = ["--tier", str(tier)]
+    if dry_run:
+        argv.append("--dry-run")
+    if force:
+        argv.append("--force")
+    if target:
+        argv += ["--target", target]
+    for name in only or []:
+        argv += ["--only", name]
+    raise typer.Exit(code=fetch_main(argv))
