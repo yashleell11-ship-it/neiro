@@ -1,0 +1,11 @@
+# Neiro's training-data manifest. Read by scripts/fetch_datasets.py and
+# validated by src/neiro/training/manifest.py — a licence flag that
+# contradicts weights_publishable is a load error, on purpose.
+#
+# priority: 1 essential, 2 good, 3 optional
+# flags: permissive | NC | ND | SA | research-only | request-required | gated | unclear
+# weights_publishable: can a model trained on this be released under Apache-2.0
+#
+# Raw data lands in data/datasets/<name>/ (gitignored).
+
+schema_version = 1

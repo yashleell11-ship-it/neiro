@@ -29,3 +29,6 @@ web/dist/
 # local state / logs
 /tmp/neiro-*.wav
 *.log
+
+# training datasets — large, and other people's voices; the manifest (data/datasets.toml) is what's committed
+data/datasets/
