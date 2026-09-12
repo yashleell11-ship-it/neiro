@@ -9,13 +9,16 @@ reasoning block slipping through despite being disabled.
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import pytest
 
 from neiro.llm.openai_compat import (
     StreamAccumulator,
     ThinkingModeError,
+    check_delta_not_thinking,
     check_not_thinking,
+    check_produced_words,
     parse_sse_line,
 )
 
@@ -120,7 +123,7 @@ class TestThinkingModeDetection:
         check_not_thinking("Hey, you sound tired.")  # must not raise
 
     def test_think_block_raises_loudly(self) -> None:
-        with pytest.raises(ThinkingModeError, match="latency budget"):
+        with pytest.raises(ThinkingModeError, match="verify with curl"):
             check_not_thinking("<think>The user is asking about...")
 
     def test_leading_whitespace_does_not_hide_it(self) -> None:
@@ -170,3 +173,76 @@ class TestBuildRequest:
     def test_body_is_json_serialisable(self) -> None:
         body = self._client().build_request([{"role": "user", "content": "hi"}])
         json.dumps(body)  # must not raise
+
+
+class TestOutOfBandReasoning:
+    """The failure mode measured against a real server on 2026-09-13.
+
+    ollama 0.33.2 serving Qwen3.5-4B-Q4_K_M on /v1/chat/completions puts
+    reasoning in `delta.reasoning` and leaves `delta.content` as "" for
+    the whole stream. Both documented disable switches (`think: false`
+    and `chat_template_kwargs.enable_thinking: false`) were accepted and
+    ignored; only ollama's native /api/chat honoured it.
+
+    The text-only guard never fires on this, so the turn burns its whole
+    budget and produces nothing, with no error. These tests pin the
+    three checks that do catch it.
+    """
+
+    # Verbatim from the observed stream.
+    REAL_DELTA: ClassVar[dict] = {"role": "assistant", "content": "", "reasoning": "Thinking"}
+
+    def test_the_real_observed_delta_is_caught(self) -> None:
+        with pytest.raises(ThinkingModeError, match="delta.reasoning"):
+            check_delta_not_thinking(self.REAL_DELTA)
+
+    def test_the_old_text_only_guard_would_have_missed_it(self) -> None:
+        # This is why the delta-level check exists: the content is empty,
+        # so the <think> sniff passes happily while the budget drains.
+        check_not_thinking(self.REAL_DELTA["content"])  # must NOT raise
+
+    def test_reasoning_content_spelling_is_caught_too(self) -> None:
+        # vLLM and several OpenAI-compatible proxies use this name.
+        with pytest.raises(ThinkingModeError, match="delta.reasoning_content"):
+            check_delta_not_thinking({"content": "", "reasoning_content": "Let me"})
+
+    def test_a_normal_delta_passes(self) -> None:
+        check_delta_not_thinking({"content": "Hey, "})
+        check_delta_not_thinking({})
+        check_delta_not_thinking({"content": "", "reasoning": ""})
+
+    def test_reasoning_is_counted_but_never_spoken(self) -> None:
+        # It must not reach the chunker or the TTS, but the size of it is
+        # the number that diagnoses a silent stall.
+        acc = StreamAccumulator()
+        acc.add_delta({"content": "", "reasoning": "Thinking Process:"})
+        acc.add_delta({"content": "", "reasoning_content": "1. Analyze"})
+        assert acc.text == ""
+        assert acc.reasoning_chars == len("Thinking Process:") + len("1. Analyze")
+
+    def test_a_stream_that_said_nothing_is_an_error(self) -> None:
+        # Last line of defence: some backend will one day hide reasoning
+        # under a field name not in REASONING_FIELDS. A turn that spent a
+        # budget and produced no words is that bug, whatever it is called.
+        acc = StreamAccumulator()
+        acc.add_delta({"content": "", "reasoning": "a" * 500})
+        with pytest.raises(ThinkingModeError, match="no speakable text"):
+            check_produced_words(acc)
+
+    def test_whitespace_only_output_counts_as_nothing_said(self) -> None:
+        acc = StreamAccumulator()
+        acc.add_delta({"content": "   \n ", "reasoning": "x"})
+        with pytest.raises(ThinkingModeError):
+            check_produced_words(acc)
+
+    def test_a_real_reply_passes_even_if_it_reasoned_first(self) -> None:
+        # If a backend reasons AND speaks, the delta check has already
+        # fired; this final check must not double-report on a good turn.
+        acc = StreamAccumulator()
+        acc.add_delta({"content": "<e:happy:7> Yeah, it's running."})
+        check_produced_words(acc)
+
+    def test_an_empty_stream_with_no_reasoning_is_not_this_bug(self) -> None:
+        # An empty reply with no hidden reasoning is a different problem
+        # (model returned nothing) and must not be misdiagnosed as one.
+        check_produced_words(StreamAccumulator())

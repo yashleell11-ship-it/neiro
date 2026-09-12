@@ -13,14 +13,32 @@ Two things this handles that a naive SSE reader gets wrong:
     gets you a JSONDecodeError on `{"na`. The accumulator exists from
     Stage 0 and stays inert until Stage 3 adds tools.
 
-  - **Thinking mode.** Every current Qwen3.5/3.6 checkpoint reasons by
-    default and will emit a `<think>` block of up to tens of thousands
-    of tokens before the first speakable word — which on a voice
-    assistant is the entire latency budget spent before she says
-    anything. Two llama.cpp issues report the documented disable switch
-    being silently ignored, both closed without a fix, so this asserts
-    rather than trusts: `strip_thinking` drops any turn whose opening
-    characters contain `<think` and says so loudly.
+  - **Thinking mode, and the way it actually fails here.** Every current
+    Qwen3.5/3.6 checkpoint reasons by default and will emit tens of
+    thousands of reasoning tokens before the first speakable word —
+    which on a voice assistant is the entire latency budget spent before
+    she says anything.
+
+    Measured against a real server on 2026-09-13 (ollama 0.33.2 serving
+    Qwen3.5-4B-Q4_K_M), and it is worse than the plan assumed. On
+    `/v1/chat/completions` the reasoning does **not** arrive as a
+    `<think>` tag in the content at all: it goes into a separate
+    `delta.reasoning` field while `delta.content` stays `""` for the
+    whole stream. So a client that reads only `content` — and a guard
+    that looks for `"<think"` in the text — sees a perfectly well-formed
+    stream that produces no words, burns the entire `max_tokens` budget,
+    and raises nothing. Silent failure with no error, which is the exact
+    class of bug this project exists to design out.
+
+    Worse, on that endpoint **neither** documented switch works:
+    `think: false` and `chat_template_kwargs.enable_thinking: false`
+    were both accepted and both ignored. Only ollama's native
+    `/api/chat` with `think: false` actually suppressed it.
+
+    So `check_not_thinking` takes the whole delta, not just the text,
+    and fails on three separate signatures: a `<think` opener in the
+    content, a populated reasoning field, and a stream that produced
+    reasoning but no content at all.
 """
 
 from __future__ import annotations
@@ -39,6 +57,21 @@ from neiro.state import Locality, ToolCall
 # swallow a real reply.
 THINK_SNIFF_CHARS = 32
 
+# Field names backends use for out-of-band reasoning on an otherwise
+# OpenAI-shaped delta. ollama 0.33 uses "reasoning"; vLLM and several
+# OpenAI-compatible proxies use "reasoning_content". Both mean the same
+# thing: tokens are being spent somewhere the caller cannot see.
+REASONING_FIELDS = ("reasoning", "reasoning_content")
+
+_DIAGNOSIS = (
+    "Verified on this machine 2026-09-13: ollama's /v1/chat/completions ignores "
+    "BOTH `think: false` and `chat_template_kwargs.enable_thinking: false`, and "
+    "hides the reasoning in `delta.reasoning` while `delta.content` stays empty. "
+    "Only ollama's native /api/chat with `think: false` suppressed it. For "
+    "llama-server use `--reasoning-budget 0 --reasoning-format none`. Whatever "
+    "the backend, verify with curl before trusting it."
+)
+
 
 class ThinkingModeError(RuntimeError):
     """Raised when a model emits a reasoning block despite being told not
@@ -53,13 +86,24 @@ class StreamAccumulator:
 
     text: str = ""
     finish_reason: str | None = None
+    reasoning_chars: int = 0  # tokens spent where the caller cannot see them
     _tool_fragments: dict[int, dict] = field(default_factory=dict, repr=False)
 
     def add_delta(self, delta: dict) -> str:
-        """Apply one `choices[0].delta`; return newly added text."""
+        """Apply one `choices[0].delta`; return newly added text.
+
+        Reasoning is counted, never concatenated into `text` — it must
+        not reach the chunker or the TTS, but "how much was spent
+        invisibly" is the number that diagnoses a silent stall.
+        """
         added = delta.get("content") or ""
         if added:
             self.text += added
+
+        for key in REASONING_FIELDS:
+            hidden = delta.get(key)
+            if hidden:
+                self.reasoning_chars += len(hidden)
 
         for fragment in delta.get("tool_calls") or []:
             index = fragment.get("index", 0)
@@ -115,16 +159,49 @@ def parse_sse_line(line: str) -> dict | None:
         return None
 
 
+def check_delta_not_thinking(delta: dict) -> None:
+    """Raise if a single delta carries out-of-band reasoning.
+
+    This is the check that catches the real-world failure: the content
+    field stays empty and legal-looking while the budget drains into
+    `delta.reasoning`. Checking the text alone never fires here.
+    """
+    for key in REASONING_FIELDS:
+        if delta.get(key):
+            raise ThinkingModeError(
+                f"The model is streaming reasoning in `delta.{key}` while "
+                "`delta.content` stays empty — the entire token budget is being "
+                f"spent before she says a word, with no error. {_DIAGNOSIS}"
+            )
+
+
 def check_not_thinking(text: str) -> None:
-    """Raise if the model opened with a reasoning block."""
+    """Raise if the model opened with an inline reasoning block.
+
+    Backends that keep reasoning *in* the content (llama-server with
+    `--reasoning-format none` misconfigured, most vLLM setups) fail this
+    way instead.
+    """
     if "<think" in text[:THINK_SNIFF_CHARS].lower():
         raise ThinkingModeError(
-            "The model emitted a <think> block despite thinking mode being "
-            "disabled. This costs the entire latency budget before she says a "
-            "word. Check the request sets think=false (ollama) or "
-            "--reasoning-budget 0 --reasoning-format none (llama-server), and "
-            "verify with curl — two llama.cpp issues report the documented "
-            "switch being silently ignored."
+            "The model emitted a <think> block in its content despite thinking "
+            f"mode being disabled. {_DIAGNOSIS}"
+        )
+
+
+def check_produced_words(accumulator: StreamAccumulator) -> None:
+    """Raise if a finished stream produced reasoning but no speakable text.
+
+    The last line of defence: some backend, some day, will hide
+    reasoning under a field name not in `REASONING_FIELDS`. A turn that
+    consumed a budget and yielded nothing to say is that bug, whatever
+    it is called.
+    """
+    if not accumulator.text.strip() and accumulator.reasoning_chars:
+        raise ThinkingModeError(
+            f"The stream finished with no speakable text at all, after "
+            f"{accumulator.reasoning_chars} characters of hidden reasoning. "
+            f"{_DIAGNOSIS}"
         )
 
 
@@ -187,7 +264,13 @@ class OpenAiCompatLlm:
                     continue
                 choice = choices[0]
 
-                added = accumulator.add_delta(choice.get("delta") or {})
+                delta = choice.get("delta") or {}
+                # Before anything else: this fires on the FIRST reasoning
+                # delta, so a misconfigured backend costs one chunk of
+                # latency rather than a whole max_tokens budget.
+                check_delta_not_thinking(delta)
+
+                added = accumulator.add_delta(delta)
 
                 if not checked_thinking and len(accumulator.text) >= THINK_SNIFF_CHARS:
                     check_not_thinking(accumulator.text)
@@ -202,5 +285,6 @@ class OpenAiCompatLlm:
         # A short reply may never reach THINK_SNIFF_CHARS — check once more.
         if not checked_thinking:
             check_not_thinking(accumulator.text)
+        check_produced_words(accumulator)
 
         yield {"done": accumulator}
