@@ -55,8 +55,11 @@ class SttConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
-    base_url: str = "http://127.0.0.1:8080"
-    max_tokens: int = 160
+    # The only difference between the laptop tier and the 3090 Ti tier.
+    # ollama's OpenAI-compatible endpoint is on 11434; llama-server on 8080.
+    base_url: str = "http://127.0.0.1:11434"
+    model: str = "qwen3.5:4b"
+    max_tokens: int = 160  # a voice reply, not an essay
     temperature: float = 0.7
 
 
