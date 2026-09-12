@@ -18,6 +18,7 @@ dependencies = [
     "sounddevice>=0.5.6",
     "soundfile>=0.14.0",
     "onnxruntime>=1.30.0",
+    "librosa>=1.0.0",
 ]
 
 [project.scripts]

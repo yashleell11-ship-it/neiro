@@ -73,6 +73,35 @@ class AffectConfig(BaseModel):
     ema_alpha_face: float = 0.60
     ema_alpha_words: float = 0.35
 
+    # --- feature extraction (affect/features.py) ---
+    # "pyin" is ~48 ms per 3 s window here and returns a per-frame voicing
+    # probability, which is what makes voiced_ratio and pause_ratio
+    # trustworthy. "yin" is ~18x faster but guesses a pitch for silence.
+    # This runs WHILE the user is still speaking, so 48 ms costs the turn
+    # budget nothing — quality wins unless a slower machine disagrees.
+    f0_algorithm: str = "pyin"
+    f0_min_hz: float = 60.0  # below a typical adult male floor
+    f0_max_hz: float = 400.0  # above a typical adult female ceiling
+    frame_length: int = 1024  # 64 ms at 16 kHz — long enough for 60 Hz
+    hop_length: int = 256  # 16 ms
+    voiced_prob_floor: float = 0.5  # pyin voicing probability to count a frame
+    silence_db_below_peak: float = 35.0  # a frame this far under peak is a pause
+
+    # --- window (affect/prosody.py) ---
+    window_seconds: float = 3.0  # rolling analysis window
+    min_window_seconds: float = 0.7  # shorter than this says nothing at all
+    min_voiced_ratio: float = 0.15  # mostly-silence windows carry no prosody
+
+    # --- baseline (affect/baseline.py) ---
+    # Robust statistics, not mean/std: one shout must not move "his
+    # normal" for the rest of the day. MAD * 1.4826 estimates sigma for
+    # normally distributed data.
+    mad_to_sigma: float = 1.4826
+    min_sigma_fraction: float = 0.05  # floor on sigma, as a fraction of |median|
+    drift_z_threshold: float = 4.0  # this far out, this consistently, = a new voice/device
+    drift_consecutive: int = 8  # ...for this many utterances in a row
+    max_abs_z: float = 6.0  # clamp; beyond this the feature is broken, not expressive
+
 
 class Neiro(BaseSettings):
     model_config = SettingsConfigDict(
