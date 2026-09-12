@@ -55,7 +55,8 @@ class SttConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
-    # The only difference between the laptop tier and the 3090 Ti tier.
+    # The only difference between the local tier and the 3090 Ti tiers
+    # (lan / tunnel): the box is one machine reached over two links.
     # ollama's OpenAI-compatible endpoint is on 11434; llama-server on 8080.
     base_url: str = "http://127.0.0.1:11434"
     model: str = "qwen3.5:4b"

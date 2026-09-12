@@ -32,8 +32,10 @@ class Endpointer(Protocol):
 
 
 class STT(Protocol):
-    """Speech to text. LAPTOP_PINNED always — even 60 ms of tunnel RTT
-    on every streaming partial breaks the sub-second design.
+    """Speech to text. LAN_TIERABLE: may run on the 3090 Ti over
+    ethernet, never over the tunnel — even 60 ms of RTT on every
+    streaming partial breaks the sub-second design. Whether LAN STT
+    actually beats local STT is a measurement (T17a), not a default.
     """
 
     locality: Locality
@@ -42,7 +44,7 @@ class STT(Protocol):
 
 
 class AffectProvider(Protocol):
-    """What we hear in the user's voice. LAPTOP_PINNED. ``null.py``
+    """What we hear in the user's voice. LOCAL_PINNED. ``null.py``
     ships in Stage 0 and always returns ``UserAffect.NONE`` — the
     orchestrator is unaware whether it's talking to the null provider or
     a real one.
@@ -54,8 +56,9 @@ class AffectProvider(Protocol):
 
 
 class LLM(Protocol):
-    """One OpenAI-compatible client shape for both tiers — promoting to
-    the 3090 Ti is a ``base_url`` change, not a new code path.
+    """One OpenAI-compatible client shape for every tier — promoting to
+    the 3090 Ti (over LAN or the tunnel) is a ``base_url`` change, not a
+    new code path.
     """
 
     locality: Locality

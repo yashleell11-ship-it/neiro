@@ -105,24 +105,46 @@ class ToolCall:
 
 
 class Tier(StrEnum):
-    """Which backend served this turn's LLM/TTS."""
+    """Where this turn's TIERABLE providers ran. Snapshotted at turn
+    start and never changed mid-turn, so a promotion or demotion can
+    only ever happen between turns.
 
-    LAPTOP = "laptop"
-    BOX = "box"
+    Corrected 2026-09-13 (docs/DECISIONS.md): the 3090 Ti box is not one
+    remote place, it is two very different links to the same machine.
+    """
+
+    LOCAL = "local"  # the machine Yash is sitting at (the laptop, for now)
+    LAN = "lan"  # the 3090 Ti over ethernet on the same router — home
+    TUNNEL = "tunnel"  # the 3090 Ti via Cloudflare Access — hostel→home, gated on T17b
 
 
 class Locality(StrEnum):
     """Declared by every provider Protocol (see protocols.py).
 
-    LAPTOP_PINNED providers never move to the 3090 Ti tier, as an
-    architectural rule rather than a default: capture, VAD, endpointing,
-    STT, affect, the audio sink, and every tool. Even a small amount of
-    tunnel RTT on every streaming partial breaks the design, and every
-    tool acts on the laptop by definition.
+    LOCAL_PINNED providers never leave the machine Yash is sitting at,
+    as an architectural rule rather than a default: capture, VAD,
+    endpointing, affect, the audio sink, and every tool. The mic and the
+    desktop are wherever he is, by definition.
+
+    LAN_TIERABLE is STT alone: shipping 16 kHz audio for every streaming
+    partial is fine over ethernet and breaks the sub-second design over
+    a tunnel. TIERABLE (LLM, TTS) goes anywhere the resolver says.
+
+    The rule lives in `allows()` so the resolver enforces it in code —
+    not in a comment someone reads once.
     """
 
-    LAPTOP_PINNED = "laptop_pinned"
+    LOCAL_PINNED = "local_pinned"
+    LAN_TIERABLE = "lan_tierable"
     TIERABLE = "tierable"
+
+    def allows(self, tier: Tier) -> bool:
+        """May a provider with this locality run on `tier`?"""
+        if self is Locality.LOCAL_PINNED:
+            return tier is Tier.LOCAL
+        if self is Locality.LAN_TIERABLE:
+            return tier in (Tier.LOCAL, Tier.LAN)
+        return True
 
 
 @dataclass
@@ -144,7 +166,7 @@ class Turn:
     neiro_state: NeiroState = field(default_factory=lambda: NEUTRAL_STATE)
     tool_calls: list[ToolCall] = field(default_factory=list)
 
-    tier: Tier = Tier.LAPTOP  # snapshotted at turn start; never changes mid-turn
+    tier: Tier = Tier.LOCAL  # snapshotted at turn start; never changes mid-turn
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
 
     timeline: dict[str, float] = field(default_factory=dict)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from neiro.state import (
     EmotionLabel,
+    Locality,
     NeiroState,
     Tier,
     Turn,
@@ -79,7 +80,7 @@ def test_user_affect_and_neiro_state_are_distinct_types() -> None:
 def test_turn_starts_with_inert_defaults() -> None:
     turn = Turn.new(turn_id=7)
     assert turn.id == 7
-    assert turn.tier is Tier.LAPTOP
+    assert turn.tier is Tier.LOCAL
     assert turn.tool_calls == []
     assert turn.transcript is None
     assert not turn.cancel.is_set()
@@ -100,3 +101,34 @@ def test_turn_cancel_is_independent_per_instance() -> None:
     a.cancel.set()
     assert a.cancel.is_set()
     assert not b.cancel.is_set()
+
+
+# The locality rule from the plan, as a full truth table. The point of
+# having it in code is that a future TierResolver cannot "helpfully"
+# promote STT over the tunnel, or a tool onto the box — that would be a
+# red test, not a latency cliff discovered at the hostel.
+LOCALITY_TRUTH_TABLE = {
+    (Locality.LOCAL_PINNED, Tier.LOCAL): True,
+    (Locality.LOCAL_PINNED, Tier.LAN): False,
+    (Locality.LOCAL_PINNED, Tier.TUNNEL): False,
+    (Locality.LAN_TIERABLE, Tier.LOCAL): True,
+    (Locality.LAN_TIERABLE, Tier.LAN): True,
+    (Locality.LAN_TIERABLE, Tier.TUNNEL): False,
+    (Locality.TIERABLE, Tier.LOCAL): True,
+    (Locality.TIERABLE, Tier.LAN): True,
+    (Locality.TIERABLE, Tier.TUNNEL): True,
+}
+
+
+def test_locality_allows_matches_the_plan() -> None:
+    # Every (locality, tier) pair is covered — no case is left to a default.
+    assert set(LOCALITY_TRUTH_TABLE) == {(lo, ti) for lo in Locality for ti in Tier}
+    for (locality, tier), expected in LOCALITY_TRUTH_TABLE.items():
+        assert locality.allows(tier) is expected, f"{locality} on {tier}"
+
+
+def test_every_tier_is_reachable_by_something_and_local_by_everything() -> None:
+    # LOCAL is the floor: nothing is ever forbidden from running on the
+    # machine Yash sits at, which is what makes the hostel tier always work.
+    assert all(lo.allows(Tier.LOCAL) for lo in Locality)
+    assert any(lo.allows(Tier.TUNNEL) for lo in Locality)

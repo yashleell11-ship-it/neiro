@@ -58,7 +58,7 @@ class FasterWhisperStt:
     so a real user utterance never pays the first-use JIT cost.
     """
 
-    locality = Locality.LAPTOP_PINNED
+    locality = Locality.LAN_TIERABLE
 
     def __init__(self, cfg: Neiro | None = None) -> None:
         self._cfg = cfg or Neiro()

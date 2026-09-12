@@ -116,7 +116,7 @@ class TestRecordAndWrite:
         turn = _turn_with({"endpoint": 1.0, "sink_played": 1.5}, turn_id=7)
         record = record_turn(turn)
         assert record.turn_id == 7
-        assert record.tier == "laptop"
+        assert record.tier == "local"
         assert record.latency_ms == pytest.approx(500.0)
 
     def test_append_writes_one_json_line(self, tmp_path) -> None:

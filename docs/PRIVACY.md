@@ -27,15 +27,34 @@ raised it.
 
 ## What leaves the machine
 
-**Nothing, on the laptop-only tier.** If the 3090 Ti tier is ever built
-(Stage 4, gated on a measured tunnel round trip — see
-`docs/CORRECTIONS.md` #13), the LLM prompt and TTS text cross the
-tunnel. Speech-to-text, voice-activity detection, affect detection, and
-every tool stay laptop-pinned permanently, as an architectural rule
-(`state.Locality.LAPTOP_PINNED`) — not a default that could later be
-changed casually. `capture_screen` and `read_screen_text` fail closed on
-the remote tier rather than silently sending a screenshot over the
-tunnel. See `docs/THREAT-MODEL.md` (written when Stage 4 starts).
+There are three tiers (`state.Tier`), and what leaves the machine
+depends on which one served the turn. The rule for each provider is
+declared in code (`state.Locality`) and enforced by
+`Locality.allows(tier)`, which has a full truth-table test — it is an
+architectural rule, not a default that could later be changed casually.
+
+- **`local`** (the machine Yash is sitting at — the laptop, at the
+  hostel): **nothing leaves.** No network at all.
+- **`lan`** (home; the 3090 Ti is his own desktop, on the same router,
+  over ethernet): the LLM prompt — which contains the transcript and,
+  when affect is on, the `[voice: …]` annotation — and the TTS text
+  cross the wire. **Raw audio crosses it only if speech-to-text is
+  placed on the box** (`Locality.LAN_TIERABLE`; off unless T17a shows
+  it is worth it). Both ends are his machines, but the hop is plain
+  HTTP on the home LAN: llama-server's `--api-key` is authentication,
+  not confidentiality. Accepted for a private wired LAN; documented so
+  it isn't assumed to be more than that.
+- **`tunnel`** (hostel→home via Cloudflare Access; only if T17b measures
+  it fast enough): the LLM prompt and TTS text cross it, over TLS with a
+  bearer token. **Raw audio never does** — STT is LAN-only by rule.
+
+Voice-activity detection, affect detection, the audio sink, and every
+tool are `Locality.LOCAL_PINNED`: they never run anywhere but the
+machine in front of Yash, on any tier. There is no "remote tool" —
+`capture_screen` and `read_screen_text` cannot send a screenshot over
+any link because they cannot be scheduled on any tier but `local`. See
+`docs/THREAT-MODEL.md` (written when Stage 4 starts), which will name
+exactly what crosses the LAN versus the tunnel.
 
 ## Commands (planned, tracked here so they don't get forgotten)
 
