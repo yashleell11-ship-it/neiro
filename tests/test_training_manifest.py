@@ -112,9 +112,17 @@ class TestSourceRules:
         Manifest.loads(_one(hf_id="", url="https://x/y.zip", sha256="ab" * 32))
 
     def test_name_must_be_a_safe_dirname(self) -> None:
-        for bad in ("../x", "Has Space", "UPPER", ""):
+        for bad in ("../x", "Has Space", "UPPER", "", "a/b", "café"):
             with pytest.raises(ValidationError):
                 Manifest.loads(_one(name=bad))
+
+    def test_digits_are_allowed_in_names(self) -> None:
+        # Regression: the first version of this validator was
+        # `c.isalnum() and c.islower()`, which reads fine and rejects
+        # every digit, because "5".islower() is False. Real corpus names
+        # are full of digits.
+        for good in ("vctk-corpus-0-92", "fsd50k", "msp-podcast-v2-0", "oasst2", "when2call"):
+            assert Manifest.loads(_one(name=good)).dataset[0].name == good
 
 
 class TestPublishability:

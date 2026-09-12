@@ -1,11 +1,748 @@
 # Neiro's training-data manifest. Read by scripts/fetch_datasets.py and
-# validated by src/neiro/training/manifest.py — a licence flag that
+# validated by src/neiro/training/manifest.py -- a licence flag that
 # contradicts weights_publishable is a load error, on purpose.
 #
-# priority: 1 essential, 2 good, 3 optional
+# Every entry below was proposed by a researcher and then checked by a
+# separate verifier against the Hugging Face API or the source page:
+# does the id exist, is the licence string what the page actually says,
+# is the access path right. Entries that failed were dropped, not
+# downgraded.
+#
+# priority reflects Yash's stated order (2026-09-13): emotion first
+# ("i want the emotional feel mainly"), Hindi second ("u have to add
+# hindi"). So --tier 1 is emotion + Hindi; --tier 2 widens to the rest
+# of the pipeline; --tier 3 is everything.
+#
 # flags: permissive | NC | ND | SA | research-only | request-required | gated | unclear
 # weights_publishable: can a model trained on this be released under Apache-2.0
 #
 # Raw data lands in data/datasets/<name>/ (gitignored).
 
 schema_version = 1
+
+# ---------- wakeword_speaker_noise ----------
+
+[[dataset]]
+name = "librispeech-asr-corpus"
+target = "wakeword_speaker_noise"
+priority = 2
+hf_id = "openslr/librispeech_asr"
+license = "CC BY 4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 61.0
+hours = 1000.0
+weights_publishable = "yes"
+note = "Large clean English speech that never says 'Neiro' — the backbone of the wake-word negative set (openWakeWord/microWakeWord both use it) and a permissive 2,484-speaker pool for speaker-verification impostor trials and threshold calibration. Also the source corpus of the LibriTTS-R voices piper-sa..."
+
+[[dataset]]
+name = "musan"
+target = "wakeword_speaker_noise"
+priority = 2
+url = "https://www.openslr.org/17/"
+license = "Attribution 4.0 International (CC BY 4.0)"
+flags = ["permissive"]
+access = "direct"
+size_gb = 11.0
+hours = 109.0
+weights_publishable = "yes"
+note = "Canonical additive-noise/music/babble augmentation corpus: ~60 h speech (LibriVox + US government recordings, 12 languages), ~42 h music, ~6 h technical/ambient noise. Doubles as wake-word negative data (music + babble that never contains 'Neiro') and as impostor/babble for speaker-verification r..."
+
+[[dataset]]
+name = "fsd50k"
+target = "wakeword_speaker_noise"
+priority = 2
+hf_id = "Fhrozen/FSD50k"
+license = "FSD50K is released under CC-BY (dataset as a whole); each clip carr..."
+flags = ["permissive", "NC"]
+access = "direct"
+size_gb = 24.5
+hours = 108.3
+weights_publishable = "unclear"
+note = "51,197 human-labelled sound-event clips over 200 AudioSet-ontology classes — the best permissive, non-YouTube source of environmental sounds (keyboard, doors, fans, traffic, dogs, TV) for noise augmentation and as non-speech wake-word negatives; microWakeWord's own no_speech negatives are built f..."
+
+[[dataset]]
+name = "rirs-noises"
+target = "wakeword_speaker_noise"
+priority = 2
+url = "https://www.openslr.org/28/"
+license = "Apache 2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 1.3
+hours = 0.0
+weights_publishable = "yes"
+note = "The standard reverb+noise augmentation set (Kaldi/ESPnet/SpeechBrain recipes): real RIRs from RWCP, REVERB'14 and AIR, simulated small/medium/large-room RIRs, isotropic noises and MUSAN point-source noises at 16 kHz. Convolve every wake-word positive/negative, STT and emotion clip with these to s..."
+
+[[dataset]]
+name = "openwakeword-precomputed-negative-featur"
+target = "wakeword_speaker_noise"
+priority = 3
+hf_id = "davidscripka/openwakeword_features"
+license = "cc-by-nc-sa-4.0"
+flags = ["NC", "SA"]
+access = "direct"
+size_gb = 17.5
+hours = 2011.0
+weights_publishable = "no"
+note = "What openWakeWord's automatic_model_training.ipynb downloads by default: Google speech_embedding features (not audio) for ~2,000 h of ACAV100M multilingual speech/noise/music (5,625,000 x 16 x 96 int16), plus an ~11 h validation feature set (all of DiPCo + Santa Barbara Corpus + reverberated MUSD..."
+
+[[dataset]]
+name = "voxceleb1-voxceleb2"
+target = "wakeword_speaker_noise"
+priority = 3
+hf_id = "ProgramComputer/voxceleb"
+license = "The VoxCeleb dataset is available to download for research purposes..."
+flags = ["request-required", "research-only", "unclear"]
+access = "request-form"
+size_gb = 114.0
+hours = 2000.0
+weights_publishable = "no"
+note = "The speaker-verification corpus every open ECAPA/WavLM-SV model is trained and benchmarked on: VoxCeleb1 1,251 speakers/150k+ utts, VoxCeleb2 6,112 speakers/1M+ utts, in-the-wild YouTube interviews. Needed only if you fine-tune the speaker model or want the standard Vox1-O/E/H trial lists to meas..."
+
+[[dataset]]
+name = "multilingual-spoken-words-corpus"
+target = "wakeword_speaker_noise"
+priority = 3
+hf_id = "MLCommons/ml_spoken_words"
+license = "CC-BY 4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 35.0
+hours = 1957.0
+weights_publishable = "yes"
+note = "23.4M one-second single-keyword clips extracted from Common Voice — exactly the shape a wake-word negative needs (short isolated words from thousands of crowd speakers, many accents, phone mics). Lets you mine phonetically close hard negatives ('near', 'narrow', 'zero', 'neuro') by keyword text i..."
+
+[[dataset]]
+name = "indicvoices-hindi-subset"
+target = "wakeword_speaker_noise"
+priority = 3
+hf_id = "ai4bharat/IndicVoices"
+license = "CC BY 4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 49.8
+hours = 430.0
+weights_publishable = "yes"
+note = "Only large permissive corpus of natural Indian speech: 23.7K h across 22 languages, 51K speakers, 76% extempore + 15% conversational (real Hinglish-style code-mixing occurs in extempore Hindi). The Hindi split is the negative data that teaches the wake-word model what Yash's actual environment so..."
+
+[[dataset]]
+name = "svarah-indian-accented-english"
+target = "wakeword_speaker_noise"
+priority = 3
+hf_id = "ai4bharat/Svarah"
+license = "CC BY 4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 1.09
+hours = 9.6
+weights_publishable = "yes"
+note = "117 speakers, 65 districts, 19 states, 19 native-language accents of Indian English, read + spontaneous speech — small but exactly Yash's accent. Use as the impostor set for speaker-verification EER/threshold calibration (many similar-accent 'not-Yash' voices is what a good threshold needs) and a..."
+
+# ---------- persona_lora ----------
+
+[[dataset]]
+name = "goemotions"
+target = "persona_lora"
+priority = 1
+hf_id = "google-research-datasets/go_emotions"
+license = "apache-2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.03
+hours = 0.0
+weights_publishable = "yes"
+note = "Reddit comments labelled with 27 emotions + neutral: 'raw' config has 211,225 rater-level rows (~58k unique comments); 'simplified' config has 54,263 rows (train 43,410 / val 5,426 / test 5,427) with 3-of-5 rater agreement. Collapse to the VRM six (joy/amusement/excitement/love/gratitude->happy; ..."
+
+[[dataset]]
+name = "synthetic-persona-chat"
+target = "persona_lora"
+priority = 1
+hf_id = "google/Synthetic-Persona-Chat"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.04
+hours = 0.0
+weights_publishable = "yes"
+note = "~22k persona-grounded two-party conversations: 10,906 conversations over the Persona-Chat profile pairs (train 8,938 / val 1,000 / test 968) plus 11,001 conversations over 5,648 new synthetic personas (New-Persona-New-Conversations.csv). Each speaker has a persona sentence list and stays consiste..."
+
+[[dataset]]
+name = "glaive-function-calling-v2"
+target = "persona_lora"
+priority = 1
+hf_id = "glaiveai/glaive-function-calling-v2"
+license = "apache-2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.27
+hours = 0.0
+weights_publishable = "yes"
+note = "~113k multi-turn conversations where the system prompt lists available functions and the assistant emits FUNCTION CALL / consumes FUNCTION RESPONSE turns; roughly half of the rows are ordinary chat with tools available and no call made, the no-call negatives a desktop-controlling assistant needs ..."
+
+[[dataset]]
+name = "hermes-function-calling-v1"
+target = "persona_lora"
+priority = 1
+hf_id = "NousResearch/hermes-function-calling-v1"
+license = "apache-2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.07
+hours = 0.0
+weights_publishable = "yes"
+note = "~11.6k ShareGPT-format rows across func-calling (multi-turn), func-calling-singleturn, glaive-function-calling-5k, json-mode-agentic and json-mode-singleturn. Multi-turn agentic loops with <tools>/<tool_call>/<tool_response> tags plus strict JSON-mode subsets make the '<e:LABEL:D> then exact JSON..."
+
+[[dataset]]
+name = "xlam-function-calling-60k"
+target = "persona_lora"
+priority = 1
+hf_id = "Salesforce/xlam-function-calling-60k"
+license = "cc-by-4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 0.1
+hours = 0.0
+weights_publishable = "yes"
+note = "60,000 execution-verified single-turn query -> tool-call(s) pairs over thousands of APIs, including parallel calls. The cleanest supervision for exact argument typing and multi-call outputs; the backbone of the tool-calling slice. — Gated with automatic approval (HF API: gated 'auto'): the gate f..."
+
+[[dataset]]
+name = "when2call"
+target = "persona_lora"
+priority = 2
+hf_id = "nvidia/When2Call"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.06
+hours = 0.0
+weights_publishable = "yes"
+note = "train_sft 15,000 rows + train_pref 9,000 chosen/rejected pairs + test (mcq 3,652, llm_judge 300) that teach when NOT to call a tool: ask a clarifying question, say no tool fits, or answer directly. Exactly the failure a voice assistant that runs desktop actions must avoid on ambiguous or noisy ST..."
+
+[[dataset]]
+name = "openassistant-oasst2"
+target = "persona_lora"
+priority = 2
+hf_id = "OpenAssistant/oasst2"
+license = "apache-2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.35
+hours = 0.0
+weights_publishable = "yes"
+note = "135,174 human-written messages in 13,854 ranked conversation trees (ready split) with per-message quality/humor/creativity/toxicity labels. Filter lang==en, rank 0, high humor/creativity for a lively register; the general-chat anchor that stops the LoRA collapsing into tool-only or persona-only b..."
+
+[[dataset]]
+name = "dailydialog"
+target = "persona_lora"
+priority = 2
+hf_id = "li2017dailydialog/daily_dialog"
+license = "cc-by-nc-sa-4.0"
+flags = ["NC", "SA"]
+access = "direct"
+size_gb = 0.0
+hours = 0.0
+weights_publishable = "no"
+note = "13,118 dialogues (train 11,118 / val 1,000 / test 1,000), ~103k utterances with a per-utterance emotion label {no emotion, anger, disgust, fear, happiness, sadness, surprise} plus dialogue act; the only widely used dialogue set that labels the responder's own turn, which is precisely the <e:LABEL..."
+
+[[dataset]]
+name = "massive-1-1"
+target = "persona_lora"
+priority = 2
+hf_id = "AmazonScience/massive"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.2
+hours = 0.0
+weights_publishable = "yes"
+note = "16,521 utterances per locale over 60 voice-assistant intents and 55 slot types (alarm_set, iot_hue_lightoff, play_music, calendar_query ...). en-US is the SLURP text itself, so this is the spoken-assistant intent taxonomy for Neiro's tool registry; hi-IN gives human Hindi phrasings of the same co..."
+
+[[dataset]]
+name = "english-hinglish-top"
+target = "persona_lora"
+priority = 3
+hf_id = "rvv-karma/English-Hinglish-TOP"
+license = "apache-2.0"
+flags = ["permissive", "SA", "unclear"]
+access = "direct"
+size_gb = 0.03
+hours = 0.0
+weights_publishable = "unclear"
+note = "184,499 rows (train 176,596 = 6,513 human-annotated + 170,083 CST5-synthetic per the card; val 1,390 human; test 6,513 human) of Roman-script Hinglish voice-assistant requests (alarm, event, messaging, music, navigation, reminder, timer, weather domains from TOPv2) with parallel English and a sem..."
+
+[[dataset]]
+name = "smoltalk2"
+target = "persona_lora"
+priority = 3
+hf_id = "HuggingFaceTB/smoltalk2"
+license = "All the new datasets (aya_dataset-Qwen3-32B, multi-turn-reasoning-i..."
+flags = ["permissive", "unclear"]
+access = "direct"
+size_gb = 0.15
+hours = 0.0
+weights_publishable = "no"
+note = "SFT split smoltalk_systemchats_Qwen3_32B_think (64.9 MB): conversations where a system prompt fixes a persona/format and the assistant must hold it across turns, the closest public analogue to 'system card says you are Neiro, stay Neiro'. smolagents_toolcalling_traces_think (81.8 MB): multi-step ..."
+
+[[dataset]]
+name = "empatheticdialogues"
+target = "persona_lora"
+priority = 3
+hf_id = "facebook/empathetic_dialogues"
+license = "cc-by-nc-4.0"
+flags = ["NC"]
+access = "direct"
+size_gb = 0.01
+hours = 0.0
+weights_publishable = "no"
+note = "~25k crowd-sourced conversations (utterance rows: train 76,673 / val 12,030 / test 10,943) grounded in one of 32 emotion labels (surprised, angry, sad, joyful, content, afraid, annoyed, grateful ...), where the listener responds to the speaker's stated feeling. Teaches Neiro to react to the user'..."
+
+[[dataset]]
+name = "hinglish-everyday-conversations-1m"
+target = "persona_lora"
+priority = 3
+hf_id = "Abhishekcr448/Hinglish-Everyday-Conversations-1M"
+license = "mit"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.18
+hours = 0.0
+weights_publishable = "yes"
+note = "~1M two-person everyday conversations in Roman-script Hinglish (input/output columns), the only permissively licensed Hinglish conversational corpus at this scale. A few thousand sampled rows give the LoRA the casual code-switching register Yash actually speaks so Neiro's replies do not snap back..."
+
+# ---------- ser_lane_b ----------
+
+[[dataset]]
+name = "msp-podcast-v2-0"
+target = "ser_lane_b"
+priority = 1
+url = "https://lab-msp.com/MSP/MSP-Podcast.html"
+license = "Academic License, free of charge: an FDP data-transfer agreement mu..."
+flags = ["request-required", "unclear"]
+access = "request-form"
+size_gb = 47.0
+hours = 409.0
+weights_publishable = "unclear"
+note = "The only large NATURAL (spontaneous podcast) emotional speech corpus with dimensional labels - arousal/activation, valence, dominance on a 1-7 scale from >=5 raters - plus 9 categorical labels (anger, happiness, sadness, disgust, surprised, fear, contempt, neutral, other) and transcripts; 264,705..."
+
+[[dataset]]
+name = "crema-d"
+target = "ser_lane_b"
+priority = 1
+hf_id = "myleslinder/crema-d"
+license = "Open Database License (ODbL) v1.0 for the database; Database Conten..."
+flags = ["permissive", "SA"]
+access = "direct"
+size_gb = 0.47
+hours = 5.3
+weights_publishable = "yes"
+note = "Largest speaker-diverse acted English SER set: 91 actors (48 M / 43 F, ages 20-74, multiple ethnicities), 7,442 clips, 6 classes (anger, disgust, fear, happy, neutral, sad) with 4 intensity levels and 2,443-rater crowd labels; maps directly onto happy/angry/sad/neutral and its rater-agreement vec..."
+
+[[dataset]]
+name = "rasa-hindi-subset"
+target = "ser_lane_b"
+priority = 2
+hf_id = "ai4bharat/Rasa"
+license = "CC-BY-4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 17.65
+hours = 52.0
+weights_publishable = "yes"
+note = "The only sizeable, permissive, studio-quality HINDI emotional speech with the six Ekman labels (happy, sad, angry, fear, disgust, surprise) plus neutral, from AI4Bharat/IIT Madras - gives Lane B native Hindi/Indian prosody for Yash's Hinglish, and the same speakers' neutral hours are a free in-do..."
+
+[[dataset]]
+name = "esd"
+target = "ser_lane_b"
+priority = 2
+hf_id = "jspaulsen/esd"
+license = "Licence agreement must be completed and emailed to the authors (zho..."
+flags = ["research-only", "request-required"]
+access = "request-form"
+size_gb = 3.15
+hours = 29.1
+weights_publishable = "no"
+note = "10 native English speakers x 5 emotions (neutral, happy, angry, sad, SURPRISE) x 350 parallel sentences = 17,500 English utterances (~14.5 h) - the cleanest, largest source of the 'surprised' class that CREMA-D lacks, and parallel content forces the model to learn prosody rather than words. — Act..."
+
+[[dataset]]
+name = "iemocap"
+target = "ser_lane_b"
+priority = 2
+url = "https://sail.usc.edu/iemocap/iemocap_release.htm"
+license = "USC SAIL licence agreement (PDF): data is 'for internal research pu..."
+flags = ["research-only", "request-required"]
+access = "request-form"
+size_gb = 12.0
+hours = 12.0
+weights_publishable = "no"
+note = "Dyadic scripted + improvised sessions with BOTH categorical labels (neutral, happiness, sadness, anger, surprise, fear, disgust, frustration, excited, other) and dimensional valence/activation/dominance (1-5) per utterance - the bridge between the acted sets and MSP-Podcast, and the benchmark eve..."
+
+[[dataset]]
+name = "subesco"
+target = "ser_lane_b"
+priority = 2
+hf_id = "sustcsenlp/bn_emotion_speech_corpus"
+license = "Creative Commons Attribution 4.0 International"
+flags = ["permissive"]
+access = "direct"
+size_gb = 1.66
+hours = 7.7
+weights_publishable = "yes"
+note = "Permissive, 20 professional actors (10 M / 10 F), 7,000 utterances, 7 classes (anger, disgust, fear, happiness, neutral, sadness, surprise), human-validated by 50 raters (71% raw accuracy). Bangla is the closest permissive source of South-Asian prosody and intonation for a model that must work on..."
+
+[[dataset]]
+name = "ravdess"
+target = "ser_lane_b"
+priority = 2
+hf_id = "birgermoell/ravdess"
+license = "Creative Commons Attribution Non Commercial Share Alike 4.0 Interna..."
+flags = ["NC", "SA"]
+access = "direct"
+size_gb = 0.21
+hours = 1.5
+weights_publishable = "no"
+note = "24 professional actors, 8 classes including CALM (the only acted label that maps directly to the VRM 'relaxed' preset) and surprised, each at normal and strong intensity - 1,440 speech files. Standard benchmark, trivially downloadable. — NC-SA: fine for the private model, cannot feed an Apache-2...."
+
+[[dataset]]
+name = "emov-db"
+target = "ser_lane_b"
+priority = 3
+url = "https://openslr.org/115/"
+license = "Custom licence (github.com/numediart/EmoV-DB/blob/master/LICENSE.md..."
+flags = ["NC"]
+access = "direct"
+size_gb = 1.42
+hours = 9.5
+weights_publishable = "no"
+note = "~9.5 h of English with amused (laughter-laced happy), angry, neutral, sleepy (a natural stand-in for 'relaxed') and disgusted - the best source for the relaxed/happy boundary and for non-verbal cues (laughs, yawns) that a prosody model should tolerate. — Custom non-commercial licence ('personal e..."
+
+[[dataset]]
+name = "jl-corpus"
+target = "ser_lane_b"
+priority = 3
+hf_id = "CLAPv2/JL-Corpus"
+license = "CC0: Public Domain (stated in the Kaggle listing's metadata by crea..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.42
+hours = 1.4
+weights_publishable = "yes"
+note = "Public domain; 2,400 utterances with 5 primary + 5 secondary emotions (angry, sad, neutral, happy, excited, anxious, apologetic, assertive, concerned, encouraging) - the secondary labels are useful graded arousal/valence anchors, and NZ English adds accent diversity to an otherwise US-centric poo..."
+
+# ---------- hinglish_llm ----------
+
+[[dataset]]
+name = "cmu-hinglish-dog"
+target = "hinglish_llm"
+priority = 1
+hf_id = "festvox/cmu_hinglish_dog"
+license = "cc-by-sa-3.0 + gfdl (HF card YAML metadata only; the card body's 'L..."
+flags = ["SA"]
+access = "direct"
+size_gb = 0.01
+hours = 0.0
+weights_publishable = "unclear"
+note = "The only sizeable corpus of real human-written romanised Hinglish dialogue (crowdworkers chatting about movies): 8,060 train / 942 val / 960 test utterance pairs with the English original alongside, so each turn can be used as Hinglish chat data and as en->hinglish style-transfer pairs. — Size is..."
+
+[[dataset]]
+name = "hinglish-top"
+target = "hinglish_llm"
+priority = 1
+hf_id = "rvv-karma/English-Hinglish-TOP"
+license = "Apache License 2.0 (LICENSE.md in the GitHub repo); HF mirror tagge..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.03
+hours = 0.0
+weights_publishable = "yes"
+note = "Assistant-domain utterances (alarm, timer, reminder, weather, music, messaging, navigation) written by native Hinglish speakers with English originals and semantic parses: ~10.4k human-written pairs (6,513 train + 1,390 val + 6,513 test) plus ~170k synthetic train rows. Nearly identical to what Y..."
+
+[[dataset]]
+name = "sarvam-samvaad-hi-v1"
+target = "hinglish_llm"
+priority = 1
+hf_id = "sarvamai/samvaad-hi-v1"
+license = "apache-2.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.2
+hours = 0.0
+weights_publishable = "yes"
+note = "101,476 multi-turn chat conversations (OpenAI messages format) curated by Sarvam 'exclusively with an Indic context' in English, Hindi and Hinglish. The largest permissively licensed Indian-context instruction set on the Hub. — Size is the HF download (202.52 MB parquet, 468 MB in memory per data..."
+
+[[dataset]]
+name = "ai4bharat-indicalign"
+target = "hinglish_llm"
+priority = 1
+hf_id = "ai4bharat/indic-align"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 28.2
+hours = 0.0
+weights_publishable = "yes"
+note = "Anudesh (36,820 rows) is Indian crowd-sourced prompts with Llama-2-70B answers; Dolly_T (15,011), OpenAssistant_T (19,909) and WikiHow (20,313) carry a hin_Latn column next to hin_Deva, i.e. romanised Hindi versions of standard instruction data; Indic_ShareLlama (21,171) adds ShareGPT-style promp..."
+
+[[dataset]]
+name = "databricks-dolly-15k-hinglish"
+target = "hinglish_llm"
+priority = 2
+hf_id = "aaditya/databricks-dolly-15k-Hinglish-Codemix"
+license = "Creative Commons Attribution-ShareAlike 3.0 Unported (stated in the..."
+flags = ["SA"]
+access = "direct"
+size_gb = 0.02
+hours = 0.0
+weights_publishable = "unclear"
+note = "All 15,011 Dolly instructions, inputs and outputs rendered in Roman Hinglish alongside the English originals: proper instruction-following data (QA, classification, summarisation) in the target register, unlike the chit-chat sets. — Size is HF download (15.78 MB parquet). Hinglish side is model-t..."
+
+[[dataset]]
+name = "phinc"
+target = "hinglish_llm"
+priority = 2
+hf_id = "LingoIITGN/PHINC"
+license = "cc-by-4.0 (Zenodo record licence id cc-by-4.0; HF card cc-by-4.0)"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.0
+hours = 0.0
+weights_publishable = "yes"
+note = "13,738 real user-written Hinglish social-media sentences with human English translations by 54 annotators, from IIT Gandhinagar (Srivastava and Singh, WNUT 2020). Genuine noisy Hinglish spelling variation (as opposed to LLM-generated Hinglish), good for robustness and as en<->hinglish pairs. — Si..."
+
+[[dataset]]
+name = "hinglish-preference-humanized-dpo"
+target = "hinglish_llm"
+priority = 3
+hf_id = "fhai50032/Hinglish-Preference-Humanized-DPO"
+license = "mit"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.02
+hours = 0.0
+weights_publishable = "yes"
+note = "9,434 preference pairs with english_input / hinglish_input / chosen / rejected where 'chosen' is a warm, personable Roman-Hinglish reply and 'rejected' a stiff assistant-speak one; a ready-made DPO set for giving Neiro a friendly Hinglish persona after SFT. — Size is HF download (15.78 MB parquet..."
+
+[[dataset]]
+name = "iit-bombay-english-hindi"
+target = "hinglish_llm"
+priority = 3
+hf_id = "cfilt/iitb-english-hindi"
+license = "Creative Commons Attribution-NonCommercial 4.0 International (CFILT..."
+flags = ["NC"]
+access = "direct"
+size_gb = 0.19
+hours = 0.0
+weights_publishable = "no"
+note = "1.66M English-Hindi sentence pairs; the standard clean Hindi-English parallel corpus, useful privately for teaching Hindi vocabulary and for building a Devanagari->Roman Hinglish rewrite pipeline. — Size is HF parquet download (190.21 MB: train 189.60 MB, test 0.50 MB). NON-COMMERCIAL: anything t..."
+
+# ---------- endpointing ----------
+
+[[dataset]]
+name = "smart-turn-v3-2"
+target = "endpointing"
+priority = 2
+hf_id = "pipecat-ai/smart-turn-data-v3.2-train"
+license = "unclear — no licence field or licence tag on the dataset card (HF A..."
+flags = ["unclear"]
+access = "direct"
+size_gb = 41.4
+hours = 573.0
+weights_publishable = "unclear"
+note = "The exact aggregate smart-turn v3.2 was trained on, already in train.py's schema (audio, endpoint_bool, midfiller, endfiller, synthetic, language, dataset); midfiller/endfiller flags directly encode the 'pause-then-continue' case; Hindi (~4.5% of rows), Marathi and Bengali are present, so an Indi..."
+
+[[dataset]]
+name = "svarah"
+target = "endpointing"
+priority = 2
+hf_id = "ai4bharat/Svarah"
+license = "CC BY 4.0 (dataset card text: 'This dataset is released under the C..."
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 1.1
+hours = 9.6
+weights_publishable = "yes"
+note = "The only verified downloadable Indian-accented English corpus with spontaneous (extempore) speech: 117 speakers from 65 districts in 19 states, native languages covering 19 of 22 scheduled languages. Extempore answers to prompts carry natural pauses and fillers — this is the evaluation set for 'd..."
+
+[[dataset]]
+name = "podcastfillers"
+target = "endpointing"
+priority = 3
+url = "https://zenodo.org/records/7121457"
+license = "Zenodo record Rights box: 'Creative Commons Attribution Non Commerc..."
+flags = ["NC", "research-only", "SA", "ND"]
+access = "direct"
+size_gb = 25.3
+hours = 145.0
+weights_publishable = "no"
+note = "The only large corpus with ~35,000 manually time-stamped 'uh'/'um' events (85,803 events total incl. breaths, laughter, repeats, music) across 199 podcast episodes — exact ground truth for measuring how often Silero VAD + smart-turn fire on a filler-then-continue, and for building hard midfiller ..."
+
+[[dataset]]
+name = "ami-meeting-corpus"
+target = "endpointing"
+priority = 3
+hf_id = "edinburghcstr/ami"
+license = "CC BY 4.0 (licence page: 'The AMI corpus and its annotations are re..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 15.2
+hours = 100.0
+weights_publishable = "yes"
+note = "100 h of real multi-party meetings with per-speaker headset channels (ihm config) and per-segment begin_time/end_time/speaker_id/meeting_id, so hold-vs-shift labels can be mined automatically (speech offset followed by another speaker = endpoint; same speaker resumes = hold). Dense natural disflu..."
+
+[[dataset]]
+name = "smart-turn-human-5"
+target = "endpointing"
+priority = 2
+hf_id = "pipecat-ai/human_5_all"
+license = "bsd-2-clause (dataset card front-matter 'license: bsd-2-clause'; HF..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.31
+hours = 4.8
+weights_publishable = "yes"
+note = "The only smart-turn component with an explicit permissive licence and the human-recorded (not TTS) core: 3,862 clips, perfectly balanced 1,931 complete / 1,931 incomplete, 4.48 s mean. Use as a clean human evaluation set or as the licence-clean anchor if a fully publishable fine-tune is wanted. —..."
+
+[[dataset]]
+name = "indicvoices-hindi-config"
+target = "endpointing"
+priority = 3
+hf_id = "ai4bharat/IndicVoices"
+license = "CC BY 4.0 (HF card and tag license: cc-by-4.0)"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 49.8
+hours = 0.0
+weights_publishable = "yes"
+note = "76% extempore + 15% conversational speech recorded from ordinary Indians on phones — the largest permissive source of the Hinglish-style hesitation, pause and code-switching Yash actually produces. The 'verbatim' transcript field keeps fillers and false starts, so filler-rich Hindi/Hinglish segme..."
+
+[[dataset]]
+name = "dipco-dinner-party-corpus"
+target = "endpointing"
+priority = 3
+hf_id = "huckiyang/DiPCo"
+license = "Community Data License Agreement Permissive 1.0 (Zenodo metadata.li..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 13.4
+hours = 5.3
+weights_publishable = "yes"
+note = "Unscripted 4-person dinner-table conversations with a clean headset channel per speaker plus segmented transcripts — ideal for mining natural turn-shifts, overlaps and back-channels with exact ground truth, and the five 7-mic far-field arrays let you test VAD under room noise. — 13.42 GB is the D..."
+
+[[dataset]]
+name = "hiacc-hinglish-adult-children"
+target = "endpointing"
+priority = 3
+url = "https://zenodo.org/records/15551669"
+license = "Zenodo record: 'Creative Commons Attribution 4.0 International' (li..."
+flags = ["unclear", "NC"]
+access = "direct"
+size_gb = 0.53
+hours = 5.2
+weights_publishable = "unclear"
+note = "The only verified downloadable Hinglish code-switched spontaneous-speech corpus: spontaneous answers to daily-life questions and image prompts by Indian adults (24 speakers, 3.22 h) — the same register Yash speaks; a small, direct evaluation set for endpointing/VAD on Hinglish hesitations. — Trea..."
+
+# ---------- tts_voice ----------
+
+[[dataset]]
+name = "vctk-corpus-0-92"
+target = "tts_voice"
+priority = 2
+hf_id = "CSTR-Edinburgh/vctk"
+license = "Creative Commons Attribution 4.0 International (CC-BY-4.0)"
+flags = ["permissive"]
+access = "direct"
+size_gb = 10.94
+hours = 44.0
+weights_publishable = "yes"
+note = "Permissive multi-speaker studio corpus (48 kHz, ~400 sentences per speaker, age/gender/accent metadata) with many female speakers in their early 20s - the right place to pick a consistent, publishable young female base voice for the Chatterbox/Qwen3-TTS fine-tune; also contains a few South-Asian-..."
+
+[[dataset]]
+name = "jenny-tts-dataset"
+target = "tts_voice"
+priority = 2
+hf_id = "reach-vb/jenny_tts_dataset"
+license = "Custom attribution licence stated in the card: 'Attribution is requ..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 3.74
+hours = 30.0
+weights_publishable = "yes"
+note = "30 h / 20,978 clips of ONE young-adult female voice (Irish English) at 48 kHz with commercial use allowed - the largest single-speaker permissive corpus for building a consistent assistant voice, and the text mix (headlines, Wikipedia, recipes, social comments, TV transcripts) is close to what Ne..."
+
+[[dataset]]
+name = "esd-emotional-speech-database"
+target = "tts_voice"
+priority = 2
+url = "https://github.com/HLTSingapore/Emotional-Speech-Data"
+license = "'This database can only be used for research purpose.' - access onl..."
+flags = ["research-only", "request-required"]
+access = "request-form"
+size_gb = 3.4
+hours = 14.5
+weights_publishable = "no"
+note = "The cleanest emotion-labelled English TTS corpus: 10 native English speakers x 5 emotions (neutral, happy, angry, sad, surprise) x 350 PARALLEL sentences, studio-recorded with transcripts - four of the six VRM presets map 1:1 and the parallel design isolates emotion from text, ideal for learning ..."
+
+[[dataset]]
+name = "expresso"
+target = "tts_voice"
+priority = 3
+hf_id = "ylacombe/expresso"
+license = "CC BY-NC 4.0"
+flags = ["NC"]
+access = "direct"
+size_gb = 36.0
+hours = 45.9
+weights_publishable = "no"
+note = "Studio 48 kHz expressive corpus with per-utterance style labels including happy, sad, angry, calm, sleepy, laughing, whisper, confused - 'calm' maps to 'relaxed' - plus 34 h of improvised two-person dialogue, the closest public data to an assistant reacting conversationally with emotion. — 36 GB ..."
+
+[[dataset]]
+name = "globe"
+target = "tts_voice"
+priority = 3
+hf_id = "MushanW/GLOBE"
+license = "cc0-1.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 47.6
+hours = 535.0
+weights_publishable = "yes"
+note = "CC0 (public domain) 24 kHz corpus of 535 h / 23,519 speakers with accent, age and gender per row, including an explicit 'India and South Asia' accent group - the permissive fallback for Indian-English prosody if the IndicTTS licence turns out restrictive, and a source of young-female Indian-accen..."
+
+[[dataset]]
+name = "indictts-english"
+target = "tts_voice"
+priority = 3
+hf_id = "SPRINGLab/IndicTTS-English"
+license = "unclear - the HF card is empty (no licence tag, no text); sibling S..."
+flags = ["unclear"]
+access = "direct"
+size_gb = 78.2
+hours = 204.0
+weights_publishable = "unclear"
+note = "The only large studio-quality Indian-English TTS corpus: 151,640 utterances (est. ~204 h) of English read by native speakers of the 13 IndicTTS languages at 48 kHz - exactly the Indian-English prosody Neiro should optionally carry, and the female speakers are usable as an accent LoRA. — 78.2 GB i..."
+
+[[dataset]]
+name = "ears-expressive-anechoic-recordings"
+target = "tts_voice"
+priority = 3
+hf_id = "philgzl/ears"
+license = "'The code and dataset are released under CC-NC 4.0 International li..."
+flags = ["NC"]
+access = "direct"
+size_gb = 2.76
+hours = 100.0
+weights_publishable = "no"
+note = "107 speakers (ages 18-75) in 22 emotional styles plus loud/whisper/fast/slow/high- and low-pitch reading, anechoic 48 kHz - the broadest emotion coverage available for learning an emotion-conditioning space that generalises across voices, including anger, sadness, amusement and contentment-type s..."
+
+[[dataset]]
+name = "dailytalk"
+target = "tts_voice"
+priority = 3
+url = "https://github.com/keonlee9420/DailyTalk"
+license = "'This work is licensed under a Creative Commons Attribution-ShareAl..."
+flags = ["SA"]
+access = "direct"
+size_gb = 4.0
+hours = 20.0
+weights_publishable = "unclear"
+note = "~20 h of two-person (1 female, 1 male) acted conversational speech - 2,541 dialogues re-recorded from DailyDialog with every utterance carrying DailyDialog's emotion label (no-emotion, anger, disgust, fear, happiness, sadness, surprise) and dialogue-act tags - the only permissive-ish corpus of em..."

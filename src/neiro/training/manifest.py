@@ -24,13 +24,20 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 SCHEMA_VERSION = 1
 
 Target = Literal[
-    "stt_indian_english",  # whisper fine-tune on his accent + Hinglish
-    "ser_lane_b",  # speech emotion model
+    # --- emotion: the project's stated first priority ---
+    "ser_lane_b",  # speech emotion model (Lane B)
+    "emotion_deep",  # emotional speech beyond the standard four corpora
+    # --- Hindi: she must understand and speak it, not only English ---
+    "hindi_stt",  # Hindi + Indic speech recognition
+    "hindi_tts",  # Hindi text-to-speech corpora
+    "hindi_emotion_text",  # Hindi/Hinglish emotional + conversational text
+    "hinglish_llm",  # code-switching + Indian context
+    # --- the rest of the pipeline ---
+    "stt_indian_english",  # whisper fine-tune on his accent
     "tts_voice",  # her voice, with emotion
     "persona_lora",  # her character, the <e:> tag, tool-calling
-    "wakeword_speaker_noise",  # "Neiro" wake word, speaker verification, augmentation
+    "wakeword_speaker_noise",  # wake word, speaker verification, augmentation
     "endpointing",  # smart-turn fine-tune
-    "hinglish_llm",  # code-switching + Indian context
 ]
 TARGETS: tuple[str, ...] = Target.__args__  # type: ignore[attr-defined]
 
@@ -65,7 +72,14 @@ class Dataset(BaseModel):
     @field_validator("name")
     @classmethod
     def _name_is_a_safe_dirname(cls, v: str) -> str:
-        if not v or not all(c.isalnum() and c.islower() or c in "_-" for c in v):
+        # Spelled out rather than `c.isalnum() and c.islower()`: that
+        # reads correctly and rejects every digit, because "5".islower()
+        # is False. It is exactly the kind of quiet wrongness that only
+        # shows up when a real name like "vctk-corpus-0-92" arrives.
+        def ok(c: str) -> bool:
+            return c.isdigit() or (c.isalpha() and c.islower() and c.isascii()) or c in "_-"
+
+        if not v or not all(ok(c) for c in v):
             raise ValueError(f"dataset name must be [a-z0-9_-], got {v!r}")
         return v
 
