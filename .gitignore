@@ -11,6 +11,8 @@ __pycache__/
 .vscode/
 .idea/
 
+/models/
+
 # models and generated weights — never vendored, see modelspec.py
 *.gguf
 *.onnx
