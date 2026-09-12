@@ -91,10 +91,22 @@ def fetch_url(ds: Dataset, dest: Path) -> str:
     return "done"
 
 
+# Access paths a script can complete on its own. Everything else needs a
+# person to agree to something.
+AUTOMATABLE = ("direct", "hf-login")
+
+
 def fetch(ds: Dataset, dest: Path, token: str | None, force: bool) -> str:
     marker = dest / MARKER
     if marker.exists() and not force:
         return "already"
+    if ds.access not in AUTOMATABLE:
+        # Do not even try. A request-form corpus whose `url` is its
+        # landing page will download that HTML page, exit 0, and get
+        # marked complete -- which is how you end up with 52 KB standing
+        # in for 47 GB and a training run that silently has no data.
+        # Observed exactly that with MSP-Podcast on 2026-09-13.
+        return f"needs-{ds.access}"
     status = fetch_hf(ds, dest, token) if ds.is_hf else fetch_url(ds, dest)
     if status == "done":
         dest.mkdir(parents=True, exist_ok=True)
@@ -103,6 +115,9 @@ def fetch(ds: Dataset, dest: Path, token: str | None, force: bool) -> str:
 
 
 REMEDY = {
+    "needs-request-form": "apply on the dataset's own site, then download by hand into data/datasets/<name>/",
+    "needs-paid": "this one costs money — decide before spending anything",
+    "needs-unavailable": "no working download path was found; the manifest entry records why",
     "needs-login": "run `uv run hf auth login` (a read token from huggingface.co/settings/tokens)",
     "needs-approval": "accept the terms in your browser, then re-run",
     "not-found": "the hf_id in data/datasets.toml is wrong — fix the manifest",
@@ -190,9 +205,12 @@ def main(argv: list[str] | None = None) -> int:
     bad = 0
     for name, status in results.items():
         remedy = REMEDY.get(status, "")
-        if status not in ("done", "already"):
+        ds = next(x for x in items if x.name == name)
+        if status.startswith("needs-") and ds.access not in AUTOMATABLE:
+            # Expected, not a failure: the manifest said so up front.
+            remedy = f"{remedy} — {ds.source}"
+        elif status not in ("done", "already"):
             bad += 1
-            ds = next(x for x in items if x.name == name)
             if status == "needs-approval":
                 remedy = f"accept at {ds.source}, then re-run"
         summary.add_row(name, status, remedy)

@@ -188,3 +188,55 @@ def test_real_manifest_on_disk_loads() -> None:
 
     path = Path(__file__).resolve().parents[1] / "data" / "datasets.toml"
     Manifest.load(path)
+
+
+class TestAccessGuard:
+    """A corpus behind a request form must never look like it downloaded.
+
+    Observed on 2026-09-13: MSP-Podcast's manifest `url` is its landing
+    page, so the fetcher downloaded that HTML page, exited 0, and wrote
+    a completion marker — 52 KB standing in for 47 GB, and a training
+    run that would silently have had no data.
+    """
+
+    def test_non_automatable_access_paths_are_refused(self) -> None:
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        import tempfile
+
+        from fetch_datasets import AUTOMATABLE, fetch
+
+        for access in ("request-form", "paid", "unavailable"):
+            assert access not in AUTOMATABLE
+            ds = Manifest.loads(
+                _one(
+                    hf_id="",
+                    url="https://example.org/landing-page.html",
+                    access=access,
+                    flags=["request-required"],
+                    weights_publishable="unclear",
+                )
+            ).dataset[0]
+            with tempfile.TemporaryDirectory() as tmp:
+                dest = P(tmp) / "x"
+                assert fetch(ds, dest, None, force=False) == f"needs-{access}"
+                assert not dest.exists(), "refused fetches must not create a directory"
+
+    def test_the_automatable_paths_are_exactly_the_two_that_need_no_human(self) -> None:
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        from fetch_datasets import AUTOMATABLE
+
+        assert set(AUTOMATABLE) == {"direct", "hf-login"}
+
+    def test_every_manifest_entry_declares_a_known_access_path(self) -> None:
+        from pathlib import Path as P
+
+        path = P(__file__).resolve().parents[1] / "data" / "datasets.toml"
+        known = {"direct", "hf-login", "hf-gated-approval", "request-form", "paid", "unavailable"}
+        for d in Manifest.load(path).dataset:
+            assert d.access in known, f"{d.name}: {d.access}"
