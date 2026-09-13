@@ -1,0 +1,44 @@
+{
+ "gate": "G6",
+ "engine": "kokoro-82m",
+ "device": "cpu",
+ "samplerate": 24000,
+ "rows": [
+  {
+   "words": 1,
+   "ttfa_min_ms": 255.0,
+   "ttfa_p50_ms": 281.4,
+   "text": "Yeah."
+  },
+  {
+   "words": 2,
+   "ttfa_min_ms": 294.9,
+   "ttfa_p50_ms": 300.3,
+   "text": "No idea."
+  },
+  {
+   "words": 3,
+   "ttfa_min_ms": 347.7,
+   "ttfa_p50_ms": 384.3,
+   "text": "Yeah, it's running."
+  },
+  {
+   "words": 5,
+   "ttfa_min_ms": 382.9,
+   "ttfa_p50_ms": 420.3,
+   "text": "Oh, that actually worked, huh?"
+  },
+  {
+   "words": 8,
+   "ttfa_min_ms": 503.3,
+   "ttfa_p50_ms": 509.7,
+   "text": "Sorry, I didn't catch that, say it again?"
+  },
+  {
+   "words": 16,
+   "ttfa_min_ms": 1043.1,
+   "ttfa_p50_ms": 1088.4,
+   "text": "Okay so the build finished but three of the tests are failing and I think it's the audio one again."
+  }
+ ]
+}

@@ -22,6 +22,9 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.4",
     "websockets>=17.1",
+    "torch>=2.14.0",
+    "kokoro==0.9.4",
+    "misaki[en]>=0.9.4",
 ]
 
 [project.scripts]
@@ -44,3 +47,16 @@ module-name = "neiro"
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
+
+# Kokoro needs torch. It must be the CPU build: ctranslate2 loads cuBLAS 12
+# via LD_LIBRARY_PATH (see docs/DECISIONS.md 2026-09-11) and CUDA torch
+# would pull a second, conflicting CUDA runtime into the same process.
+# ~200 MB instead of ~3 GB, and zero CUDA surface. Training lives in
+# training/, which has its own venv and its own CUDA torch.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
