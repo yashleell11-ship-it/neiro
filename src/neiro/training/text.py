@@ -110,7 +110,7 @@ class LicenceRefused(Exception):
 # --- text hygiene -------------------------------------------------------
 
 # Everything she writes is spoken aloud. IndicTalk and Persona-Chat are
-# LLM-generated with emoji as decoration; a TTS engine reads "😟" as
+# LLM-made and decorated with emoji; a TTS engine reads "😟" as
 # "worried face" or as silence, and either way it is not how a person
 # talks. Pictographs, dingbats, the variation selector and the ZWJ that
 # glue them together.
