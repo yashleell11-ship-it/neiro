@@ -78,6 +78,52 @@ def fetch_hf(ds: Dataset, dest: Path, token: str | None) -> str:
     return "done"
 
 
+# A download this far below the manifest's recorded size did not really
+# happen. Generous, because sizes are approximate and compression varies
+# — this is meant to catch "we got an HTML page" and "we got only the
+# loader script", not to police a 20% estimate.
+MIN_SIZE_FRACTION = 0.25
+
+# Files that are metadata about a dataset rather than the dataset.
+_NOT_DATA_SUFFIXES = {
+    ".py",
+    ".md",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".cff",
+    ".gitattributes",
+    ".html",
+}
+
+
+def _bytes_in(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and f.name != MARKER)
+
+
+def _has_real_data(path: Path) -> bool:
+    """Is there anything here that is not a loader script or a README?
+
+    Two real failures this catches, both of which exited 0 and looked
+    complete (2026-09-13):
+
+      - OpenSLR URLs pointing at an index PAGE rather than a file: wget
+        cheerfully saved `index.html` and reported success, so an 11 GB
+        corpus became 8 KB.
+      - HF datasets that use a loading SCRIPT (`vctk.py`,
+        `daily_dialog.py`, `massive.py`). `snapshot_download` fetches the
+        script and the README; the data is not in the repo at all and
+        needs `datasets.load_dataset()` to run the script.
+    """
+    for f in path.rglob("*"):
+        if not f.is_file() or f.name == MARKER or ".cache" in f.parts:
+            continue
+        if f.suffix.lower() not in _NOT_DATA_SUFFIXES:
+            return True
+    return False
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -124,13 +170,27 @@ def fetch(ds: Dataset, dest: Path, token: str | None, force: bool) -> str:
         # Observed exactly that with MSP-Podcast on 2026-09-13.
         return f"needs-{ds.access}"
     status = fetch_hf(ds, dest, token) if ds.is_hf else fetch_url(ds, dest)
-    if status == "done":
-        dest.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps(ds.model_dump(), indent=1))
+    if status != "done":
+        return status
+
+    # Verify something real arrived before calling it complete. Without
+    # this the marker is written over an HTML error page or a bare
+    # loader script, and the corpus is silently missing at training time.
+    if not _has_real_data(dest):
+        return "no-data"
+    got = _bytes_in(dest)
+    expected = ds.size_gb * 1e9
+    if expected > 0 and got < expected * MIN_SIZE_FRACTION:
+        return f"too-small ({got / 1e9:.2f} of {ds.size_gb:.1f} GB)"
+
+    dest.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps(ds.model_dump() | {"bytes": got}, indent=1))
     return status
 
 
 REMEDY = {
+    "no-data": "only a loader script or an HTML page arrived — this dataset needs "
+    "`datasets.load_dataset()`, or the url points at an index page rather than a file",
     "needs-request-form": "apply on the dataset's own site, then download by hand into data/datasets/<name>/",
     "needs-paid": "this one costs money — decide before spending anything",
     "needs-unavailable": "no working download path was found; the manifest entry records why",
@@ -225,6 +285,9 @@ def main(argv: list[str] | None = None) -> int:
         if status.startswith("needs-") and ds.access not in AUTOMATABLE:
             # Expected, not a failure: the manifest said so up front.
             remedy = f"{remedy} — {ds.source}"
+        elif status.startswith("too-small"):
+            bad += 1
+            remedy = "far less arrived than the manifest expects — check the source"
         elif status not in ("done", "already"):
             bad += 1
             if status == "needs-approval":

@@ -286,3 +286,71 @@ class TestSourceUniqueness:
 
         path = P(__file__).resolve().parents[1] / "data" / "datasets.toml"
         Manifest.load(path)  # the validator is the assertion
+
+
+class TestDownloadVerification:
+    """A download must contain something before it is called complete.
+
+    Two failures found live on 2026-09-13, both of which exited 0 and
+    wrote a completion marker over nothing:
+
+      - OpenSLR urls pointing at an index PAGE rather than a file. wget
+        saved `index.html` and reported success, so an 11 GB corpus
+        became 8 KB.
+      - HF datasets that use a loading SCRIPT (vctk.py, daily_dialog.py,
+        massive.py). snapshot_download fetches the script and README;
+        the data is not in the repo and needs datasets.load_dataset().
+
+    Five corpora were affected and would have been silently missing at
+    training time.
+    """
+
+    def _fetch_module(self):
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        import fetch_datasets
+
+        return fetch_datasets
+
+    def test_an_html_page_is_not_data(self, tmp_path) -> None:
+        fd = self._fetch_module()
+        (tmp_path / "index.html").write_text("<html>OpenSLR index</html>")
+        assert not fd._has_real_data(tmp_path)
+
+    def test_a_loader_script_and_readme_are_not_data(self, tmp_path) -> None:
+        fd = self._fetch_module()
+        (tmp_path / "vctk.py").write_text("class Vctk: pass")
+        (tmp_path / "README.md").write_text("# VCTK")
+        (tmp_path / "dataset_infos.json").write_text("{}")
+        assert not fd._has_real_data(tmp_path)
+
+    @pytest.mark.parametrize("name", ["train.parquet", "audio.tar.gz", "clip.wav", "data.arrow"])
+    def test_actual_data_files_count(self, tmp_path, name: str) -> None:
+        fd = self._fetch_module()
+        (tmp_path / "README.md").write_text("# x")
+        (tmp_path / name).write_bytes(b"\x00" * 16)
+        assert fd._has_real_data(tmp_path)
+
+    def test_the_hf_cache_directory_is_not_mistaken_for_data(self, tmp_path) -> None:
+        # .cache/huggingface/... contains lock and metadata files that
+        # would otherwise make an empty download look populated.
+        fd = self._fetch_module()
+        cache = tmp_path / ".cache" / "huggingface" / "download"
+        cache.mkdir(parents=True)
+        (cache / "blob.incomplete").write_bytes(b"\x00" * 999)
+        (tmp_path / "README.md").write_text("# x")
+        assert not fd._has_real_data(tmp_path)
+
+    def test_the_size_floor_is_generous_enough_not_to_be_noisy(self) -> None:
+        # Recorded sizes are approximate and compression varies. This is
+        # meant to catch "we got an HTML page", not to police an estimate.
+        fd = self._fetch_module()
+        assert 0.1 <= fd.MIN_SIZE_FRACTION <= 0.5
+
+    def test_bytes_in_ignores_the_marker(self, tmp_path) -> None:
+        fd = self._fetch_module()
+        (tmp_path / fd.MARKER).write_text("x" * 1000)
+        (tmp_path / "data.parquet").write_bytes(b"\x00" * 50)
+        assert fd._bytes_in(tmp_path) == 50
