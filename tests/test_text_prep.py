@@ -436,6 +436,23 @@ class TestHermes:
 
 
 class TestGlaive:
+    def test_a_transcript_cut_off_mid_response_still_ends_on_her_turn(self, tmp_path: Path) -> None:
+        # Real rows end in a truncated `FUNCTION RESPONSE: {"lyrics": "The`
+        # with no reply after it. A record must end with an assistant
+        # turn; the dangling result is trimmed and the call is kept.
+        fn = json.dumps({"name": "lyrics", "description": "Song", "parameters": {}})
+        chat = (
+            "USER: Lyrics please\n\n\n"
+            'ASSISTANT: <functioncall> {"name": "lyrics", "arguments": \'{"song": "x"}\'} '
+            "<|endoftext|>\n\n\n"
+            'FUNCTION RESPONSE: {"lyrics": "The'
+        )
+        _json(tmp_path / "glaive.json", [{"system": f"SYSTEM: functions -\n{fn}\n", "chat": chat}])
+        recs = list(read_glaive(tmp_path))
+        assert len(recs) == 1
+        assert _roles(recs[0]) == ["user", "assistant"]
+        assert recs[0].messages[-1]["tool_calls"][0]["function"]["name"] == "lyrics"
+
     def test_an_escaped_apostrophe_inside_the_quoted_arguments(self, tmp_path: Path) -> None:
         # Glaive writes the inner apostrophe Python-style: 'It\'s raining'.
         # 124 real rows; JSON has no such escape and a naive parse loses them.

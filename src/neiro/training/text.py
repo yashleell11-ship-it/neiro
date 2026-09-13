@@ -288,6 +288,18 @@ def _assistant(content: str | None, calls: list[dict[str, Any]]) -> dict[str, An
     return msg
 
 
+def _finish(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """A record ends on her turn. Trailing user turns nobody answered and
+    trailing tool results nobody read (Glaive has transcripts cut off
+    mid-`FUNCTION RESPONSE`) are trimmed; what is left must still be an
+    exchange. An assistant turn that only issued calls is a fine ending —
+    xLAM is nothing but those — the results are the runtime's job.
+    """
+    while messages and messages[-1]["role"] != "assistant":
+        messages.pop()
+    return messages if len(messages) >= 2 else None
+
+
 def _dialogue(turns: Iterable[tuple[str, str]]) -> list[dict[str, Any]] | None:
     """Alternating user/assistant messages from (speaker, text) turns.
 
@@ -309,9 +321,7 @@ def _dialogue(turns: Iterable[tuple[str, str]]) -> list[dict[str, Any]] | None:
             out[-1]["content"] += " " + text
         else:
             out.append({"role": role, "content": text})
-    while out and out[-1]["role"] == "user":
-        out.pop()
-    return out if len(out) >= 2 else None
+    return _finish(out)
 
 
 # --- per-corpus readers -------------------------------------------------
@@ -581,7 +591,7 @@ def _hermes_messages(conv: list[dict[str, Any]], has_tools: bool) -> list[dict] 
         if not text:
             return None
         out.append({"role": "user", "content": text})
-    return out if len(out) >= 2 else None
+    return _finish(out)
 
 
 def read_hermes(root: Path) -> Iterator[Record]:
@@ -699,9 +709,7 @@ def _glaive_messages(chat: str) -> list[dict] | None:
             if not text and not tool_calls:
                 return None
             out.append(_assistant(text, tool_calls))
-    while out and out[-1]["role"] == "user":
-        out.pop()
-    return out if len(out) >= 2 else None
+    return _finish(out)
 
 
 def read_glaive(root: Path) -> Iterator[Record]:
