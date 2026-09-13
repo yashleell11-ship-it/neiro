@@ -2,7 +2,8 @@
 
 Every corpus stores its labels somewhere different — CREMA-D in the
 filename, RAVDESS in a numeric filename code, ESD in a per-speaker text
-file, MELD in a CSV. This module hides that behind one row shape:
+file, MELD in a CSV, EmoNet-Voice in a per-rater score cell inside a
+parquet. This module hides that behind one row shape:
 
     Utterance(path, valence, arousal, corpus, speaker, label)
 
@@ -21,13 +22,16 @@ sides.
 
 from __future__ import annotations
 
+import ast
+import csv
 import hashlib
 import re
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
-from neiro.affect.labels import is_acted, normalise, to_circumplex
+from neiro.affect.labels import KINDS, Kind, is_acted, normalise, speech_kind, to_circumplex
 
 DATASETS_DIR = Path(__file__).resolve().parents[3] / "data" / "datasets"
 
@@ -45,6 +49,14 @@ class Utterance:
     @property
     def acted(self) -> bool | None:
         return is_acted(self.corpus)
+
+    @property
+    def kind(self) -> Kind | None:
+        """acted / natural / synthetic — the bucket a score on this row
+        belongs in. `acted` stays for the two-way question; this one
+        exists because synthetic speech is neither answer to it.
+        """
+        return speech_kind(self.corpus)
 
     @property
     def in_archive(self) -> bool:
@@ -206,12 +218,129 @@ def read_rasa(root: Path) -> list[Utterance]:
     return rows
 
 
+# EmoNet-Voice Bench, after scripts/extract_emonet.py: the wavs plus one
+# `index.csv` beside them, a row per (clip, target category) carrying
+# every expert's 0/1/2 score verbatim.
+EMONET_CORPUS = "emonet-voice-bench"
+EMONET_INDEX = "index.csv"
+EMONET_INDEX_COLUMNS = ("file", "clip", "category", "intensities")
+
+
+def parse_emonet_label(raw: str) -> tuple[str, tuple[int, ...]] | None:
+    """EmoNet-Voice's `label` cell → (category, one intensity per rater).
+
+    The cell is the Python repr of a list with one dict per expert:
+    `[{'human-1': {'Shame': 1}}, {'human-4': {'Shame': 2}}]`, category
+    URL-encoded ("Impatience%20and%20Irritability"). Every rater scores
+    how strongly the clip's ONE target category is heard — 0 not at all,
+    1 mildly, 2 intensely. `literal_eval`, never `eval`: the cell is
+    bytes from a download.
+
+    None when the cell does not parse, has no rater, or names more than
+    one category. The caller drops such a row; guessing which category
+    was meant is how a wrong label gets trained.
+    """
+    try:
+        raters = ast.literal_eval(raw)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return None
+    if not isinstance(raters, list) or not raters:
+        return None
+    categories: set[str] = set()
+    intensities: list[int] = []
+    for rater in raters:
+        if not isinstance(rater, dict):
+            return None
+        for scores in rater.values():
+            if not isinstance(scores, dict):
+                return None
+            for category, score in scores.items():
+                if not isinstance(category, str) or isinstance(score, bool):
+                    return None
+                if not isinstance(score, int):
+                    return None
+                categories.add(unquote(category))
+                intensities.append(score)
+    if len(categories) != 1 or not intensities:
+        return None
+    return next(iter(categories)), tuple(intensities)
+
+
+def emonet_agreed(intensities: tuple[int, ...]) -> bool:
+    """Every rater heard the target category at all (score >= 1).
+
+    This is the corpus's own inclusion rule, not a threshold chosen
+    here: measured on the download, 4,692 of the 12,600 rows are
+    unanimous, which is the bench size the EmoNet-Voice paper reports. A
+    clip scored (2, 0) is a synthesis one expert heard and one did not;
+    training it as its target category would teach the model that label
+    from audio a listener could not find it in.
+    """
+    return bool(intensities) and all(score >= 1 for score in intensities)
+
+
+def _emonet_intensities(cell: str) -> tuple[int, ...]:
+    """The index's `intensities` cell, "1;2;2", → (1, 2, 2).
+
+    Anything malformed → (), which `emonet_agreed` never accepts.
+    """
+    try:
+        return tuple(int(part) for part in cell.split(";") if part != "")
+    except ValueError:
+        return ()
+
+
+def read_emonet_voice_bench(root: Path) -> list[Utterance]:
+    """EmoNet-Voice Bench — synthetic English, 42 fine categories scored
+    by psychology experts, after `scripts/extract_emonet.py`.
+
+    Why it is here: CC-BY, small, and its categories reach corners of
+    the plane the acted sets never visit — contentment, distress,
+    embarrassment, awe, disappointment. Why it is `synthetic`, not acted:
+    every voice is generated, so a score on it says how well the model
+    reads a TTS engine's idea of an emotion. `summarise()` counts it
+    apart and `is_acted` answers None, so it can never be averaged into
+    the acted or the natural number.
+
+    **The speaker-independent split is weaker on this corpus.** It ships
+    no voice id. The only identity in the data is the 8-hex prefix of
+    the source filename, shared by the few segments of one generation,
+    so that prefix is the pseudo-speaker — 11,447 of them across 12,600
+    rows. The dozen or so generated voices therefore sit on both sides
+    of any split, and a score here is partly voice familiarity. It
+    cannot say what CREMA-D's 91-actor split says, and a test-set number
+    on it must be read with that in mind.
+
+    Labels: the extractor writes every rater's score; a row is used only
+    when `emonet_agreed` — every expert heard the target category — and
+    the category has a circumplex point. Rows whose wav is missing are
+    skipped, so a half-written extraction yields fewer rows, not a crash
+    in the middle of an epoch.
+    """
+    index = root / "extracted" / EMONET_INDEX
+    if not index.is_file():
+        return []
+    rows = []
+    with index.open(newline="", encoding="utf-8") as fh:
+        for record in csv.DictReader(fh):
+            if not emonet_agreed(_emonet_intensities(record.get("intensities") or "")):
+                continue
+            clip = record.get("clip") or ""
+            path = index.parent / (record.get("file") or "")
+            if not clip or not path.is_file():
+                continue
+            if u := _emit(str(path), record.get("category") or "", EMONET_CORPUS, clip):
+                rows.append(u)
+    return rows
+
+
 READERS = {
     "crema-d": read_crema_d,
     "ravdess": read_ravdess,
     "tess": read_tess,
     "savee": read_savee,
     "rasa": read_rasa,
+    EMONET_CORPUS: read_emonet_voice_bench,
 }
 
 
@@ -297,21 +426,22 @@ def split(
 
 def summarise(rows: list[Utterance]) -> dict:
     """Counts that make a silent problem visible: zero rows, one corpus
-    dominating, or acted data being reported as if it were natural.
+    dominating, or acted, natural and synthetic speech being reported as
+    if they were one thing.
     """
     by_corpus: dict[str, int] = {}
     by_label: dict[str, int] = {}
+    by_kind: dict[str, int] = dict.fromkeys(KINDS, 0)
     for row in rows:
         by_corpus[row.corpus] = by_corpus.get(row.corpus, 0) + 1
         by_label[row.label] = by_label.get(row.label, 0) + 1
-    acted = sum(1 for r in rows if r.acted is True)
-    natural = sum(1 for r in rows if r.acted is False)
+        if (kind := row.kind) is not None:
+            by_kind[kind] += 1
     return {
         "n": len(rows),
         "speakers": len({r.speaker for r in rows}),
         "by_corpus": dict(sorted(by_corpus.items())),
         "by_label": dict(sorted(by_label.items(), key=lambda kv: -kv[1])),
-        "acted": acted,
-        "natural": natural,
-        "unrecorded": len(rows) - acted - natural,
+        **by_kind,
+        "unrecorded": len(rows) - sum(by_kind.values()),
     }
