@@ -130,9 +130,17 @@ def main() -> int:
             print(f"  {type(exc).__name__:<6} {d.name:<28} {d.hf_id}")
 
     if blocked:
-        print(f"\n{len(blocked)} still blocked. Accept at:")
+        print(f"\n{len(blocked)} still blocked. On each page, scroll to the grey box")
+        print('  ("You need to agree to share your contact information...") and press')
+        print('  "Agree and access repository". Opening the page is not enough.\n')
         for d in blocked:
             print(f"  https://huggingface.co/datasets/{d.hf_id}")
+        print(
+            "\n  Verify afterwards at https://huggingface.co/settings/gated-repos —\n"
+            "  it lists every gate this account has accepted. If a dataset is not\n"
+            "  there, the click did not register (usually: signed in as someone else,\n"
+            "  or the button was never pressed)."
+        )
         if kind == "oauth" or token.startswith("hf_oauth"):
             print("\n...but with an oauth token, clicking will not help. Fix the token first.")
     else:
