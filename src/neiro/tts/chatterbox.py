@@ -32,7 +32,7 @@ import numpy as np
 
 from neiro.config import Neiro
 from neiro.emotion.voice import exaggeration_for
-from neiro.state import Locality, NeiroState
+from neiro.state import NEUTRAL_STATE, Locality, NeiroState
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +96,9 @@ class ChatterboxTts:
         import asyncio
 
         self.load()
-        exaggeration = exaggeration_for(state) if state else 0.25
+        # No state is neutral, and neutral sits at the floor — one number,
+        # defined once in emotion/voice.py, not a second copy of it here.
+        exaggeration = exaggeration_for(state or NEUTRAL_STATE)
 
         def run() -> np.ndarray:
             kwargs: dict = {"exaggeration": exaggeration}
