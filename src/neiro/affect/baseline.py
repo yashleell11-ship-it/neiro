@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -215,8 +216,16 @@ class BaselineStore:
         return self.baselines[device]
 
     def save(self) -> None:
-        """Write atomically. A half-written baseline read at next start
-        would be silently wrong rather than loudly broken.
+        """Write atomically: temp file beside the real one, fsync, rename.
+
+        A half-written baseline read at next start would be silently
+        wrong rather than loudly broken — `load()` treats a truncated
+        file as corrupt and quietly starts from zero, with no log line
+        saying why she is emotionally blind this morning. The rename
+        covers a crash of this process; the fsync covers the power going
+        out after the rename, which on some filesystems otherwise leaves
+        the new name pointing at zero bytes. This runs once, at shutdown,
+        so the fsync costs nothing anyone can hear.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -225,5 +234,8 @@ class BaselineStore:
             "devices": {name: b.to_json() for name, b in self.baselines.items()},
         }
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=1))
-        tmp.replace(self.path)
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=1))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.path)

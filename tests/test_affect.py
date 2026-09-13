@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import numpy as np
 import pytest
@@ -294,7 +295,9 @@ class TestPersistence:
         path.write_text(json.dumps(stale))
         assert BaselineStore.load(path).baselines == {}
 
-    def test_save_is_atomic(self, tmp_path) -> None:
+    def test_save_leaves_no_temp_file_behind(self, tmp_path) -> None:
+        # A save that copied instead of renaming would leak the .tmp.
+        # This catches that and nothing more — atomicity is the next test.
         path = tmp_path / "b.json"
         store = BaselineStore(path=path)
         store.for_device("x")
@@ -302,6 +305,32 @@ class TestPersistence:
         assert path.exists()
         assert not path.with_suffix(".json.tmp").exists()
         assert json.loads(path.read_text())["schema"] == BASELINE_SCHEMA
+
+    @pytest.mark.parametrize("failing_step", ["fsync", "replace"])
+    def test_a_crash_mid_save_leaves_the_previous_baseline_intact(
+        self, tmp_path, monkeypatch, failing_step: str
+    ) -> None:
+        # "Atomic" means a crash at ANY point during save leaves the old
+        # file whole and readable — never truncated, which load() would
+        # swallow as corrupt and silently restart from zero. The real
+        # file must not change until the new bytes are complete and on
+        # disk. The test this replaces only checked that no .tmp was left
+        # behind, which a plain in-place write satisfies just as well.
+        path = tmp_path / "b.json"
+        store = BaselineStore(path=path)
+        store.for_device("x")
+        store.save()
+        good = path.read_text()
+
+        def crash(*args, **kwargs):
+            raise OSError(f"simulated crash at {failing_step}")
+
+        monkeypatch.setattr(os, failing_step, crash)
+        store.for_device("y")
+        with pytest.raises(OSError):
+            store.save()
+        assert path.read_text() == good
+        assert BaselineStore.load(path).baselines.keys() == {"x"}
 
 
 class TestBands:
