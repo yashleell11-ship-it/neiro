@@ -120,6 +120,29 @@ class AffectConfig(BaseModel):
     max_abs_z: float = 6.0  # clamp; beyond this the feature is broken, not expressive
 
 
+class VadConfig(BaseModel):
+    """Silero VAD — the Stage 2 endpointing trigger and the barge-in gate.
+
+    Silero v5 is strict about frame size: 512 samples at 16 kHz, and
+    nothing else. It is a stateful RNN, so frames must be fed in order
+    and the state carried between them.
+    """
+
+    model_path: str = "models/silero-vad/onnx/model.onnx"
+    frame_samples: int = 512  # 32 ms at 16 kHz. Not negotiable — see vad.py.
+    threshold: float = 0.5  # speech probability to call a frame speech
+    # Hysteresis, so one noisy frame neither starts nor ends an utterance.
+    # Leaving is deliberately slower than entering: cutting someone off
+    # mid-sentence is much worse than a little trailing silence.
+    min_speech_ms: float = 96.0
+    min_silence_ms: float = 200.0
+    # Barge-in is armed only after this much of her own speech has played,
+    # so the first syllable of her reply cannot interrupt her.
+    bargein_dead_zone_ms: float = 200.0
+    bargein_speech_ms: float = 250.0
+    bargein_probability: float = 0.85  # stricter than `threshold` on purpose
+
+
 class ExpressionConfig(BaseModel):
     """How her face moves. Every number here is visible to a human eye —
     these are the difference between "alive" and "a mask that snaps".
@@ -156,6 +179,7 @@ class Neiro(BaseSettings):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    vad: VadConfig = Field(default_factory=VadConfig)
     affect: AffectConfig = Field(default_factory=AffectConfig)
     expression: ExpressionConfig = Field(default_factory=ExpressionConfig)
 
