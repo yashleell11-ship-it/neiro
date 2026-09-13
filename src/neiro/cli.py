@@ -534,3 +534,79 @@ def affect(
     console.print(f"  face      {shown or 'at rest'}")
     console.print(f"  voice     {instruct_for(state)}")
     console.print(f"  (chatterbox exaggeration {exaggeration_for(state):.2f})")
+
+
+@app.command()
+def say(
+    text: Annotated[
+        str, typer.Argument(help="What she should say. An <e:LABEL:D> tag is honoured.")
+    ],
+    out: Annotated[Path, typer.Option("--out", help="Where to write the audio.")] = Path(
+        "/tmp/neiro-say.wav"
+    ),
+    play: bool = typer.Option(True, "--play/--no-play", help="Play it after writing."),
+) -> None:
+    """Synthesise one line and write it to a WAV.
+
+    The point is to hear her without the whole daemon, and to see what
+    the chunker does to a sentence — the first chunk is what the
+    time-to-first-audio budget is actually spent on.
+    """
+    import asyncio
+
+    from rich.console import Console
+
+    from neiro.audio.sink_local import LocalWavSink
+    from neiro.config import Neiro
+    from neiro.emotion.voice import instruct_for
+    from neiro.llm.chunker import SentenceChunker
+    from neiro.llm.emotion_tag import EmotionTagParser
+    from neiro.state import NEUTRAL_STATE, Turn
+    from neiro.tts.kokoro import KokoroTts
+
+    console = Console()
+    cfg = Neiro()
+
+    parser = EmotionTagParser()
+    state, spoken = parser.feed(text)
+    if state is None:
+        state, more = parser.flush()
+        spoken += more
+    state = state or NEUTRAL_STATE
+    spoken = spoken.strip() or text
+
+    console.print(f"state   {state.label.value} @ {state.intensity:.1f}")
+    console.print(f"voice   {instruct_for(state)}")
+
+    chunker = SentenceChunker()
+    chunks = chunker.feed(spoken) + chunker.flush()
+    console.print(f"chunks  {len(chunks)}: {[c[:40] for c in chunks]}")
+
+    tts = KokoroTts(cfg)
+    warm_s = tts.warm()
+    sink = LocalWavSink(path=out)
+    turn = Turn.new(0)
+
+    async def run() -> None:
+        seq = 0
+        for chunk in chunks:
+            async for pcm, visemes in tts.synth(chunk, state):
+                await sink.play(turn, pcm, seq=seq, text=chunk, visemes=visemes)
+                seq += 1
+
+    asyncio.run(run())
+    path = sink.close()
+    total_visemes = sum(e["visemes"] for e in sink.events)
+    console.print(
+        f"\nwarm {warm_s * 1000:.0f} ms  |  {sink.duration_s:.2f}s audio  |  "
+        f"{total_visemes} visemes  →  {path}"
+    )
+    if play and path:
+        import subprocess
+
+        for player in (["paplay", str(path)], ["aplay", "-q", str(path)]):
+            try:
+                subprocess.run(player, check=False, timeout=60)
+                break
+            except FileNotFoundError:
+                continue
