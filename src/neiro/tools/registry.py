@@ -196,6 +196,12 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools)
 
+    def spec(self, name: str) -> ToolSpec:
+        """The registered spec, for introspection and tests."""
+        if name not in self._tools:
+            raise KeyError(f"no tool {name!r}; have {self.names()}")
+        return self._tools[name]
+
     def schemas(self, tier_ceiling: Tier | None = None) -> list[dict]:
         """The `tools` array for the LLM request.
 
