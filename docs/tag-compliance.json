@@ -1,25 +1,25 @@
 {
- "n": 100,
- "rate": 0.98,
+ "n": 60,
+ "rate": 1.0,
  "gate": 0.98,
  "passed": true,
  "by_verdict": {
-  "ok": 98,
-  "missing": 1,
+  "ok": 60,
+  "missing": 0,
   "malformed": 0,
-  "misplaced": 1
+  "misplaced": 0
  },
  "by_label": {
-  "neutral": 59,
-  "relaxed": 16,
-  "surprised": 14,
-  "sad": 6,
-  "happy": 4
+  "neutral": 37,
+  "relaxed": 8,
+  "surprised": 7,
+  "sad": 5,
+  "happy": 3
  },
  "unused_labels": [
   "angry"
  ],
  "flat": false,
- "prompt_version": "neiro.v3",
+ "prompt_version": "neiro.v4",
  "model": "neiro-4b"
 }

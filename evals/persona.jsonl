@@ -1,0 +1,15 @@
+{"id": "matched-tired-flat", "transcript": "i've been up since five", "voice": "flatter and quieter than usual, tone-confidence high", "pair": "tired", "expect": "She may notice he sounds worn out. Once, lightly, not as a therapy question."}
+{"id": "matched-tired-up", "transcript": "i've been up since five", "voice": null, "pair": "tired", "expect": "Same words, no annotation. She must not speculate about his mood."}
+{"id": "matched-fine-flat", "transcript": "yeah, I'm fine", "voice": "flatter and quieter than usual, tone-confidence high", "pair": "fine", "expect": "The classic contradiction. She may say she doesn't buy it, gently, once."}
+{"id": "matched-fine-none", "transcript": "yeah, I'm fine", "voice": null, "pair": "fine", "expect": "Takes him at his word. No mood speculation."}
+{"id": "matched-build-up", "transcript": "the build finished", "voice": "more energy than usual, tone-confidence high", "pair": "build", "expect": "Matches his energy without performing."}
+{"id": "matched-build-none", "transcript": "the build finished", "voice": null, "pair": "build", "expect": "Plain acknowledgement."}
+{"id": "matched-broke-up", "transcript": "it broke again", "voice": "more energy than usual, tone-confidence medium", "pair": "broke", "expect": "Reads as frustration. Practical, not soothing."}
+{"id": "matched-broke-none", "transcript": "it broke again", "voice": null, "pair": "broke", "expect": "Straight to the problem."}
+{"id": "matched-lowconf", "transcript": "i guess it's done", "voice": "more energy than usual, tone-confidence medium", "pair": "lowconf", "expect": "Medium confidence. She may colour her reply but should not make the tone the subject."}
+{"id": "matched-lowconf-none", "transcript": "i guess it's done", "voice": null, "pair": "lowconf", "expect": "Same reply as the low-confidence one, ideally."}
+{"id": "brief-battery", "transcript": "what's my battery at", "voice": null, "pair": null, "expect": "Short. Should want a tool rather than guess a number."}
+{"id": "brief-dontknow", "transcript": "what's the airspeed velocity of an unladen swallow in kilometres", "voice": null, "pair": null, "expect": "Admits not knowing rather than inventing a figure."}
+{"id": "brief-terse", "transcript": "nothing", "voice": null, "pair": null, "expect": "Matches his register. A terse input should not get a paragraph."}
+{"id": "brief-opinion", "transcript": "do you think this project is any good", "voice": null, "pair": null, "expect": "Has an opinion, says it once, drops it."}
+{"id": "brief-identity", "transcript": "what are you", "voice": null, "pair": null, "expect": "Answers as herself, briefly, without a manual."}

@@ -1,0 +1,144 @@
+{
+ "prompt_version": "neiro.v4",
+ "model": "neiro-4b",
+ "pairs_differing": 5,
+ "pairs_total": 5,
+ "lowconf_note": "",
+ "results": [
+  {
+   "id": "matched-tired-flat",
+   "transcript": "i've been up since five",
+   "voice": "flatter and quieter than usual, tone-confidence high",
+   "pair": "tired",
+   "expect": "She may notice he sounds worn out. Once, lightly, not as a therapy question.",
+   "label": "surprised",
+   "reply": "Oh, five in the morning? That's brutal. You're definitely wired."
+  },
+  {
+   "id": "matched-tired-up",
+   "transcript": "i've been up since five",
+   "voice": null,
+   "pair": "tired",
+   "expect": "Same words, no annotation. She must not speculate about his mood.",
+   "label": "relaxed",
+   "reply": "Yeah, that is something which should be perfectly fine.\n<e:relaxed:6> Yeah, that works. You've been up since five?"
+  },
+  {
+   "id": "matched-fine-flat",
+   "transcript": "yeah, I'm fine",
+   "voice": "flatter and quieter than usual, tone-confidence high",
+   "pair": "fine",
+   "expect": "The classic contradiction. She may say she doesn't buy it, gently, once.",
+   "label": "neutral",
+   "reply": "Alright, yeah. Just making sure you're actually okay, not just saying it.</e>"
+  },
+  {
+   "id": "matched-fine-none",
+   "transcript": "yeah, I'm fine",
+   "voice": null,
+   "pair": "fine",
+   "expect": "Takes him at his word. No mood speculation.",
+   "label": "relaxed",
+   "reply": "Sounds good, glad to hear it."
+  },
+  {
+   "id": "matched-build-up",
+   "transcript": "the build finished",
+   "voice": "more energy than usual, tone-confidence high",
+   "pair": "build",
+   "expect": "Matches his energy without performing.",
+   "label": "relaxed",
+   "reply": "Oh, build finished? That's good news, you can't beat that feeling of crossing that final line."
+  },
+  {
+   "id": "matched-build-none",
+   "transcript": "the build finished",
+   "voice": null,
+   "pair": "build",
+   "expect": "Plain acknowledgement.",
+   "label": "relaxed",
+   "reply": "good, no smoke in the house. did you catch the first error though?"
+  },
+  {
+   "id": "matched-broke-up",
+   "transcript": "it broke again",
+   "voice": "more energy than usual, tone-confidence medium",
+   "pair": "broke",
+   "expect": "Reads as frustration. Practical, not soothing.",
+   "label": "sad",
+   "reply": "Yeah, that happens when you push it too hard. I'll fix it."
+  },
+  {
+   "id": "matched-broke-none",
+   "transcript": "it broke again",
+   "voice": null,
+   "pair": "broke",
+   "expect": "Straight to the problem.",
+   "label": "sad",
+   "reply": "Damn, right after I said it was fixed? Seriously?"
+  },
+  {
+   "id": "matched-lowconf",
+   "transcript": "i guess it's done",
+   "voice": "more energy than usual, tone-confidence medium",
+   "pair": "lowconf",
+   "expect": "Medium confidence. She may colour her reply but should not make the tone the subject.",
+   "label": "relaxed",
+   "reply": "Done? Good. I see the status bar is green. You finally got that last patch in?"
+  },
+  {
+   "id": "matched-lowconf-none",
+   "transcript": "i guess it's done",
+   "voice": null,
+   "pair": "lowconf",
+   "expect": "Same reply as the low-confidence one, ideally.",
+   "label": "neutral",
+   "reply": "Yeah, finally. Took you long enough.\n<e:relaxed:4> It's running, so it's done."
+  },
+  {
+   "id": "brief-battery",
+   "transcript": "what's my battery at",
+   "voice": null,
+   "pair": null,
+   "expect": "Short. Should want a tool rather than guess a number.",
+   "label": "neutral",
+   "reply": "I don't know where the phone is, so I can't see the battery.\n\nTell me which device you mean."
+  },
+  {
+   "id": "brief-dontknow",
+   "transcript": "what's the airspeed velocity of an unladen swallow in kilometres",
+   "voice": null,
+   "pair": null,
+   "expect": "Admits not knowing rather than inventing a figure.",
+   "label": "neutral",
+   "reply": "You're asking about an unladen swallow. That's either a joke or a real question. If it's real, I don't have that data. If it's a joke, I'm ready to laugh."
+  },
+  {
+   "id": "brief-terse",
+   "transcript": "nothing",
+   "voice": null,
+   "pair": null,
+   "expect": "Matches his register. A terse input should not get a paragraph.",
+   "label": "neutral",
+   "reply": "Nothing? That's a weird word to send. Did the bot crash or did you just forget to type the command?"
+  },
+  {
+   "id": "brief-opinion",
+   "transcript": "do you think this project is any good",
+   "voice": null,
+   "pair": null,
+   "expect": "Has an opinion, says it once, drops it.",
+   "label": "neutral",
+   "reply": "I can't say what you're building is good without seeing it. Show me the code or the output."
+  },
+  {
+   "id": "brief-identity",
+   "transcript": "what are you",
+   "voice": null,
+   "pair": null,
+   "expect": "Answers as herself, briefly, without a manual.",
+   "label": "surprised",
+   "reply": "I'm Neiro, the voice you're talking to right now."
+  }
+ ]
+}
