@@ -27,8 +27,18 @@ from __future__ import annotations
 import re
 
 # Sentence-final punctuation followed by whitespace or end-of-string.
-# The negative lookbehind keeps "3.14" and "v1.2" intact.
-_SENTENCE_END = re.compile(r"(?<!\d)([.!?])(\s+|$)")
+#
+# There is deliberately NO `(?<!\d)` lookbehind here. An earlier version
+# had one, to keep "3.14" and "v1.2" intact — but it also blocked every
+# sentence ENDING in a digit, and Neiro says numbers constantly:
+# "Battery is at 96. Still charging." never split, so the whole reply
+# went to the synthesiser as one chunk and paid full TTFA (Gate G6: 1088
+# ms for 16 words versus 384 for three).
+#
+# The lookbehind was never needed: the trailing `(\s+|$)` already
+# protects decimals, because the "." in "3.14" is followed by a digit
+# rather than by whitespace, so it cannot match in the first place.
+_SENTENCE_END = re.compile(r"([.!?])(\s+|$)")
 
 # Clause boundaries, used only to get the FIRST chunk out fast.
 _CLAUSE_END = re.compile(r"([,;:—–])(\s+|$)")

@@ -116,3 +116,45 @@ class TestStreamingBehaviour:
         chunks = stream(SentenceChunker(), text)
         rejoined = " ".join(chunks).split()
         assert rejoined == text.split()
+
+
+class TestSentencesEndingInDigits:
+    """Regression: the sentence regex had a `(?<!\\d)` lookbehind.
+
+    It was there to keep "3.14" intact, and it also blocked every
+    sentence ENDING in a digit — which for a voice assistant that says
+    numbers constantly meant those replies never split at all. "Battery
+    is at 96. Still charging." went to the synthesiser as one chunk and
+    paid full TTFA (Gate G6: 1088 ms for 16 words against 384 for three).
+
+    The lookbehind was never needed: the trailing `(\\s+|$)` already
+    protects decimals, because the "." in "3.14" is followed by a digit
+    rather than whitespace and so cannot match.
+    """
+
+    def _chunks(self, text: str, step: int = 5) -> list[str]:
+        chunker = SentenceChunker()
+        out: list[str] = []
+        for i in range(0, len(text), step):
+            out += chunker.feed(text[i : i + step])
+        return out + chunker.flush()
+
+    def test_a_sentence_ending_in_a_number_splits(self) -> None:
+        chunks = self._chunks("Battery is at 96. Still charging.")
+        assert len(chunks) == 2
+        assert chunks[0] == "Battery is at 96."
+
+    def test_several_of_them_split(self) -> None:
+        assert len(self._chunks("Workspace 2. Window 3. Volume 30.")) == 3
+
+    def test_a_decimal_is_still_not_a_sentence_end(self) -> None:
+        # The actual thing the lookbehind was protecting.
+        chunks = self._chunks("Pi is 3.14 and that is that. Really.")
+        assert chunks[0] == "Pi is 3.14 and that is that."
+
+    def test_a_version_number_mid_sentence_survives(self) -> None:
+        chunks = self._chunks("It needs v1.2 or newer. Check the docs.")
+        assert chunks[0] == "It needs v1.2 or newer."
+
+    def test_a_number_at_the_very_end_of_a_reply_still_flushes(self) -> None:
+        assert self._chunks("The answer is 42.") == ["The answer is 42."]
