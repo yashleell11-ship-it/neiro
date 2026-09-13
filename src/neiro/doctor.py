@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 # The runtime's own definition of "the model is thinking", so the doctor
@@ -1098,7 +1099,10 @@ def render(checks: list[Check]) -> int:
     for c in checks:
         status = "[green]PASS[/green]" if c.ok else "[red]FAIL[/red]"
         detail = c.detail if c.ok else f"{c.detail}  →  {c.remedy}"
-        table.add_row(c.name, status, detail)
+        # Escaped, because a fix is pasted, not styled: rich read
+        # `[audio]` and `[extra]` as markup and printed neither, and the
+        # first real run told people to set " active_profile".
+        table.add_row(escape(c.name), status, escape(detail))
     console.print(table)
 
     failed = [c for c in checks if not c.ok]

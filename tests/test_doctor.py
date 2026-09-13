@@ -463,6 +463,13 @@ class TestRender:
         line = next(line for line in captured.getvalue().splitlines() if "muted" in line)
         assert "wpctl set-mute 77 0" in line
 
+    def test_brackets_in_a_fix_are_printed_not_read_as_markup(self, captured: io.StringIO) -> None:
+        # The first real run printed "set  active_profile" and "(in ,
+        # checked" — rich had eaten `[audio]` and `[extra]` as tags.
+        render([Check("b", False, "absent", remedy="set [audio] active_profile; in [extra]")])
+        out = captured.getvalue()
+        assert "[audio] active_profile" in out and "in [extra]" in out
+
 
 class TestRunDoctor:
     def test_exit_code_follows_the_rows(self, captured: io.StringIO) -> None:
