@@ -248,6 +248,37 @@ def _check_no_voice_in_git() -> Check:
     )
 
 
+def _check_hf_token() -> Check:
+    """A Hugging Face read token, for the gated training corpora.
+
+    Every AI4Bharat dataset is `gated: "auto"` — approval is automatic,
+    but you must be logged in and have clicked through a contact-sharing
+    agreement once. Without it, 8 datasets in the manifest silently
+    refuse: 370 h of Hindi speech, 150 h more, and ai4bharat/Rasa, which
+    is the only large corpus of Indian expressive emotional speech under
+    a publishable licence.
+
+    Informational rather than fatal: the whole local tier runs without
+    it. Only training does not.
+    """
+    try:
+        from huggingface_hub import get_token
+
+        token = get_token()
+    except ImportError:
+        return Check(
+            "HF token (for gated corpora)", False, "huggingface_hub missing", remedy="uv sync"
+        )
+    return Check(
+        "HF token (for gated corpora)",
+        bool(token),
+        "present" if token else "absent — 8 gated datasets cannot download",
+        remedy=None
+        if token
+        else "uv run hf auth login  (a READ token from huggingface.co/settings/tokens)",
+    )
+
+
 def run_doctor(audio_inventory_only: bool = False) -> int:
     if audio_inventory_only:
         return audio_inventory()
@@ -321,6 +352,7 @@ def run_doctor(audio_inventory_only: bool = False) -> int:
     checks.append(_check_vad_frame_size())
     checks.append(_check_prompt())
     checks.append(_check_no_voice_in_git())
+    checks.append(_check_hf_token())
 
     table = Table(title="neiro doctor")
     table.add_column("check")
