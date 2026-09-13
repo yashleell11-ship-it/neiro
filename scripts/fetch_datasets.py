@@ -123,17 +123,25 @@ def fetch_hf(ds: Dataset, dest: Path, token: str | None) -> str:
 MIN_SIZE_FRACTION = 0.25
 
 # Files that are metadata about a dataset rather than the dataset.
-_NOT_DATA_SUFFIXES = {
-    ".py",
-    ".md",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".txt",
-    ".cff",
-    ".gitattributes",
-    ".html",
+#
+# Two rules, because one is not enough. Dotfiles (`.gitattributes`,
+# `.gitignore`) are matched by NAME: a leading-dot filename has an
+# EMPTY `Path.suffix`, so listing ".gitattributes" as a suffix matched
+# nothing, and since `snapshot_download` fetches `.gitattributes` from
+# every HF repo, every snapshot "had data" — the loader-script failure
+# below was undetectable for the whole HF class.
+#
+# `.json` is deliberately NOT a metadata suffix: it is the entire
+# payload of glaive-function-calling-v2 (one 271 MB file) and
+# hermes-function-calling-v1. The `datasets` library's own sidecars
+# are excluded by name instead.
+_NOT_DATA_NAMES = {
+    "dataset_infos.json",  # loader-script era
+    "dataset_info.json",  # save_to_disk()
+    "dataset_dict.json",
+    "state.json",
 }
+_NOT_DATA_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".txt", ".cff", ".html"}
 
 
 def _bytes_in(path: Path) -> int:
@@ -156,6 +164,8 @@ def _has_real_data(path: Path) -> bool:
     """
     for f in path.rglob("*"):
         if not f.is_file() or f.name == MARKER or ".cache" in f.parts:
+            continue
+        if f.name.startswith(".") or f.name in _NOT_DATA_NAMES:
             continue
         if f.suffix.lower() not in _NOT_DATA_SUFFIXES:
             return True
