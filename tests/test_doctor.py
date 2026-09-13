@@ -362,6 +362,26 @@ class TestModelFiles:
         (tmp_path / "m" / doctor.MODEL_COMPLETE_MARKER).write_text("{}")
         assert verify_model_dir(tmp_path / "m") == ["no download metadata to verify against"]
 
+    def test_a_marker_without_receipts_names_the_refetch_not_a_file(self, tmp_path: Path) -> None:
+        # No file was named as bad, so "rm the named file" would send
+        # someone hunting for one that does not exist.
+        (tmp_path / "m").mkdir()
+        (tmp_path / "m" / doctor.MODEL_COMPLETE_MARKER).write_text("{}")
+        row = check_model_files(["m"], tmp_path)
+        assert not row.ok
+        assert "receipts" in row.remedy and "--only m --force" in row.remedy
+        assert "rm " not in row.remedy
+
+    def test_the_fix_is_for_the_model_the_detail_names(self, tmp_path: Path) -> None:
+        # A corrupt file first, an absent model second: the detail leads
+        # with the corruption, so the fix must be the corruption's.
+        model = _make_model(tmp_path, "a", {"model.bin": b"weights"}, lfs={"model.bin"})
+        (model / "model.bin").write_bytes(b"weightx")
+        row = check_model_files(["a", "b"], tmp_path)
+        assert not row.ok
+        assert "a: model.bin sha256 mismatch" in row.detail
+        assert "--only a --force" in row.remedy
+
     def test_a_non_lfs_file_is_presence_only(self, tmp_path: Path) -> None:
         # Its receipt is a git blob id, not a content hash; changing the
         # bytes must not read as corruption.

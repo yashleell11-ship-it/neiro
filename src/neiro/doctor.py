@@ -75,6 +75,13 @@ VRAM_COMPONENTS = ("llm", "stt")
 # Hashing multi-GB weights: 1 MiB reads keep it disk-bound, not Python-bound.
 HASH_CHUNK_BYTES = 1 << 20
 
+# The two verdicts `verify_model_dir` gives that name no file: nothing
+# is there at all, or the snapshot's marker is there but none of the
+# receipts huggingface_hub leaves beside what it downloads. Each needs
+# its own fix — "rm the named file" is no fix when no file was named.
+NOT_DOWNLOADED = "not downloaded"
+NO_RECEIPTS = "no download metadata to verify against"
+
 
 @dataclass
 class Check:
@@ -509,10 +516,10 @@ def verify_model_dir(model_dir: Path, digest: Callable[[Path], str] = _sha256_fi
     every file is present and every LFS file hashes to what the Hub
     said it should."""
     if not (model_dir / MODEL_COMPLETE_MARKER).exists():
-        return ["not downloaded"]
+        return [NOT_DOWNLOADED]
     expected = expected_hashes(model_dir)
     if not expected:
-        return ["no download metadata to verify against"]
+        return [NO_RECEIPTS]
     problems = []
     for relative, etag in expected.items():
         target = model_dir / relative
@@ -521,6 +528,24 @@ def verify_model_dir(model_dir: Path, digest: Callable[[Path], str] = _sha256_fi
         elif _is_sha256(etag) and digest(target) != etag:
             problems.append(f"{relative} sha256 mismatch")
     return problems
+
+
+def _model_remedy(name: str, problem: str) -> str:
+    """The fix for the one problem the row names, so the detail and the
+    remedy always talk about the same model. Nothing is downloaded here;
+    every fix names the command that does."""
+    if problem == NOT_DOWNLOADED:
+        return "uv run neiro fetch-models --runs local --purpose runtime"
+    if problem == NO_RECEIPTS:
+        return (
+            f"models/{name}/ has its marker but no receipts under .cache/huggingface/download/, "
+            f"so nothing can be hashed — re-fetch it and they are rewritten: "
+            f"uv run neiro fetch-models --only {name} --force"
+        )
+    return (
+        f"rm the named file under models/{name}/, then: "
+        f"uv run neiro fetch-models --only {name} --force  (HF re-pulls only what is missing)"
+    )
 
 
 def check_model_files(
@@ -552,15 +577,12 @@ def check_model_files(
     detail = f"{verified}/{len(names)}; {first_name}: {first_problems[0]}" + (
         f" (+{more} more)" if more else ""
     )
-    undownloaded = [name for name, found in bad.items() if found == ["not downloaded"]]
-    if undownloaded:
-        remedy = "uv run neiro fetch-models --runs local --purpose runtime"
-    else:
-        remedy = (
-            f"rm the named file under models/{first_name}/, then: "
-            f"uv run neiro fetch-models --only {first_name} --force  (HF re-pulls only what is missing)"
-        )
-    return Check("local-tier models present & sha256-verified", False, detail, remedy=remedy)
+    return Check(
+        "local-tier models present & sha256-verified",
+        False,
+        detail,
+        remedy=_model_remedy(first_name, first_problems[0]),
+    )
 
 
 # Audio may be committed ONLY from these paths, and only when it is
