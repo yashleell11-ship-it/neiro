@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from neiro.config import SttConfig
 from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
 from neiro.tools.confirm import (
     HALLUCINATIONS,
@@ -81,6 +82,30 @@ class TestInterpretingSpeech:
         assert not interpret("yes", no_speech_prob=0.9).allowed
         assert not interpret("yes", avg_logprob=-2.0).allowed
         assert interpret("yes", no_speech_prob=0.1, avg_logprob=-0.3).allowed
+
+    def test_tightening_the_config_tightens_the_gate(self) -> None:
+        # The gate once carried its own copy of the floors, so tightening
+        # them in config made transcription stricter and left the one
+        # check that gates side effects exactly where it was. Now the
+        # same `cfg.stt` feeds both, and a "yes" that clears the default
+        # floor is refused the moment the floor moves.
+        loose = SttConfig()
+        assert interpret("yes", no_speech_prob=0.3, stt=loose).allowed
+        assert not interpret(
+            "yes", no_speech_prob=0.3, stt=SttConfig(no_speech_prob_floor=0.2)
+        ).allowed
+        assert interpret("yes", avg_logprob=-0.8, stt=loose).allowed
+        assert not interpret("yes", avg_logprob=-0.8, stt=SttConfig(avg_logprob_floor=-0.5)).allowed
+
+    def test_the_gate_has_no_floor_of_its_own(self) -> None:
+        # With nothing passed, the boundary is config's default to the
+        # third decimal, in both directions: there is one definition of
+        # each floor, and it is not in confirm.py.
+        floors = SttConfig()
+        assert interpret("yes", no_speech_prob=floors.no_speech_prob_floor - 0.001).allowed
+        assert not interpret("yes", no_speech_prob=floors.no_speech_prob_floor + 0.001).allowed
+        assert interpret("yes", avg_logprob=floors.avg_logprob_floor + 0.001).allowed
+        assert not interpret("yes", avg_logprob=floors.avg_logprob_floor - 0.001).allowed
 
     def test_punctuation_and_case_do_not_matter(self) -> None:
         assert interpret("Yes!").allowed

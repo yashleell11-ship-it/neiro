@@ -25,6 +25,8 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, field
 
+from neiro.config import SttConfig
+
 # Closed lexicons. Anything not in either is ambiguous, and ambiguous is
 # no. Kept small deliberately: every word added is a word that can be
 # hallucinated into a yes.
@@ -115,19 +117,35 @@ def normalise(text: str) -> str:
     return " ".join(cleaned.split())
 
 
-def interpret(transcript: str, no_speech_prob: float = 0.0, avg_logprob: float = 0.0) -> Answer:
+def interpret(
+    transcript: str,
+    no_speech_prob: float = 0.0,
+    avg_logprob: float = 0.0,
+    *,
+    stt: SttConfig | None = None,
+) -> Answer:
     """Turn what was heard into a decision. Never asks a model anything.
 
     The STT confidence floors are applied here too, not only upstream:
     this is the one place where being wrong changes the machine, so it
     re-checks rather than trusting that someone else did.
+
+    Re-checked against the SAME floors, though — `stt` is the loaded
+    `cfg.stt`, not a copy of its numbers. This function once carried its
+    own `0.4` and `-1.0`, so tightening the floor in config after a run
+    of hallucinated confirmations would have tightened transcription
+    and left the one check that gates side effects exactly where it
+    was. Whoever wires the voice confirmer must pass `cfg.stt`: the
+    default below is the config's default, which drifts from
+    `~/.config/neiro/config.toml` the moment it is edited.
     """
+    floors = stt if stt is not None else SttConfig()
     text = normalise(transcript)
     if not text:
         return Answer("ambiguous", "voice", transcript)
     if text in HALLUCINATIONS:
         return Answer("ambiguous", "voice", transcript)
-    if no_speech_prob > 0.4 or avg_logprob < -1.0:
+    if no_speech_prob > floors.no_speech_prob_floor or avg_logprob < floors.avg_logprob_floor:
         return Answer("ambiguous", "voice", transcript)
     if len(text.split()) > MAX_WORDS:
         # "yes I think we should probably do that" is a sentence, not a
