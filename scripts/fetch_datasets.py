@@ -65,6 +65,16 @@ def fetch_hf(ds: Dataset, dest: Path, token: str | None) -> str:
         )
     except GatedRepoError:
         return "needs-approval"
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # One corpus must never end a 100 GB run. Happened for real:
+        # deleting a directory while its download was in flight raised
+        # FileNotFoundError out of hf_hub's move step and killed every
+        # remaining dataset in the queue. Everything here resumes, so the
+        # right response is to record it and carry on.
+        console.print(f"[red]{type(exc).__name__}[/]: {exc}")
+        return "failed"
     return "done"
 
 
@@ -82,7 +92,13 @@ def fetch_url(ds: Dataset, dest: Path) -> str:
         cmd = ["aria2c", "-c", "-x", "4", "-s", "4", "--dir", str(dest), ds.url]
     else:
         cmd = ["wget", "-c", "-P", str(dest), ds.url]
-    if subprocess.run(cmd, check=False).returncode != 0:
+    try:
+        if subprocess.run(cmd, check=False).returncode != 0:
+            return "failed"
+    except KeyboardInterrupt:
+        raise
+    except OSError as exc:
+        console.print(f"[red]{type(exc).__name__}[/]: {exc}")
         return "failed"
     if ds.sha256:
         target = dest / ds.url.rsplit("/", 1)[-1]
