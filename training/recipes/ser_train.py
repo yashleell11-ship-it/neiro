@@ -399,8 +399,35 @@ def main(argv: list[str] | None = None) -> int:
             )
             by_kind[kind] = evaluate(model, loader, device, dtype)
 
+    # Per corpus, because one corpus can dominate a split and make the
+    # headline describe something else entirely. Rasa ships exactly TWO
+    # speaker ids (male, female), so a speaker-independent split puts all
+    # 4541 of its clips on one side — the first run with Rasa included
+    # had a test set that was 68% a single unseen Hindi male voice, and
+    # the headline AUC dropped from 0.788 to 0.682 while validation ROSE
+    # to 0.798. Neither number was wrong; the headline just stopped
+    # meaning what it meant the day before.
+    by_corpus: dict[str, dict] = {}
+    for corpus in sorted({r.corpus for r in test_rows}):
+        subset = [r for r in test_rows if r.corpus == corpus]
+        if len(subset) < 32:
+            continue
+        loader = DataLoader(
+            EmotionClips(subset, args.seconds),
+            batch_size=args.batch,
+            num_workers=args.workers,
+            collate_fn=collate,
+        )
+        by_corpus[corpus] = evaluate(model, loader, device, dtype)
+
     report = {
         "test": final,
+        "by_corpus": by_corpus,
+        "split_speakers": {
+            "train": len({r.speaker for r in train_rows}),
+            "val": len({r.speaker for r in val_rows}),
+            "test": len({r.speaker for r in test_rows}),
+        },
         # Never averaged into one headline: acted contrast and natural
         # speech are different tasks, and reporting one number over a mix
         # of them is the commonest way SER results mislead.
