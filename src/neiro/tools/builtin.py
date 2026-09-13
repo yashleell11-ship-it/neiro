@@ -24,6 +24,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from neiro.tools import hyprland, media, system
+from neiro.tools.audit import AuditLog
 from neiro.tools.registry import ToolRegistry, ToolSpec
 from neiro.tools.tiers import Tier
 
@@ -100,9 +101,14 @@ def _focus_window(index: int) -> str:
     return hyprland.focus_window_by_index(index, hyprland.list_windows())
 
 
-def build_registry(confirm=None) -> ToolRegistry:
-    """Everything Neiro can do on this machine."""
-    registry = ToolRegistry(confirm=confirm)
+def build_registry(confirm=None, *, audit: AuditLog | None = None) -> ToolRegistry:
+    """Everything Neiro can do on this machine.
+
+    `audit` is passed through rather than created here so a test can
+    point it at a temporary file — the default log lives under
+    ~/.local/state and a suite must never write there.
+    """
+    registry = ToolRegistry(confirm=confirm, audit=audit)
 
     green = [
         ToolSpec(

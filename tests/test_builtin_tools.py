@@ -95,6 +95,20 @@ class TestGreenToolsAgainstThisMachine:
         assert "percent" not in props
 
 
+class TestAuditPassthrough:
+    def test_the_log_handed_in_is_the_one_written(self, tmp_path) -> None:
+        # The daemon hands the registry its audit log; a registry that
+        # quietly made its own would write to ~/.local/state from a test
+        # and record nothing where the daemon looks.
+        from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+
+        log = AuditLog(path=tmp_path / "audit.jsonl")
+        build_registry(confirm=None, audit=log).call("audio_state", {}, turn_id=2)
+        assert [e["event"] for e in log.entries] == [ATTEMPTED, SUCCEEDED]
+        assert log.entries[0]["tool"] == "audio_state" and log.entries[0]["turn"] == 2
+        assert (tmp_path / "audit.jsonl").exists()
+
+
 class TestRejections:
     @pytest.mark.parametrize(
         ("name", "args"),

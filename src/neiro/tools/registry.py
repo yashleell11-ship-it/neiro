@@ -29,6 +29,12 @@ the risk:
 the same pydantic model that validates the call. They cannot drift,
 which is the usual way a registry like this quietly stops matching
 what it advertises.
+
+**The audit log is written here, around the call, not by the caller.**
+`call()` is the one place every gated action passes through, so it is
+the one place that can promise an `attempted` line before the handler
+runs and an outcome after — a caller that forgot would leave a tool
+with no record at all, which is the gap the log exists to close.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from typing import Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
+from neiro.tools.audit import AuditLog
 from neiro.tools.tiers import Tier
 
 # Types an argument may legally be. `str` is deliberately absent — see
@@ -149,12 +156,28 @@ class ToolRegistry:
         self,
         confirm: Callable[[ToolSpec, BaseModel, str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        *,
+        audit: AuditLog | None = None,
     ) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._buckets: dict[str, _Bucket] = {}
         self._global = _Bucket(self.SIDE_EFFECT_BUDGET_PER_MIN)
         self._confirm = confirm
         self._clock = clock
+        # Optional so a registry built for a unit test writes nothing to
+        # ~/.local/state. The daemon always passes one.
+        self._audit = audit
+
+    @property
+    def can_confirm(self) -> bool:
+        """Whether a YELLOW tool could ever run here.
+
+        The orchestrator asks this to pick the tier ceiling for the
+        schemas it sends: with no way to ask, the model must not even be
+        offered the tool — a call it can express but never complete is
+        a turn that ends in "not doing that" every time.
+        """
+        return self._confirm is not None
 
     # -- registration ---------------------------------------------------
 
@@ -236,19 +259,34 @@ class ToolRegistry:
         return spec, parsed
 
     def call(self, name: str, args: dict, turn_id: int = 0) -> str:
-        """Validate, gate, and run. Returns what Neiro says about it."""
+        """Validate, gate, and run. Returns what Neiro says about it.
+
+        A rejected call is not audited: nothing ran, nothing could have,
+        and the only arguments to record would be the unvalidated ones —
+        the one place free text could reach the log.
+        """
         spec, parsed = self.validate(name, args)
+        args = parsed.model_dump()
         now = self._clock()
+        audit = self._audit
+        attempt = audit.attempt(spec.name, args, spec.tier.value, turn_id) if audit else None
+        call_no = attempt["call"] if attempt else 0
 
         if not self._buckets[spec.name].allow(now):
+            if audit:
+                audit.rate_limited(spec.name, turn_id, call=call_no)
             raise RateLimited(
                 f"I've done {name} too many times in the last minute. Give it a second."
             )
         if spec.tier is not Tier.GREEN and not self._global.allow(now):
+            if audit:
+                audit.rate_limited(spec.name, turn_id, call=call_no)
             raise RateLimited("That's a lot of changes at once. I've stopped for a minute.")
 
         if spec.tier is Tier.YELLOW:
             if self._confirm is None:
+                if audit:
+                    audit.denied(spec.name, turn_id, "no confirmer", call=call_no)
                 raise ToolNotConfirmed(
                     f"{name} needs confirming and I have no way to ask right now."
                 )
@@ -258,9 +296,21 @@ class ToolRegistry:
             # is not something the LLM participates in.
             nonce = self.nonce(spec, parsed, turn_id)
             if not self._confirm(spec, parsed, nonce):
+                if audit:
+                    audit.denied(spec.name, turn_id, "confirmation refused", call=call_no)
                 raise ToolNotConfirmed(f"Okay, not doing {name}.")
 
-        return spec.handler(**parsed.model_dump())
+        try:
+            result = spec.handler(**args)
+        except Exception as exc:
+            # Recorded and re-raised: the log answers "did it run?", the
+            # caller decides what she says about it.
+            if audit:
+                audit.failed(spec.name, turn_id, f"{type(exc).__name__}: {exc}", call=call_no)
+            raise
+        if audit:
+            audit.succeeded(spec.name, turn_id, str(result), call=call_no)
+        return result
 
     @staticmethod
     def nonce(spec: ToolSpec, parsed: BaseModel, turn_id: int) -> str:

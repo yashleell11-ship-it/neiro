@@ -14,6 +14,7 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from neiro.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
 from neiro.tools.registry import (
     RateLimited,
     ToolNotConfirmed,
@@ -280,3 +281,100 @@ class TestInjectionPayloads:
         r.register(spec(name="focus", tier=Tier.YELLOW, model=IndexArgs))
         with pytest.raises(ToolRejected):
             r.call("focus", {"index": 0, "cmd": payload})
+
+
+class TestAudit:
+    """`call()` is the one place every gated action passes through, so
+    it is the one place that can promise an `attempted` line before the
+    handler runs and an outcome after. A caller that had to remember to
+    log would one day forget, and the tool that hung would be the one
+    with no record.
+    """
+
+    def _log(self, tmp_path) -> AuditLog:
+        return AuditLog(path=tmp_path / "audit.jsonl")
+
+    def test_a_green_call_is_bracketed_by_attempt_and_success(self, tmp_path) -> None:
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(handler=lambda **_: "battery 96 percent"))
+        r.call("ping", {}, turn_id=4)
+        assert [e["event"] for e in log.entries] == [ATTEMPTED, SUCCEEDED]
+        attempt, outcome = log.entries
+        assert attempt["turn"] == 4 and attempt["tier"] == "green"
+        assert outcome["call"] == attempt["call"]
+        assert "96" in outcome["result"]
+        assert log.unfinished() == []
+
+    def test_the_attempt_carries_the_validated_arguments(self, tmp_path) -> None:
+        # What the log records is what the handler received — after
+        # validation filled the defaults — not the raw dict the model sent.
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(model=EnumArgs))
+        r.call("ping", {"direction": "up"})
+        assert log.entries[0]["args"] == {"direction": "up", "steps": 1}
+
+    def test_a_denial_is_an_outcome_not_a_gap(self, tmp_path) -> None:
+        log = self._log(tmp_path)
+        r = ToolRegistry(confirm=lambda *_: False, audit=log)
+        r.register(spec(tier=Tier.YELLOW, model=IndexArgs))
+        with pytest.raises(ToolNotConfirmed):
+            r.call("ping", {"index": 1})
+        assert [e["event"] for e in log.entries] == [ATTEMPTED, DENIED]
+        assert log.unfinished() == []
+
+    def test_no_confirmer_is_recorded_as_denied(self, tmp_path) -> None:
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(tier=Tier.YELLOW, model=IndexArgs))
+        with pytest.raises(ToolNotConfirmed):
+            r.call("ping", {"index": 1})
+        assert log.entries[-1]["event"] == DENIED
+
+    def test_a_rate_limit_is_an_outcome(self, tmp_path) -> None:
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(max_per_minute=1))
+        r.call("ping", {})
+        with pytest.raises(RateLimited):
+            r.call("ping", {})
+        assert [e["event"] for e in log.entries] == [ATTEMPTED, SUCCEEDED, ATTEMPTED, RATE_LIMITED]
+
+    def test_a_handler_that_raises_is_recorded_then_re_raised(self, tmp_path) -> None:
+        # The log answers "did it run?"; the caller still decides what
+        # she says about it, so the exception must come through.
+        def boom(**_) -> str:
+            raise OSError("playerctl: no players found")
+
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(handler=boom))
+        with pytest.raises(OSError):
+            r.call("ping", {})
+        assert [e["event"] for e in log.entries] == [ATTEMPTED, FAILED]
+        assert "no players" in log.entries[-1]["error"]
+
+    def test_a_rejected_call_writes_nothing(self, tmp_path) -> None:
+        # Nothing ran and nothing could have, and the only arguments to
+        # record would be the unvalidated ones — the one way free text
+        # could reach a log that promises it holds none.
+        log = self._log(tmp_path)
+        r = ToolRegistry(audit=log)
+        r.register(spec(model=IndexArgs))
+        with pytest.raises(ToolRejected):
+            r.call("ping", {"index": 'os.execute("id")'})
+        with pytest.raises(ToolRejected):
+            r.call("nope", {})
+        assert log.entries == []
+
+    def test_no_audit_log_is_fine(self) -> None:
+        r = ToolRegistry()
+        r.register(spec())
+        assert r.call("ping", {}) == "ok"
+
+
+class TestCanConfirm:
+    def test_reports_whether_a_yellow_tool_could_ever_run(self) -> None:
+        assert ToolRegistry(confirm=lambda *_: True).can_confirm
+        assert not ToolRegistry().can_confirm
