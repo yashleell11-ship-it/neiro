@@ -192,6 +192,14 @@ class TestFailures:
         orch, _ = build(stt=FakeStt("   \n "))
         assert asyncio.run(orch.run(AUDIO)).error == "empty_transcript"
 
+    def test_a_rejected_utterance_leaves_no_live_turn(self) -> None:
+        # The early return used to skip `live = None`, so the next
+        # barge-in cancelled a turn that had already finished and
+        # reported success.
+        orch, _ = build(stt=FakeStt(""))
+        asyncio.run(orch.run(AUDIO))
+        assert orch.live is None
+
     def test_a_failing_llm_does_not_raise_out_of_the_turn(self) -> None:
         # She has to say something in character about it, which she
         # cannot do if the turn threw.
@@ -271,6 +279,25 @@ class TestAffect:
         affect = FakeAffect()
         orch, _ = build(affect=affect)
         asyncio.run(orch.run(AUDIO))
+        assert affect.commits == 1
+
+    def test_a_rejected_utterance_still_closes_its_window(self) -> None:
+        # The STT floor blanking the transcript does not un-hear the
+        # windows affect observed while he spoke. The provider staged
+        # them waiting for exactly one close per utterance; the early
+        # return skipped it, and the next turn's band was decided against
+        # this utterance's history.
+        affect = FakeAffect()
+        orch, _ = build(stt=FakeStt(""), affect=affect)
+
+        async def go() -> TurnResult:
+            turn = orch.begin_turn()
+            await orch.observe_while_speaking(turn, AUDIO)
+            return await orch.run(AUDIO, turn=turn)
+
+        result = asyncio.run(go())
+        assert result.error == "empty_transcript"
+        assert affect.observations == 1
         assert affect.commits == 1
 
     def test_no_affect_provider_is_fine(self) -> None:

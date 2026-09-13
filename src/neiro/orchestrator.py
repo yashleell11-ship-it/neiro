@@ -336,9 +336,20 @@ class Orchestrator:
             log.exception("turn %d failed", turn.id)
             result.error = type(exc).__name__
             turn.stamp("failed")
-
-        if self.affect is not None and not result.cancelled:
-            # Once per utterance, never per window.
-            self.affect.commit_utterance()
-        self.live = None
+        finally:
+            # A `finally`, because the empty-transcript path returns from
+            # inside the `try` and used to skip both of these. The affect
+            # provider had already staged that utterance's last window and
+            # hysteresis history during observe(); with no commit to close
+            # them they leaked into the next turn — its band was decided
+            # against the rejected utterance's history, and its features
+            # were folded into his baseline one turn late. And `live`
+            # stayed pointing at a finished turn, so the next barge-in
+            # "cancelled" it and reported success.
+            if self.affect is not None and not result.cancelled:
+                # Once per utterance, never per window. Not on a barge-in:
+                # an interrupted utterance is not a sample of how he
+                # normally sounds.
+                self.affect.commit_utterance()
+            self.live = None
         return result
