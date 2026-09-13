@@ -29,6 +29,7 @@ from neiro.orchestrator import TurnResult
 from neiro.speech.errors import ErrorSpeech, Failure
 from neiro.state import Turn, UserAffect
 from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+from neiro.tools.builtin import build_registry
 from neiro.tools.confirm import NotificationConfirmer
 from neiro.tools.registry import ToolNotConfirmed, ToolRegistry, ToolSpec
 from neiro.tools.tiers import Tier
@@ -512,6 +513,51 @@ class TestTools:
         )
         assert d.tools is r and d.orchestrator.tools is r
         assert [t["function"]["name"] for t in d.orchestrator.tool_schemas()] == ["battery"]
+
+    def test_an_injected_empty_registry_stays_empty(self) -> None:
+        # A registry is sized, so an empty one is falsy: `tools or
+        # builtins` handed the orchestrator every builtin tool when the
+        # caller had asked for none.
+        empty = ToolRegistry()
+        d = Daemon(cfg=Neiro())
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            tools=empty,
+        )
+        assert d.tools is empty and d.orchestrator.tools is empty
+        assert d.orchestrator.tool_schemas() == []
+
+    def test_confirm_none_is_the_notification_gate_not_no_gate(self) -> None:
+        # `confirm=None` is the absence of an override: YELLOW tools are
+        # offered and the notification asks. GREEN-only is the registry's
+        # own property, decided where it is built and handed in whole.
+        order: list[str] = []
+        asks = Daemon(cfg=Neiro())
+        asks.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            confirm=None,
+        )
+        assert asks.tools.can_confirm
+        assert "set_volume" in [t["function"]["name"] for t in asks.orchestrator.tool_schemas()]
+
+        quiet = Daemon(cfg=Neiro())
+        quiet.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            tools=build_registry(confirm=None),
+        )
+        assert not quiet.tools.can_confirm
+        offered = [t["function"]["name"] for t in quiet.orchestrator.tool_schemas()]
+        assert "system_stats" in offered and "set_volume" not in offered
 
     def test_a_green_tool_runs_through_handle(self, tmp_path) -> None:
         # The whole Stage 3 loop from the daemon's door: he asks, the

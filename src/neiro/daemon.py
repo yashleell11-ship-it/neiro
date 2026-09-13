@@ -116,6 +116,12 @@ class Daemon:
         registry. `tools` replaces the whole registry (a test's fakes);
         `confirm` and `audit` replace just the gate and the log of the
         real one.
+
+        `confirm=None` is the absence of an override, not of a gate:
+        the notification asks. A daemon that should offer GREEN tools
+        only — nothing on the box can ask — hands in the registry itself,
+        `tools=build_registry(confirm=None)`, and the orchestrator drops
+        the YELLOW schemas because that registry cannot confirm.
         """
         from neiro.audio.sink_local import LocalWavSink
         from neiro.llm.ollama_native import OllamaNativeLlm
@@ -130,9 +136,15 @@ class Daemon:
             if self.cfg.affect.enabled
             else NullAffectProvider()
         )
-        self.tools = tools or build_registry(
-            confirm=confirm or self.notification_confirm, audit=audit or AuditLog()
-        )
+        # `is None`, not `or`: a registry is sized, so an injected EMPTY
+        # one is falsy, and `or` handed the orchestrator every builtin
+        # tool when the caller had asked for none.
+        if tools is None:
+            tools = build_registry(
+                confirm=confirm if confirm is not None else self.notification_confirm,
+                audit=audit if audit is not None else AuditLog(),
+            )
+        self.tools = tools
         self.orchestrator = Orchestrator(
             stt=stt or FasterWhisperStt(self.cfg),
             llm=llm or OllamaNativeLlm(self.cfg),
