@@ -9,13 +9,20 @@ tested.
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field
 
 from neiro.llm.openai_compat import StreamAccumulator
-from neiro.orchestrator import CHUNK_QUEUE_DEPTH, Orchestrator, TurnResult
+from neiro.orchestrator import CHUNK_QUEUE_DEPTH, MAX_TOOL_ROUNDS, Orchestrator, TurnResult
 from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState, UserAffect
+from neiro.tools.audit import DENIED, FAILED, AuditLog
+from neiro.tools.registry import ToolRegistry, ToolSpec
+from neiro.tools.tiers import Tier
 
 AUDIO = np.zeros(16000, dtype=np.float32)
 
@@ -599,3 +606,389 @@ class TestStateSeparation:
 
         # The rule itself: two objects, never the same one.
         assert turn.neiro_state is not turn.user_affect
+
+
+# -- tools ---------------------------------------------------------------
+
+
+class NoArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PercentArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    percent: int = Field(ge=0, le=100)
+
+
+def call(name: str, *fragments: str) -> tuple:
+    """A scripted tool call whose arguments arrive as these JSON
+    fragments, one delta each — the shape a real stream has."""
+    return ("call", name, fragments or ("{}",))
+
+
+class ToolLlm:
+    """One script per request. A `str` item is a text fragment; a
+    `call(...)` item is a tool call, accumulated exactly as the real
+    clients do it and surfaced on the `done` event.
+
+    Synchronous by default — no await between events — so a whole
+    request is produced before the voice gets to run. `pace` adds a
+    sleep between events for the tests that need the voice to keep up.
+    """
+
+    def __init__(self, *scripts: list, pace: float = 0.0) -> None:
+        self.scripts = list(scripts)
+        self.pace = pace
+        self.requests: list[tuple[list[dict], list[dict] | None]] = []
+
+    async def stream(self, messages: list[dict], tools=None) -> AsyncIterator[dict]:
+        self.requests.append((list(messages), tools))
+        script = self.scripts.pop(0) if self.scripts else ["<e:neutral:5> Done."]
+        accumulator = StreamAccumulator()
+        index = 0
+        for item in script:
+            if self.pace:
+                await asyncio.sleep(self.pace)
+            if isinstance(item, str):
+                accumulator.add_delta({"content": item})
+                yield {"text": item}
+                continue
+            _, name, fragments = item
+            accumulator.add_delta(
+                {"tool_calls": [{"index": index, "function": {"name": name, "arguments": ""}}]}
+            )
+            for fragment in fragments:
+                accumulator.add_delta(
+                    {"tool_calls": [{"index": index, "function": {"arguments": fragment}}]}
+                )
+            index += 1
+        yield {"done": accumulator}
+
+
+class Handlers:
+    """The tool bodies, recording what they were given."""
+
+    def __init__(self) -> None:
+        self.battery_calls = 0
+        self.volumes: list[int] = []
+        self.seen_state: list[EmotionLabel] = []
+        self.turn: object = None
+        self.fail: Exception | None = None
+        # A blocking handler stands in for a six-second confirmation
+        # window. Bounded, so an implementation that blocks the event
+        # loop on it fails its test instead of hanging the suite.
+        self.block: threading.Event | None = None
+        self.block_timeout_s = 2.0
+        self.started = threading.Event()
+        self.finished = threading.Event()
+
+    def battery(self) -> str:
+        self.battery_calls += 1
+        if self.turn is not None:
+            self.seen_state.append(self.turn.neiro_state.label)
+        self.started.set()
+        if self.block is not None:
+            self.block.wait(timeout=self.block_timeout_s)
+        self.finished.set()
+        if self.fail is not None:
+            raise self.fail
+        return "Ninety six percent, charging."
+
+    def volume(self, percent: int) -> str:
+        self.volumes.append(percent)
+        return f"Volume {percent} percent."
+
+
+def registry(
+    handlers: Handlers, confirm=None, tmp_path: Path | None = None
+) -> tuple[ToolRegistry, AuditLog | None]:
+    audit = AuditLog(path=tmp_path / "audit.jsonl") if tmp_path is not None else None
+    r = ToolRegistry(confirm=confirm, audit=audit)
+    r.register(
+        ToolSpec(
+            name="battery",
+            description="How much charge is left.",
+            tier=Tier.GREEN,
+            args_model=NoArgs,
+            handler=handlers.battery,
+        )
+    )
+    r.register(
+        ToolSpec(
+            name="volume",
+            description="Set the speaker volume.",
+            tier=Tier.YELLOW,
+            args_model=PercentArgs,
+            handler=handlers.volume,
+        )
+    )
+    return r, audit
+
+
+def build_with_tools(llm: ToolLlm, tools: ToolRegistry | None, **kw) -> tuple[Orchestrator, dict]:
+    parts = {
+        "stt": FakeStt(),
+        "llm": llm,
+        "tts": kw.get("tts") or FakeTts(),
+        "sink": kw.get("sink") or FakeSink(),
+    }
+    return Orchestrator(**parts, tools=tools), parts
+
+
+class TestTools:
+    """Tools reachable by voice: the model asks, the registry runs, the
+    result goes back, and what she finally says is the second stream.
+    """
+
+    def test_a_green_call_runs_and_its_result_feeds_the_second_request(self) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("battery")],
+            ["<e:happy:7> Ninety six percent. Still charging."],
+        )
+        orch, parts = build_with_tools(llm, registry(handlers)[0])
+        result = asyncio.run(orch.run(AUDIO))
+
+        assert result.error is None and not result.cancelled
+        assert handlers.battery_calls == 1
+        assert len(llm.requests) == 2
+        # The second request is the first plus the call and its result,
+        # in the exact OpenAI shape, bound by id.
+        first, second = (m for m, _ in llm.requests)
+        assert second[: len(first)] == first
+        asked, answered = second[len(first) :]
+        assert asked["role"] == "assistant" and asked["tool_calls"][0]["type"] == "function"
+        assert asked["tool_calls"][0]["function"] == {"name": "battery", "arguments": "{}"}
+        assert answered == {
+            "role": "tool",
+            "tool_call_id": asked["tool_calls"][0]["id"],
+            "content": "Ninety six percent, charging.",
+        }
+        # What she said is the second stream, and only that.
+        assert result.reply == "Ninety six percent. Still charging."
+        assert parts["tts"].texts == ["Ninety six percent.", "Still charging."]
+        assert result.turn.tool_calls[0].name == "battery"
+
+    def test_the_whole_exchange_is_remembered_in_order(self) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(["<e:neutral:5> ", call("battery")], ["<e:happy:7> Ninety six percent."])
+        orch, _ = build_with_tools(llm, registry(handlers)[0])
+        asyncio.run(orch.run(AUDIO))
+        asyncio.run(orch.run(AUDIO))
+        # The next turn sees user, the call, the result, the reply — then
+        # its own user turn. Nothing rewritten, nothing missing.
+        roles = [m["role"] for m in llm.requests[-1][0]]
+        assert roles == ["system", "user", "assistant", "tool", "assistant", "user"]
+
+    def test_the_first_tag_drives_the_face_and_the_second_the_voice(self) -> None:
+        # The action-turn contract: the tag on the tool-call stream is
+        # what her face shows while the tool runs; the tag on the stream
+        # after the result is what her voice carries.
+        handlers = Handlers()
+        llm = ToolLlm(["<e:relaxed:3> ", call("battery")], ["<e:surprised:8> Only twelve percent!"])
+        orch, parts = build_with_tools(llm, registry(handlers)[0])
+        turn = orch.begin_turn()
+        handlers.turn = turn
+        result = asyncio.run(orch.run(AUDIO, turn=turn))
+
+        assert handlers.seen_state == [EmotionLabel.RELAXED]
+        assert [s.label for s in parts["tts"].states] == [EmotionLabel.SURPRISED]
+        assert result.state.label is EmotionLabel.SURPRISED
+        assert turn.neiro_state.label is EmotionLabel.SURPRISED
+        assert "emotion_resolved" in turn.timeline
+
+    def test_narration_alongside_a_call_is_not_spoken_or_remembered(self) -> None:
+        # The prompt forbids "let me check". When the model does it
+        # anyway, what has not reached the voice by the time the call
+        # appears is dropped, and none of it is her reply.
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", "Checking now. ", call("battery")],
+            ["<e:happy:7> Ninety six percent."],
+        )
+        orch, parts = build_with_tools(llm, registry(handlers)[0])
+        result = asyncio.run(orch.run(AUDIO))
+
+        assert result.reply == "Ninety six percent."
+        assert parts["tts"].texts == ["Ninety six percent."]
+        assert not any("Checking" in json.dumps(m) for m in orch._history)
+        assert orch._history[1]["content"] == ""
+
+    def test_arguments_split_across_chunks_arrive_whole(self) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("volume", '{"per', 'cent"', ": 4", "0}")],
+            ["<e:relaxed:4> Forty it is."],
+        )
+        orch, _ = build_with_tools(llm, registry(handlers, confirm=lambda *_: True)[0])
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error is None
+        assert handlers.volumes == [40]
+        asked = llm.requests[1][0][-2]
+        assert json.loads(asked["tool_calls"][0]["function"]["arguments"]) == {"percent": 40}
+
+    def test_the_tools_array_is_the_same_bytes_every_request(self) -> None:
+        # It sits in the KV prefix right after the system prompt. A
+        # reordered key is a full prefill every turn with no error.
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("battery")], ["<e:happy:7> Fine."], ["<e:happy:7> Ok."]
+        )
+        orch, _ = build_with_tools(llm, registry(handlers, confirm=lambda *_: True)[0])
+        asyncio.run(orch.run(AUDIO))
+        asyncio.run(orch.run(AUDIO))
+        sent = [json.dumps(tools) for _, tools in llm.requests]
+        assert len(sent) == 3 and sent[0]
+        assert len(set(sent)) == 1
+        assert [t["function"]["name"] for t in llm.requests[0][1]] == ["battery", "volume"]
+
+    def test_a_registry_with_no_confirmer_offers_only_green_tools(self) -> None:
+        # A tool the model can express but never complete is a turn that
+        # ends in "not doing that" every time.
+        handlers = Handlers()
+        llm = ToolLlm(["<e:neutral:5> Hi."])
+        orch, _ = build_with_tools(llm, registry(handlers, confirm=None)[0])
+        asyncio.run(orch.run(AUDIO))
+        assert [t["function"]["name"] for t in llm.requests[0][1]] == ["battery"]
+
+    def test_no_registry_sends_no_tools(self) -> None:
+        llm = ToolLlm(["<e:neutral:5> Hi."])
+        orch, _ = build_with_tools(llm, None)
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error is None
+        assert llm.requests[0][1] is None
+
+    def test_a_denied_yellow_tool_does_not_run_and_the_turn_says_so(self, tmp_path) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(["<e:neutral:5> ", call("volume", '{"percent": 30}')], ["<e:happy:7> Done."])
+        reg, audit = registry(handlers, confirm=lambda *_: False, tmp_path=tmp_path)
+        orch, parts = build_with_tools(llm, reg)
+        result = asyncio.run(orch.run(AUDIO))
+
+        assert handlers.volumes == []
+        assert result.error == "ToolNotConfirmed" and not result.cancelled
+        # No second request, nothing spoken from the model, nothing
+        # remembered: the denial line is the caller's to speak.
+        assert len(llm.requests) == 1
+        assert parts["tts"].texts == []
+        assert orch._history == []
+        assert [e["event"] for e in audit.entries][-1] == DENIED
+        assert audit.entries[0]["turn"] == result.turn.id
+
+    def test_a_tool_that_raises_is_an_error_not_a_crash(self, tmp_path) -> None:
+        handlers = Handlers()
+        handlers.fail = OSError("no players found")
+        llm = ToolLlm(["<e:neutral:5> ", call("battery")], ["<e:happy:7> Done."])
+        reg, audit = registry(handlers, tmp_path=tmp_path)
+        orch, parts = build_with_tools(llm, reg)
+        result = asyncio.run(orch.run(AUDIO))
+
+        assert result.error == "OSError" and not result.cancelled
+        assert len(llm.requests) == 1
+        assert parts["tts"].texts == []
+        assert orch._history == []
+        assert [e["event"] for e in audit.entries][-1] == FAILED
+
+    def test_a_barge_in_during_a_tool_call_cancels_the_turn(self) -> None:
+        # The call runs off the loop, so a barge-in lands while the tool
+        # is still going: he does not wait for a six-second confirmation
+        # window to end before she stops. A `registry.call()` made on the
+        # loop instead blocks everything until the handler's timeout,
+        # after which the turn finishes as if nothing happened.
+        handlers = Handlers()
+        handlers.block = threading.Event()
+        llm = ToolLlm(["<e:neutral:5> ", call("battery")], ["<e:happy:7> Done."])
+        orch, parts = build_with_tools(llm, registry(handlers)[0])
+
+        async def go() -> tuple[TurnResult, bool]:
+            turn = orch.begin_turn()
+            task = asyncio.create_task(orch.run(AUDIO, turn=turn))
+            while not handlers.started.is_set():
+                await asyncio.sleep(0.005)
+            turn.cancel.set()
+            try:
+                result = await asyncio.wait_for(task, timeout=1)
+                return result, handlers.finished.is_set()
+            finally:
+                handlers.block.set()  # let the worker thread finish
+
+        result, tool_had_finished = asyncio.run(go())
+        assert result.cancelled
+        assert not tool_had_finished, "the turn waited for the tool instead of stopping"
+        assert len(llm.requests) == 1
+        assert parts["sink"].cancelled == 1
+        assert orch._history == []
+
+    def test_a_rejected_call_is_fed_back_for_the_model_to_recover(self) -> None:
+        # The registry's rejection names the real tools precisely so a
+        # hallucinated name becomes a recoverable turn.
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("batery")],
+            ["<e:neutral:5> ", call("battery")],
+            ["<e:happy:7> Ninety six percent."],
+        )
+        orch, _ = build_with_tools(llm, registry(handlers)[0])
+        result = asyncio.run(orch.run(AUDIO))
+
+        assert result.error is None
+        assert len(llm.requests) == 3
+        rejection = llm.requests[1][0][-1]
+        assert rejection["role"] == "tool" and "battery" in rejection["content"]
+        assert handlers.battery_calls == 1
+        assert result.reply == "Ninety six percent."
+
+    def test_a_model_that_keeps_calling_tools_is_stopped(self) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(*[["<e:neutral:5> ", call("battery")] for _ in range(MAX_TOOL_ROUNDS + 3)])
+        orch, _ = build_with_tools(llm, registry(handlers)[0])
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error == "TooManyToolRounds"
+        assert len(llm.requests) == MAX_TOOL_ROUNDS + 1
+        assert orch._history == []
+
+    def test_two_calls_in_one_round_run_in_order_with_their_own_ids(self) -> None:
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("battery"), call("volume", '{"percent": 20}')],
+            ["<e:happy:7> Done both."],
+        )
+        orch, _ = build_with_tools(llm, registry(handlers, confirm=lambda *_: True)[0])
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error is None
+        assert handlers.battery_calls == 1 and handlers.volumes == [20]
+        asked, *answers = llm.requests[1][0][-3:]
+        ids = [c["id"] for c in asked["tool_calls"]]
+        assert len(set(ids)) == 2
+        assert [a["tool_call_id"] for a in answers] == ids
+
+    def test_history_trims_whole_exchanges(self) -> None:
+        # A tool exchange is four messages. Cut in the middle it leaves a
+        # `tool` message answering a call that is no longer there, which
+        # the backends reject outright.
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5> ", call("battery")], ["<e:happy:7> Fine."], ["<e:happy:7> Ok."]
+        )
+        orch, _ = build_with_tools(llm, registry(handlers)[0])
+        orch._history_limit = 1
+        asyncio.run(orch.run(AUDIO))
+        asyncio.run(orch.run(AUDIO))
+        assert [m["role"] for m in orch._history] == ["user", "assistant"]
+        assert orch._history[-1]["content"] == "Ok."
+
+    def test_a_paced_stream_still_speaks_only_the_reply(self) -> None:
+        # With real timing between events the voice keeps up with the
+        # stream; a compliant tool round carries the tag and nothing
+        # else, so nothing of it reaches the synthesiser either way.
+        handlers = Handlers()
+        llm = ToolLlm(
+            ["<e:neutral:5>", call("battery")],
+            ["<e:happy:7> Ninety ", "six percent. ", "Still charging."],
+            pace=0.002,
+        )
+        orch, parts = build_with_tools(llm, registry(handlers)[0])
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error is None
+        assert parts["tts"].texts == ["Ninety six percent.", "Still charging."]
+        assert [s.label for s in parts["tts"].states] == [EmotionLabel.HAPPY] * 2

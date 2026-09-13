@@ -20,11 +20,23 @@ already there.
 **The timeline is the cheapest useful thing here.** Every stage stamps
 `turn.timeline`, and that dict is what `metrics.py` turns into the one
 measured number: endpoint → the browser's `played` for sequence 0.
+
+**Tools are a second request, not a second code path.** When a stream
+ends in tool calls the registry runs them and the same producer asks
+the model again with the results appended — the request is the previous
+one plus two messages, so the KV prefix still hits. What the model said
+*alongside* a call is never her reply: the tag from that stream drives
+her face while the tool runs, the prose is narration the prompt forbids,
+and the tag on the stream that follows the result is the one that
+drives her voice. The clients only surface calls when a stream is done,
+so suppression means what it can: nothing queued but unspoken survives,
+and nothing from a tool round is remembered as something she said.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -35,7 +47,9 @@ from neiro.config import Neiro
 from neiro.llm.chunker import SentenceChunker
 from neiro.llm.emotion_tag import EmotionTagParser
 from neiro.llm.prompt import system_message, user_message
-from neiro.state import NEUTRAL_STATE, NeiroState, Turn, UserAffect
+from neiro.state import NEUTRAL_STATE, NeiroState, ToolCall, Turn, UserAffect
+from neiro.tools.registry import ToolRegistry, ToolRejected
+from neiro.tools.tiers import Tier as ToolTier
 
 log = logging.getLogger(__name__)
 
@@ -44,9 +58,23 @@ log = logging.getLogger(__name__)
 # a barge-in throws away almost nothing.
 CHUNK_QUEUE_DEPTH = 2
 
+# How many consecutive requests may end in tool calls before the turn
+# gives up. Two is the longest chain a builtin tool documents —
+# `list_windows` then `focus_window` — and a model still asking for
+# tools after that is looping, not working. Structural, like the queue
+# depth: a model that needs more rounds needs a different tool, not a
+# bigger number.
+MAX_TOOL_ROUNDS = 2
+
 
 class Cancelled(Exception):
     """Raised internally when `turn.cancel` fires. Never escapes `run()`."""
+
+
+class TooManyToolRounds(RuntimeError):
+    """The model asked for tools on more consecutive requests than
+    `MAX_TOOL_ROUNDS` allows. Spoken as a tool failure.
+    """
 
 
 @dataclass
@@ -57,6 +85,37 @@ class TurnResult:
     state: NeiroState = field(default_factory=lambda: NEUTRAL_STATE)
     cancelled: bool = False
     error: str | None = None
+
+
+def tool_call_message(turn_id: int, round_no: int, calls: list[ToolCall]) -> dict:
+    """The assistant message that made these calls, in the OpenAI shape.
+
+    `content` is empty on purpose. Anything the model said alongside a
+    call was narration the prompt forbids and the voice did not carry,
+    and history is what he heard — the same rule that clips an
+    interrupted reply. Ids are deterministic so the bytes of a
+    remembered exchange never depend on when it was remembered.
+    """
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": f"call_{turn_id}_{round_no}_{call.index}",
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.args, separators=(",", ":")),
+                },
+            }
+            for call in calls
+        ],
+    }
+
+
+def tool_result_message(call_id: str, content: str) -> dict:
+    """One tool's result, in the shape the assistant message's id binds it to."""
+    return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
 class Orchestrator:
@@ -73,6 +132,8 @@ class Orchestrator:
         affect=None,
         cfg: Neiro | None = None,
         history_limit: int = 12,
+        *,
+        tools: ToolRegistry | None = None,
     ) -> None:
         self.cfg = cfg or Neiro()
         self.stt = stt
@@ -80,7 +141,23 @@ class Orchestrator:
         self.tts = tts
         self.sink = sink
         self.affect = affect
+        self.tools = tools
+        # Built once and sent as the same object every turn. The tools
+        # array sits in the KV prefix right after the system prompt;
+        # regenerating it per request would be correct today and one
+        # refactor away from a reordered key, which is a full prefill
+        # every turn with no error to explain it. With no way to
+        # confirm, YELLOW tools are not offered at all.
+        self._tool_schemas: list[dict] = (
+            tools.schemas(None if tools.can_confirm else ToolTier.GREEN) if tools else []
+        )
         self._history: list[dict] = []
+        # One entry per exchange, holding how many messages it added, so
+        # trimming can drop a whole exchange: a tool exchange is four or
+        # more messages and cutting it in the middle leaves a `tool`
+        # message answering a call that is no longer there — which the
+        # backends reject outright.
+        self._exchange_sizes: list[int] = []
         self._history_limit = history_limit
         self._turn_id = 0
 
@@ -96,17 +173,25 @@ class Orchestrator:
         """
         return [system_message(), *self._history, user_message(transcript, annotation)]
 
-    def _remember(self, transcript: str, annotation: str | None, reply: str) -> None:
-        self._history.append(user_message(transcript, annotation))
-        self._history.append({"role": "assistant", "content": reply})
-        # Trim in PAIRS from the front. Dropping a lone user turn leaves
-        # an assistant reply answering nothing, which reads as her having
-        # hallucinated the question.
-        while len(self._history) > self._history_limit * 2:
-            del self._history[:2]
+    def tool_schemas(self) -> list[dict]:
+        """What the model is offered, identical every turn."""
+        return self._tool_schemas
+
+    def _remember(self, exchange: list[dict]) -> None:
+        """Append one finished exchange — the user turn, any tool calls
+        and their results, and her reply — and trim whole exchanges from
+        the front. Dropping a lone user turn leaves an assistant reply
+        answering nothing, which reads as her having hallucinated the
+        question.
+        """
+        self._history.extend(exchange)
+        self._exchange_sizes.append(len(exchange))
+        while len(self._exchange_sizes) > self._history_limit:
+            del self._history[: self._exchange_sizes.pop(0)]
 
     def forget(self) -> None:
         self._history.clear()
+        self._exchange_sizes.clear()
 
     # -- stages ---------------------------------------------------------
 
@@ -189,6 +274,37 @@ class Orchestrator:
                     turn.stamp("sink_first_sent")
                 seq += 1
 
+    async def run_tool(self, turn: Turn, call: ToolCall) -> str:
+        """One call through the registry, off the event loop.
+
+        `registry.call()` blocks: a YELLOW tool waits up to the
+        confirmation window for him to click, and every handler talks
+        to a subprocess or a socket. On the loop that would freeze
+        affect windows and barge-in for the duration — and a barge-in
+        would not even be noticed until the tool returned. So it runs in
+        a worker thread, and the await is where a cancel lands: the
+        voice side notices `turn.cancel` and `run()` cancels the
+        producer, which is parked right here. The thread finishes on its
+        own and its result is never spoken; the audit log still records
+        what it did.
+
+        A rejected call comes back as the tool's result rather than as a
+        failure: the registry's message names the real tools precisely
+        so the model can recover on the next round.
+        """
+        if self.tools is None:
+            raise RuntimeError(f"the model called {call.name!r} but no tool registry is wired")
+        loop = asyncio.get_running_loop()
+        worker = loop.run_in_executor(None, self.tools.call, call.name, call.args, turn.id)
+        # An abandoned worker that later raises would log "exception was
+        # never retrieved" at garbage-collection time; retrieving it is
+        # the whole handler.
+        worker.add_done_callback(lambda f: None if f.cancelled() else f.exception())
+        try:
+            return await worker
+        except ToolRejected as exc:
+            return str(exc)
+
     # -- the turn -------------------------------------------------------
 
     def begin_turn(self) -> Turn:
@@ -228,39 +344,95 @@ class Orchestrator:
                 return result
             result.transcript = transcript
 
-            parser = EmotionTagParser()
-            chunker = SentenceChunker()
             reply_parts: list[str] = []
             state = NEUTRAL_STATE
             queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=CHUNK_QUEUE_DEPTH)
+            messages = self.messages(transcript, annotation)
+            # What this turn will append to history if it finishes: the
+            # user turn, then whatever the rounds below add.
+            exchange: list[dict] = [messages[-1]]
 
-            async def produce() -> None:
+            def feel(found: NeiroState) -> None:
                 nonlocal state
-                try:
-                    async for event in self.llm.stream(self.messages(transcript, annotation)):
-                        self._check(turn)
-                        if "text" not in event:
-                            continue
-                        found, speakable = parser.feed(event["text"])
-                        if found is not None:
-                            state = found
-                            turn.neiro_state = found
-                            turn.stamp("emotion_resolved")
-                        if not speakable:
-                            continue
-                        reply_parts.append(speakable)
-                        for sentence in chunker.feed(speakable):
-                            # Blocks when the voice is behind. That IS
-                            # the backpressure.
-                            await queue.put(sentence)
-                    found, speakable = parser.flush()
-                    if found is not None and turn.neiro_state is NEUTRAL_STATE:
-                        state = found
-                        turn.neiro_state = found
-                    if speakable:
-                        reply_parts.append(speakable)
+                state = found
+                turn.neiro_state = found
+                if "emotion_resolved" not in turn.timeline:
+                    # The first tag is the one the waterfall measures:
+                    # it is when her face could start moving.
+                    turn.stamp("emotion_resolved")
+
+            async def one_round(tools: list[dict] | None) -> tuple[list[str], list[ToolCall]]:
+                """Stream one request. Returns the speakable parts it
+                produced and the tool calls it ended in; sentences go to
+                the voice as they complete, except the chunker's tail,
+                which the caller releases only once it knows this was
+                not a tool round.
+                """
+                parser = EmotionTagParser()
+                chunker = SentenceChunker()
+                parts: list[str] = []
+                accumulator = None
+                # A copy: the list grows between rounds, and a client
+                # that held the reference would see the next round's
+                # messages appear inside the request it already sent.
+                async for event in self.llm.stream(list(messages), tools=tools):
+                    self._check(turn)
+                    if "done" in event:
+                        accumulator = event["done"]
+                    if "text" not in event:
+                        continue
+                    found, speakable = parser.feed(event["text"])
+                    if found is not None:
+                        feel(found)
+                    if not speakable:
+                        continue
+                    parts.append(speakable)
+                    for sentence in chunker.feed(speakable):
+                        # Blocks when the voice is behind. That IS
+                        # the backpressure.
+                        await queue.put(sentence)
+                found, speakable = parser.flush()
+                if found is not None and turn.neiro_state is NEUTRAL_STATE:
+                    feel(found)
+                if speakable:
+                    parts.append(speakable)
+                calls = accumulator.tool_calls() if accumulator is not None else []
+                if not calls:
                     for sentence in chunker.flush():
                         await queue.put(sentence)
+                return parts, calls
+
+            async def produce() -> None:
+                try:
+                    tools = self._tool_schemas or None
+                    for round_no in range(MAX_TOOL_ROUNDS + 1):
+                        parts, calls = await one_round(tools)
+                        if not calls:
+                            reply_parts.extend(parts)
+                            exchange.append(
+                                {"role": "assistant", "content": "".join(parts).strip()}
+                            )
+                            return
+                        if round_no == MAX_TOOL_ROUNDS:
+                            raise TooManyToolRounds(
+                                f"still calling tools after {MAX_TOOL_ROUNDS} rounds"
+                            )
+                        # A tool round. Whatever prose it produced was
+                        # narration: drop what the voice has not taken
+                        # yet, and never count it as her reply.
+                        while not queue.empty():
+                            queue.get_nowait()
+                        turn.tool_calls.extend(calls)
+                        asked = tool_call_message(turn.id, round_no, calls)
+                        messages.append(asked)
+                        exchange.append(asked)
+                        for call, requested in zip(calls, asked["tool_calls"], strict=True):
+                            self._check(turn)
+                            answer = tool_result_message(
+                                requested["id"], await self.run_tool(turn, call)
+                            )
+                            messages.append(answer)
+                            exchange.append(answer)
                 finally:
                     await queue.put(None)
 
@@ -318,7 +490,7 @@ class Orchestrator:
             result.reply = "".join(reply_parts).strip()
             result.state = state
             turn.stamp("turn_done")
-            self._remember(transcript, annotation, result.reply)
+            self._remember(exchange)
 
         except Cancelled:
             result.cancelled = True
