@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,13 +51,21 @@ HEADLINE_END = "sink_played"
 def percentile(values: list[float], q: float) -> float:
     """Nearest-rank percentile. No interpolation, no numpy.
 
-    Interpolating invents a latency nobody experienced. With twenty
-    turns the honest p95 is the second-worst one that happened.
+    Nearest-rank: the value at `ceil(q * N)`, 1-indexed. No
+    interpolation, because interpolating invents a latency nobody
+    experienced.
+
+    `math.ceil`, not `round(q*N + 0.5)`. The latter looks equivalent and
+    is not: Python's `round` is banker's rounding, so whenever `q*N`
+    lands on an exact integer the index is chosen by parity rather than
+    by the definition. At N=10, p50 returned the 6th value where
+    nearest-rank is the 5th — a p50 one sample too pessimistic, silently,
+    on exactly the round sample counts a benchmark tends to use.
     """
     if not values:
         return float("nan")
     ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(q * len(ordered) + 0.5) - 1))
+    index = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
     return ordered[index]
 
 

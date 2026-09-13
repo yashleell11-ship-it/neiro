@@ -37,12 +37,24 @@ class TestTwoBars:
 
 class TestPercentiles:
     def test_acceptance_is_on_p50_with_p90_alongside(self) -> None:
-        # A mean would let one 3-second hang vanish behind nineteen fast
-        # turns, and the hang is what feels broken.
-        s = score(ends([100.0] * 9 + [3000.0]))
+        # A mean would let a 3-second hang vanish behind fast turns, and
+        # the hang is what feels broken.
+        #
+        # Two slow turns in ten, not one: under nearest-rank the p90 of
+        # ten samples IS the 9th, so a single outlier at the top is p100
+        # and p90 correctly still reads 100. An earlier version of this
+        # test used one outlier and only passed because the percentile
+        # was off by one.
+        s = score(ends([100.0] * 8 + [3000.0, 3000.0]))
         assert s.p50_ms == 100.0
-        assert s.p90_ms > 100.0
+        assert s.p90_ms == 3000.0
         assert "mean" not in str(s.as_dict())
+
+    def test_one_outlier_in_ten_does_not_move_p90(self) -> None:
+        # The nearest-rank consequence, stated so it is not mistaken for
+        # a bug later.
+        s = score(ends([100.0] * 9 + [3000.0]))
+        assert s.p90_ms == 100.0
 
     def test_the_definition_matches_the_latency_eval(self) -> None:
         # One definition of a percentile across the project, or two

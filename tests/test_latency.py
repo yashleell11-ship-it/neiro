@@ -169,3 +169,40 @@ class TestPipelineRegressionBench:
         assert result["error"] is None
         assert result["headline_ms"] == result["headline_ms"]  # not NaN
         assert result["headline_ms"] > 0
+
+
+class TestPercentileIsNearestRank:
+    """Regression: `round(q*N + 0.5) - 1` is not nearest-rank.
+
+    It looks equivalent and is not. Python's `round` is banker's
+    rounding, so whenever `q*N` lands on an exact integer the index was
+    chosen by parity rather than by the definition. At N=10 the p50
+    returned the 6th value where nearest-rank is the 5th — a p50 one
+    sample too pessimistic, silently, on exactly the round sample counts
+    a benchmark tends to use (10, 20, 100).
+    """
+
+    @pytest.mark.parametrize("n", [1, 2, 4, 5, 8, 10, 11, 20, 100])
+    @pytest.mark.parametrize("q", [0.5, 0.9, 0.95, 1.0])
+    def test_it_matches_ceil_q_times_n(self, n: int, q: float) -> None:
+        import math
+
+        values = [float(i) for i in range(1, n + 1)]
+        assert percentile(values, q) == values[math.ceil(q * n) - 1]
+
+    def test_the_case_that_was_wrong(self) -> None:
+        # n=10, p50: returned 6.0, should be 5.0.
+        assert percentile([float(i) for i in range(1, 11)], 0.5) == 5.0
+
+    def test_all_three_implementations_agree(self) -> None:
+        # metrics.py, evals/latency.py and evals/endpoint.py each carry a
+        # percentile. Two numbers computed by different ones must be
+        # comparable or the budget table is meaningless.
+        from neiro import metrics
+        from neiro.evals import endpoint
+
+        for n in (5, 10, 20, 33):
+            values = [float(i) for i in range(1, n + 1)]
+            assert percentile(values, 0.5) == metrics.percentile(values, 50)
+            assert percentile(values, 0.5) == endpoint.percentile(values, 0.5)
+            assert percentile(values, 0.95) == metrics.percentile(values, 95)

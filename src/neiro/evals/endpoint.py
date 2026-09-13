@@ -19,6 +19,7 @@ hesitation is worse than one slightly slower at both.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 # From the plan's Stage 2 budget: Silero trigger + smart-turn decision.
@@ -65,7 +66,7 @@ def percentile(values: list[float], q: float) -> float:
     if not values:
         return float("nan")
     ordered = sorted(values)
-    index = min(len(ordered) - 1, max(0, round(q * len(ordered) + 0.5) - 1))
+    index = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
     return ordered[index]
 
 

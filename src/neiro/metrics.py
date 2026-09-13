@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,7 +52,11 @@ def percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, round(p / 100.0 * len(ordered) + 0.5) - 1))
+    # math.ceil, not round(x + 0.5): Python's round is banker's
+    # rounding, so when p/100*n is an exact integer the index came out
+    # by parity rather than by the nearest-rank definition. At n=10, p50
+    # returned the 6th value where the definition says the 5th.
+    index = max(0, min(len(ordered) - 1, math.ceil(p / 100.0 * len(ordered)) - 1))
     return ordered[index]
 
 
