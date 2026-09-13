@@ -1,17 +1,40 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Neiro</title>
+<!-- neiro:token -->
+<!--
+  The libraries the avatar needs, served from web/vendor/ (copied out of
+  node_modules by `bun add`, see README.md) — never a CDN. The demo has
+  to run with Wi-Fi off. Nothing imports them unless a VRM is present;
+  the drawn face needs none of this.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "three/addons/": "./vendor/addons/",
+    "@pixiv/three-vrm": "./vendor/three-vrm.module.min.js"
+  }
+}
+</script>
 <style>
   :root { color-scheme: dark; --bg:#14141a; --fg:#e8e4df; --dim:#7d7a86; --hi:#c9a6ff; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-sans-serif,system-ui,sans-serif;
          display:grid; grid-template-rows:1fr auto; height:100vh; }
-  #stage { position:relative; display:grid; place-items:center; min-height:0; }
-  canvas { max-width:100%; max-height:100%; }
+  /* Container units, not percentages: a percentage max-height inside a
+     1fr grid row does not resolve, and the face overflowed the HUD in
+     any window shorter than the canvas. */
+  #stage { position:relative; display:grid; place-items:center; min-height:0; overflow:hidden;
+           container-type:size; }
+  #stage > canvas { max-width:100cqw; max-height:100cqh; }
+  #unlock { position:absolute; inset:auto auto 18px auto; }
   #hud { border-top:1px solid #2a2a34; padding:10px 14px; display:grid; gap:8px;
-         grid-template-columns:auto 1fr auto; align-items:center; font-variant-numeric:tabular-nums; }
+         grid-template-columns:auto auto 1fr auto auto; align-items:center; font-variant-numeric:tabular-nums; }
   #phase { color:var(--hi); font-weight:600; min-width:8ch; }
+  #face-kind { color:var(--dim); font-size:12px; }
   #transcript { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #queued { color:var(--dim); font-size:12px; min-width:7ch; text-align:right; }
   #meter { width:120px; height:6px; background:#2a2a34; border-radius:3px; overflow:hidden; }
   #meter > i { display:block; height:100%; width:0; background:var(--hi); transition:width .05s linear; }
   #weights { grid-column:1/-1; display:flex; gap:14px; color:var(--dim); font-size:12px; }
@@ -20,130 +43,197 @@
   button:hover { background:#39394a; }
 </style>
 
-<div id="stage"><canvas id="face" width="480" height="480"></canvas></div>
+<div id="stage">
+  <canvas id="face" width="480" height="480"></canvas>
+  <button id="unlock" hidden>click to enable sound</button>
+</div>
 <div id="hud">
   <span id="phase">idle</span>
+  <span id="face-kind">drawn</span>
   <span id="transcript">—</span>
+  <span id="queued"></span>
   <span><span id="meter"><i></i></span></span>
   <div id="weights"></div>
 </div>
 
 <script type="module">
 import { AudioSink } from './src/audio.js';
-import { FallbackFace, VisemeScheduler, EXPRESSIONS } from './src/face.js';
+import { EXPRESSIONS, ExpressionBlender, FallbackFace, VisemeScheduler } from './src/face.js';
+import { loadVrm } from './src/vrm.js';
+import { Transport } from './src/ws.js';
 
-const face = new FallbackFace(document.getElementById('face'));
-const visemes = new VisemeScheduler();
-const sink = new AudioSink(24000);
+const stage = document.getElementById('stage');
+const canvas = document.getElementById('face');
 const el = {
   phase: document.getElementById('phase'),
+  kind: document.getElementById('face-kind'),
   transcript: document.getElementById('transcript'),
+  queued: document.getElementById('queued'),
   meter: document.querySelector('#meter > i'),
   weights: document.getElementById('weights'),
+  unlock: document.getElementById('unlock'),
 };
 
-// Expression blending happens in Python, so the same curves are unit
-// tested and the browser only renders. The tail here is purely visual
-// smoothing between `state` frames arriving at ~10 Hz.
-let target = Object.fromEntries(EXPRESSIONS.map((e) => [e, 0]));
-let shown = { ...target };
+let face = new FallbackFace(canvas);
+const visemes = new VisemeScheduler();
+// Both are made on `hello`, not here: the AudioContext runs at the
+// daemon's sample rate and the blender at the daemon's time constants,
+// and neither number belongs in this file.
+let sink = null;
+let blender = null;
+// utt.chunk headers waiting for their PCM. The sink sends the pair in
+// order, so the next binary frame belongs to the first header here.
+const pending = [];
+let vrmAttempted = false;
+let transport = null;
 
+const setPhase = (text) => { el.phase.textContent = text; };
+
+// --- audio -------------------------------------------------------------
+function makeSink(sampleRate) {
+  const s = new AudioSink(sampleRate);
+  // THE metric. Reported from the audio clock, at the moment sound
+  // actually began — not when we decided to send it.
+  s.onstarted = (seq, at, audioId) => transport?.send({ t: 'played', seq, at, audio_id: audioId });
+  s.onunderrun = (seq) => transport?.send({ t: 'underrun', seq });
+  s.onended = () => { if (!pending.length) setPhase('idle'); };
+  s.onstate = showUnlock;
+  return s;
+}
+function showUnlock() { el.unlock.hidden = !sink || sink.running; }
+el.unlock.onclick = () => sink?.unlock();
+// Any click counts as the gesture the browser wants before it will
+// make sound; the button just tells him why there is none yet.
+document.addEventListener('pointerdown', () => sink?.unlock());
+
+// --- the face, every frame --------------------------------------------
+let last = performance.now() / 1000;
 function frame(ms) {
-  const t = ms / 1000;
-  for (const k of EXPRESSIONS) shown[k] += (target[k] - shown[k]) * 0.25;
-  face.setExpression(shown);
-  const m = visemes.at(sink.ctx.currentTime);
+  const now = ms / 1000;
+  const dt = now - last;
+  last = now;
+  const weights = blender ? blender.step(dt) : null;
+  if (weights) face.setExpression(weights);
+  const m = visemes.at(sink ? sink.ctx.currentTime : now);
   face.setMouth(m.shape, m.amount);
-  face.draw(t);
+  face.draw(now);
+  hud(weights);
+  requestAnimationFrame(frame);
+}
+function hud(weights) {
+  showUnlock();
+  el.queued.textContent = sink ? `${sink.queuedSeconds.toFixed(2)}s` : '';
   el.weights.textContent = '';
   for (const k of EXPRESSIONS) {
     const span = document.createElement('span');
-    span.innerHTML = `${k} <b>${shown[k].toFixed(2)}</b>`;
+    span.innerHTML = `${k} <b>${(weights?.[k] ?? 0).toFixed(2)}</b>`;
     el.weights.append(span);
   }
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-// --- transport ---------------------------------------------------------
-// The token is injected into the page by the server, never put in the
-// URL: URLs end up in history, logs and Referer headers — uvicorn logs
-// every handshake's path, query string included. It rides the
-// Sec-WebSocket-Protocol header instead, the one header a page can set
-// on a WebSocket. The prefix is TOKEN_SUBPROTOCOL_PREFIX in
-// src/neiro/server.py; the server selects this same subprotocol back,
-// which is what lets the browser complete the handshake.
-const token = window.NEIRO_TOKEN;
-let socket = null;
-
-function connect() {
-  if (!token) { el.phase.textContent = 'demo'; return; }
-  socket = new WebSocket(`ws://${location.host}/neiro`, [`neiro.token.${token}`]);
-  socket.binaryType = 'arraybuffer';
-
-  socket.onopen = () => {
-    el.phase.textContent = 'ready';
-    // Tell the daemon which expressions this face actually has —
-    // `surprised` is often unbound on real VRM models, and the blender
-    // redistributes rather than silently doing nothing.
-    socket.send(JSON.stringify({ t: 'ready', expressions: [...face.available] }));
-  };
-  socket.onclose = () => { el.phase.textContent = 'disconnected'; };
-
-  socket.onmessage = (event) => {
-    if (event.data instanceof ArrayBuffer) {
-      const view = new DataView(event.data);
-      const audioId = view.getUint32(0, true);
-      const pcm = new Float32Array(event.data, 4);
-      const seq = pending.shift();
-      if (sink.play(audioId, pcm, seq?.seq ?? 0)) {
-        if (seq?.visemes?.length) {
-          visemes.schedule(seq.visemes, sink.nextStartTime - pcm.length / sink.sampleRate);
-        }
-      }
-      return;
-    }
-    const msg = JSON.parse(event.data);
-    handle(msg);
-  };
-}
-
-const pending = [];
-
-function handle(msg) {
+// --- messages ------------------------------------------------------------
+// Every server message in src/neiro/server.py's SERVER_MESSAGES.
+async function handle(msg) {
   switch (msg.t) {
-    case 'hello': el.phase.textContent = 'ready'; break;
+    case 'hello': await hello(msg); break;
     case 'state':
-      el.phase.textContent = msg.phase ?? el.phase.textContent;
+      if (msg.phase) setPhase(msg.phase);
       if (typeof msg.level === 'number') el.meter.style.width = `${Math.min(100, msg.level * 140)}%`;
       if (msg.transcript) el.transcript.textContent = msg.transcript;
       break;
     case 'utt.begin':
-      sink.beginUtterance(msg.audio_id ?? 0);
+      sink?.beginUtterance(msg.audio_id);
       visemes.clear();
-      if (msg.weights) target = { ...target, ...msg.weights };
+      pending.length = 0;
+      blender?.setTarget(msg.weights ?? targetFor(msg));
+      setPhase('speaking');
       break;
-    case 'emotion': if (msg.weights) target = { ...target, ...msg.weights }; break;
-    case 'utt.chunk': pending.push(msg); if (msg.text) el.transcript.textContent = msg.text; break;
-    case 'utt.end': el.phase.textContent = 'idle'; break;
-    case 'cancel': sink.cancel(); visemes.clear(); el.phase.textContent = 'idle'; break;
+    case 'emotion':
+      blender?.setTarget(msg.weights ?? targetFor(msg));
+      break;
+    case 'utt.chunk':
+      pending.push(msg);
+      if (msg.text) el.transcript.textContent = msg.text;
+      break;
+    case 'utt.end':
+      if (!sink?.sources.length) setPhase('idle');
+      break;
+    case 'cancel':
+      sink?.cancel();
+      visemes.clear();
+      pending.length = 0;
+      setPhase('idle');
+      break;
   }
 }
 
-sink.onstarted = (seq, at) => {
-  // THE metric. Reported from the audio clock, at the moment sound
-  // actually began — not when we decided to send it.
-  socket?.send(JSON.stringify({ t: 'played', seq, at }));
-};
-sink.onunderrun = (seq) => socket?.send(JSON.stringify({ t: 'underrun', seq }));
+// The blender's own rule when a message carries no weights: one
+// expression at the tag's intensity; neutral is all of them at rest.
+function targetFor(msg) {
+  const weights = {};
+  if (msg.emotion && msg.emotion !== 'neutral') weights[msg.emotion] = msg.intensity ?? 0;
+  return weights;
+}
 
-connect();
+function binary(buffer) {
+  if (!sink) return;
+  const view = new DataView(buffer);
+  const audioId = view.getUint32(0, true);
+  const pcm = new Float32Array(buffer, 4);
+  const header = pending.shift();
+  const startAt = sink.play(audioId, pcm, header?.seq ?? -1);
+  if (startAt !== null && header?.visemes?.length) visemes.schedule(header.visemes, startAt);
+}
 
-// --- demo --------------------------------------------------------------
+async function hello(msg) {
+  if (!sink) sink = makeSink(msg.samplerate);
+  blender = new ExpressionBlender(msg.face);
+  if (msg.avatar && !vrmAttempted) {
+    vrmAttempted = true;
+    try {
+      const vrm = await loadVrm(stage, msg.avatar);
+      face = vrm;
+      canvas.hidden = true;
+    } catch (err) {
+      console.warn('VRM not loaded; keeping the drawn face:', err);
+    }
+  }
+  el.kind.textContent = face.kind;
+  setPhase('ready');
+  // Tell the daemon which expressions this face actually has —
+  // `surprised` is often unbound on real VRM models, and the blender
+  // redistributes rather than silently doing nothing.
+  transport.send({ t: 'ready', expressions: [...face.available] });
+}
+
+// --- transport -----------------------------------------------------------
+const token = window.NEIRO_TOKEN;
+if (token) {
+  transport = new Transport(token, {
+    onOpen: () => setPhase('connected'),
+    onClose: () => setPhase('disconnected'),
+    onMessage: handle,
+    onBinary: binary,
+  });
+  transport.connect();
+} else {
+  demo();
+}
+
+// --- demo ----------------------------------------------------------------
 // Without this the face cannot be looked at until the whole daemon runs,
-// and the face is the part most worth looking at early.
-if (!token) {
-  const demo = [
+// and the face is the part most worth looking at early. The hello below
+// stands in for the server's; it is the demo's only source of numbers.
+function demo() {
+  const DEMO_HELLO = {
+    samplerate: 24000,
+    face: { tau_rise_s: 0.12, tau_fall_s: 0.30, surprised_hold_s: 0.9, surprised_decay_s: 0.6,
+            max_total_weight: 1.0, epsilon: 0.01 },
+  };
+  sink = makeSink(DEMO_HELLO.samplerate);
+  blender = new ExpressionBlender(DEMO_HELLO.face);
+  const steps = [
     { weights: { happy: 0.8 }, label: 'happy' },
     { weights: { surprised: 0.9 }, label: 'surprised' },
     { weights: { sad: 0.7 }, label: 'sad' },
@@ -153,15 +243,14 @@ if (!token) {
   ];
   let i = 0;
   setInterval(() => {
-    const step = demo[i++ % demo.length];
-    target = Object.fromEntries(EXPRESSIONS.map((e) => [e, step.weights[e] ?? 0]));
+    const step = steps[i++ % steps.length];
+    blender.setTarget(step.weights);
     el.transcript.textContent = `demo — ${step.label}`;
     // A plausible mouth, so viseme scheduling is visible too.
     const shapes = ['aa', 'ih', 'ou', 'ee', 'oh'];
-    const now = sink.ctx.currentTime;
     visemes.clear();
-    visemes.schedule(shapes.map((s, n) => [n * 0.16, s, 0.16]), now);
+    visemes.schedule(shapes.map((s, n) => [n * 0.16, s, 0.16]), sink.ctx.currentTime);
   }, 1800);
-  el.phase.textContent = 'demo';
+  setPhase('demo');
 }
 </script>

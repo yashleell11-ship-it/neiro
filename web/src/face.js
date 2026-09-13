@@ -17,14 +17,83 @@
 export const EXPRESSIONS = ['happy', 'angry', 'sad', 'relaxed', 'surprised'];
 export const VISEMES = ['aa', 'ih', 'ou', 'ee', 'oh'];
 
+const zeros = () => Object.fromEntries(EXPRESSIONS.map((e) => [e, 0]));
+
+/**
+ * Smoothing her expression so the face reads as alive, not as a mask.
+ *
+ * The same curve as src/neiro/emotion/blend.py, run on the browser's
+ * frame clock: an exponential approach with asymmetric time constants —
+ * expressions arrive faster than they leave, like real faces do.
+ *
+ *     weight += (target - weight) * (1 - exp(-dt / tau))
+ *
+ * Every number comes from the `face` object in the server's `hello`,
+ * which is `ExpressionConfig` in config.py verbatim. Nothing is tuned
+ * here: the Python side is where the curve is unit-tested, and this
+ * class exists so the target the daemon sends can be eased toward at
+ * the frame rate the face is actually drawn at.
+ */
+export class ExpressionBlender {
+  /** `config`: tau_rise_s, tau_fall_s, surprised_hold_s, surprised_decay_s, max_total_weight, epsilon. */
+  constructor(config) {
+    this.cfg = config;
+    this.weights = zeros();
+    this.targets = zeros();
+    this.surprisedAge = 0;
+  }
+
+  /** Where the face should end up. Absolute: an expression not named is released. */
+  setTarget(weights) {
+    const next = zeros();
+    for (const k of EXPRESSIONS) next[k] = Math.max(0, Math.min(1, weights?.[k] ?? 0));
+    this.targets = next;
+  }
+
+  /** Advance by `dt` seconds of real elapsed time. Returns the weights to draw. */
+  step(dt) {
+    if (!(dt > 0)) return { ...this.weights };
+    const targets = { ...this.targets };
+
+    // Surprise releases itself once held long enough, whatever the
+    // daemon is still saying: held past about a second it reads as a
+    // stare.
+    if (targets.surprised > 0) {
+      this.surprisedAge += dt;
+      const over = this.surprisedAge - this.cfg.surprised_hold_s;
+      if (over > 0) targets.surprised *= Math.exp(-over / Math.max(this.cfg.surprised_decay_s, 1e-6));
+    } else {
+      this.surprisedAge = 0;
+    }
+
+    for (const k of EXPRESSIONS) {
+      const current = this.weights[k];
+      const target = targets[k];
+      const tau = target > current ? this.cfg.tau_rise_s : this.cfg.tau_fall_s;
+      const alpha = 1 - Math.exp(-dt / Math.max(tau, 1e-6));
+      const value = current + (target - current) * alpha;
+      this.weights[k] = value < this.cfg.epsilon ? 0 : value;
+    }
+
+    // Additive on one mesh: scaled together so the mix survives the clamp.
+    const total = EXPRESSIONS.reduce((sum, k) => sum + this.weights[k], 0);
+    if (total > this.cfg.max_total_weight && total > 0) {
+      const scale = this.cfg.max_total_weight / total;
+      for (const k of EXPRESSIONS) this.weights[k] *= scale;
+    }
+    return { ...this.weights };
+  }
+}
+
 export class FallbackFace {
   constructor(canvas) {
     this.canvas = canvas;
     this.g = canvas.getContext('2d');
-    this.weights = Object.fromEntries(EXPRESSIONS.map((e) => [e, 0]));
+    this.weights = zeros();
     this.mouth = { shape: '', amount: 0 };
     this.blink = 0;
     this.available = new Set([...EXPRESSIONS, 'neutral']);
+    this.kind = 'drawn';
   }
 
   setExpression(weights) { Object.assign(this.weights, weights); }
