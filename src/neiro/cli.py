@@ -307,6 +307,21 @@ def ptt() -> None:
     raise typer.Exit(code=run_ptt(Neiro()))
 
 
+@app.command()
+def talk() -> None:
+    """Stage 0 Task 10: the whole loop from one command. SPACE, speak,
+    SPACE, hear her answer; SPACE while she is speaking interrupts her;
+    q quits. Prints one HUD line per turn and appends it to turns.jsonl.
+
+    Push-to-talk in the terminal, like `neiro ptt` — the compositor bind
+    is Task 11. Needs llama-server/ollama up (`neiro doctor`).
+    """
+    from neiro.config import Neiro
+    from neiro.talk import run as run_talk
+
+    raise typer.Exit(code=run_talk(Neiro()))
+
+
 @app.command(name="fetch-models")
 def fetch_models(
     dry_run: bool = typer.Option(
