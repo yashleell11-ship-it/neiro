@@ -17,9 +17,46 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from pydantic_settings import SettingsConfigDict
 
 from neiro.config import Neiro
+
+
+def _neiro_reading(config_path: Path) -> Neiro:
+    """A Neiro that reads THIS file, not ~/.config/neiro/config.toml —
+    so the test says nothing about what is on this machine.
+    """
+
+    class _NeiroForTest(Neiro):
+        model_config = SettingsConfigDict(toml_file=str(config_path))
+
+    return _NeiroForTest()
+
+
+def test_stt_language_defaults_to_auto(tmp_path: Path) -> None:
+    # Hindi and English are equal priorities and he switches
+    # mid-sentence; the default must not pin either.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("schema_version = 1\n")
+    assert _neiro_reading(config_path).stt.language == "auto"
+
+
+def test_stt_language_is_read_from_the_stt_table(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('schema_version = 1\n\n[stt]\nlanguage = "hi"\n')
+    assert _neiro_reading(config_path).stt.language == "hi"
+
+
+def test_stt_language_rejects_a_code_neither_recogniser_serves(tmp_path: Path) -> None:
+    # A typo here would otherwise reach faster-whisper as a language
+    # code it may or may not know, and fail on the first utterance
+    # instead of at load.
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('schema_version = 1\n\n[stt]\nlanguage = "fr"\n')
+    with pytest.raises(ValidationError):
+        _neiro_reading(config_path)
 
 
 def test_toml_file_is_actually_read(tmp_path: Path) -> None:

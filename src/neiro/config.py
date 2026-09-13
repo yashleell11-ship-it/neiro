@@ -9,6 +9,8 @@ silently ignoring stale keys.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from pydantic_settings import (
     BaseSettings,
@@ -52,6 +54,17 @@ class SttConfig(BaseModel):
     condition_on_previous_text: bool = False
     no_speech_prob_floor: float = 0.4
     avg_logprob_floor: float = -1.0
+    # What language he is speaking. Hindi and English are equal
+    # priorities (docs/DECISIONS.md, 2026-09-13) and he switches between
+    # them mid-sentence, so the default lets the recogniser detect per
+    # utterance instead of pinning one for the whole session. Pin it when
+    # the DETECTOR is what is failing — Hinglish tagged as Urdu, a short
+    # Hindi command tagged as English — and let `scripts/bench_stt.py
+    # --language` show whether pinning helped, on a corpus, before
+    # trusting it on his voice. faster-whisper gets `language=None` for
+    # "auto"; Moonshine is English-only and refuses "hi" outright rather
+    # than returning English-shaped nonsense for Hindi audio.
+    language: Literal["auto", "en", "hi"] = "auto"
 
 
 class LlmConfig(BaseModel):

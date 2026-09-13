@@ -19,6 +19,15 @@ from something actually said. The model's own reported confidence
 (avg_logprob, no_speech_prob) is the only signal available, so this
 provider filters on it before the caller ever sees the text: an empty
 string return means "nothing usable was said," not an error.
+
+Language comes from `cfg.stt.language`, never a literal here. "auto"
+hands faster-whisper `language=None`, so it detects per utterance —
+Hindi, English and Hinglish in one sitting is the normal case for this
+user, not an edge case. The code it detected is kept on
+`last_detected_language` so the benchmark can print the detector's
+histogram beside the WER: "Hindi audio scored badly" and "Hindi audio
+was tagged as Urdu" are different problems with different fixes, and a
+WER alone cannot tell them apart.
 """
 
 from __future__ import annotations
@@ -64,6 +73,10 @@ class FasterWhisperStt:
     def __init__(self, cfg: Neiro | None = None) -> None:
         self._cfg = cfg or Neiro()
         self._model = None
+        # ISO code faster-whisper settled on for the last utterance —
+        # detected under "auto", echoed back when pinned. Diagnostic
+        # only: the orchestrator reads the text, never this.
+        self.last_detected_language: str | None = None
 
     def warm(self) -> float:
         """Load the model AND run one throwaway transcribe.
@@ -106,14 +119,18 @@ class FasterWhisperStt:
         if self._model is None:
             self.warm()
 
-        segments, _info = self._model.transcribe(
+        # None is faster-whisper's "detect it" — one extra decoder pass
+        # over the first window, paid only under "auto".
+        language = None if self._cfg.stt.language == "auto" else self._cfg.stt.language
+        segments, info = self._model.transcribe(
             pcm_16k,
             beam_size=self._cfg.stt.beam_size,
             condition_on_previous_text=self._cfg.stt.condition_on_previous_text,
             vad_filter=False,
-            language="en",
+            language=language,
             without_timestamps=True,
         )
+        self.last_detected_language = getattr(info, "language", None)
         segments = list(segments)
         if not segments:
             return ""

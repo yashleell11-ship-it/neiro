@@ -14,6 +14,16 @@ gate of "no worse than 1.5x the distil baseline".
 
 Same `protocols.STT` surface as `faster_whisper.py`, so the A/B is a
 config change and the orchestrator never learns which one it has.
+
+**English-only.** The checkpoints this module names (`moonshine/medium`
+and its siblings) were trained on English speech alone; there is no
+Hindi one to load. So `cfg.stt.language = "hi"` is refused at
+construction — loudly, before the first utterance, with
+`MoonshineEnglishOnly` — rather than letting Hindi audio come back as
+English-shaped nonsense that the WER set would then dutifully score.
+"auto" means English here: with one language there is nothing to
+detect, and that is the half of the brief Moonshine can be measured on
+at all. The Hindi half of the A/B is faster-whisper's alone.
 """
 
 from __future__ import annotations
@@ -45,10 +55,24 @@ class MoonshineUnavailable(RuntimeError):
     """Weights or the package are missing."""
 
 
+class MoonshineEnglishOnly(MoonshineUnavailable):
+    """Asked for a language these checkpoints cannot transcribe.
+
+    A subclass of `MoonshineUnavailable` on purpose: to the caller this
+    is the same situation — this recogniser cannot serve this config —
+    and `transcribe()` already lets that class through untouched instead
+    of swallowing it into a silent "".
+    """
+
+
 @dataclass
 class MoonshineStt:
     """protocols.STT on CPU. LAN_TIERABLE like the other recogniser —
     audio may cross ethernet, never a tunnel.
+
+    Refuses `cfg.stt.language = "hi"` in `__post_init__`, so a daemon
+    configured for Hindi with Moonshine selected fails at startup and not
+    on his first sentence — see the module docstring.
     """
 
     locality = Locality.LAN_TIERABLE
@@ -56,6 +80,15 @@ class MoonshineStt:
     cfg: Neiro = field(default_factory=Neiro)
     model_name: str = "moonshine/medium"
     _model: object = None
+
+    def __post_init__(self) -> None:
+        if self.cfg.stt.language == "hi":
+            raise MoonshineEnglishOnly(
+                f"stt.language = {self.cfg.stt.language!r}, but {self.model_name} is an "
+                "English-only checkpoint: Moonshine has no Hindi model. Use "
+                'faster-whisper for Hindi, or set stt.language to "en" / "auto" '
+                "(both mean English here)."
+            )
 
     def load(self) -> None:
         if self._model is not None:

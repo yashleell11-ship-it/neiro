@@ -8,13 +8,77 @@ answers an empty room is worse than one that says nothing.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from neiro.config import Neiro
 from neiro.state import Locality, Tier
 from neiro.stt.faster_whisper import FasterWhisperStt
-from neiro.stt.moonshine import MoonshineStt, MoonshineUnavailable
+from neiro.stt.moonshine import MoonshineEnglishOnly, MoonshineStt, MoonshineUnavailable
+
+_SILENCE = np.zeros(16000, dtype=np.float32)
+
+
+class TestLanguage:
+    """Hindi and English are equal priorities. The recogniser learns
+    which it is hearing from config, never from a literal in the module
+    — the "en" that used to live there made Hindi impossible to even
+    ask for.
+    """
+
+    @pytest.mark.parametrize("configured, passed", [("auto", None), ("en", "en"), ("hi", "hi")])
+    def test_config_language_reaches_faster_whisper(self, configured, passed) -> None:
+        seen: dict = {}
+
+        class FakeWhisperModel:
+            def transcribe(self, pcm, **kw):
+                seen.update(kw)
+                return iter([]), SimpleNamespace(language=passed or "hi", language_probability=0.9)
+
+        stt = FasterWhisperStt(Neiro(stt={"language": configured}))
+        stt._model = FakeWhisperModel()
+        asyncio.run(stt.transcribe(_SILENCE))
+        assert "language" in seen
+        assert seen["language"] == passed  # None is faster-whisper's "detect it"
+
+    def test_the_detected_language_is_kept_for_the_benchmark(self) -> None:
+        class FakeWhisperModel:
+            def transcribe(self, pcm, **kw):
+                return iter([]), SimpleNamespace(language="hi", language_probability=0.7)
+
+        stt = FasterWhisperStt(Neiro(stt={"language": "auto"}))
+        assert stt.last_detected_language is None
+        stt._model = FakeWhisperModel()
+        asyncio.run(stt.transcribe(_SILENCE))
+        assert stt.last_detected_language == "hi"
+
+    def test_a_model_that_reports_no_info_does_not_crash_the_turn(self) -> None:
+        class FakeWhisperModel:
+            def transcribe(self, pcm, **kw):
+                return iter([]), None
+
+        stt = FasterWhisperStt(Neiro(stt={"language": "auto"}))
+        stt._model = FakeWhisperModel()
+        assert asyncio.run(stt.transcribe(_SILENCE)) == ""
+        assert stt.last_detected_language is None
+
+    def test_moonshine_refuses_hindi_before_the_first_utterance(self) -> None:
+        # Loudly, at construction: a daemon configured for Hindi with
+        # Moonshine selected fails at startup, not on his first sentence.
+        with pytest.raises(MoonshineEnglishOnly, match="English-only"):
+            MoonshineStt(cfg=Neiro(stt={"language": "hi"}))
+
+    def test_the_refusal_is_one_transcribe_lets_through(self) -> None:
+        # transcribe() re-raises MoonshineUnavailable and swallows every
+        # other exception into "". A refusal outside that family would be
+        # a silent empty turn, which is the opposite of loud.
+        assert issubclass(MoonshineEnglishOnly, MoonshineUnavailable)
+
+    @pytest.mark.parametrize("language", ["auto", "en"])
+    def test_moonshine_accepts_its_one_language(self, language) -> None:
+        assert MoonshineStt(cfg=Neiro(stt={"language": language}))._model is None
 
 
 class TestInterchangeable:
