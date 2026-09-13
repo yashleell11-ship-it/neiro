@@ -20,9 +20,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
-
-T = TypeVar("T")
 
 # Two items of lookahead: enough to keep the next stage busy while the
 # previous one works, small enough that a barge-in throws away almost
@@ -36,7 +33,7 @@ _DONE = object()
 
 
 @dataclass
-class Bus(Generic[T]):
+class Bus[T]:
     """One bounded hop between two pipeline stages."""
 
     depth: int = DEFAULT_DEPTH
