@@ -119,3 +119,34 @@ class TestTheRealSpec:
         for m in MODELS:
             if "GGUF" in m.hf_id:
                 assert len(m.allow) == 1 and m.allow[0].endswith(".gguf"), m.name
+
+
+def _fetch_models():
+    """The script, imported the way `neiro fetch-models` imports it."""
+    import importlib
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    return importlib.import_module("fetch_models")
+
+
+class TestWhereAModelLands:
+    def test_weights_land_under_the_models_directory(self, tmp_path) -> None:
+        fetch_models = _fetch_models()
+        assert fetch_models.dest_for(_spec(name="brain"), tmp_path) == tmp_path / "brain"
+
+    def test_an_avatar_lands_where_the_page_looks(self, tmp_path, monkeypatch) -> None:
+        # The daemon serves the avatar to the browser; the page finds it
+        # under web/public/avatar. A VRM downloaded anywhere else is a
+        # download the face never sees.
+        from neiro.server import avatar_url
+
+        fetch_models = _fetch_models()
+        web_dir = tmp_path / "web"
+        monkeypatch.setattr(fetch_models, "AVATAR_DEST", web_dir / "public" / "avatar")
+        landed = fetch_models.dest_for(_spec(name="neiro-vrm", component="avatar"), tmp_path)
+        assert landed != tmp_path / "neiro-vrm"
+        landed.mkdir(parents=True)
+        (landed / "neiro.vrm").write_bytes(b"glTF")
+        assert avatar_url(web_dir) == "public/avatar/neiro-vrm/neiro.vrm"

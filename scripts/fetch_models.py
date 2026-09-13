@@ -29,6 +29,11 @@ from neiro.modelspec import ModelSpec, select, total_gb
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_DEST = REPO / "models"
+# Where the page looks for a VRM (`avatar_url` in src/neiro/server.py).
+# An avatar is served to the browser, not loaded by the daemon, so it
+# lives with the page — gitignored there, see .gitignore — not under
+# models/ with the weights.
+AVATAR_DEST = REPO / "web" / "public" / "avatar"
 MARKER = ".neiro-complete"
 
 console = Console()
@@ -55,6 +60,16 @@ def real_size_gb(spec: ModelSpec) -> float | None:
         return round(total / 1e9, 2)
     except Exception:  # noqa: BLE001 — an unreachable Hub is a "?" in the table, not a crash
         return None
+
+
+def dest_for(spec: ModelSpec, dest: Path = DEFAULT_DEST) -> Path:
+    """`<dest>/<name>` — except an avatar, which goes where the page looks
+    for it, or `neiro fetch-models --component avatar` would download a
+    file the face never finds.
+    """
+    if spec.component == "avatar":
+        return AVATAR_DEST / spec.name
+    return dest / spec.name
 
 
 def fetch(spec: ModelSpec, dest: Path, force: bool) -> str:
@@ -151,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     results: dict[str, str] = {}
     for m in items:
         console.rule(f"{m.name}  ({m.size_gb:.2f} GB)  {m.hf_id}")
-        results[m.name] = fetch(m, args.dest / m.name, args.force)
+        results[m.name] = fetch(m, dest_for(m, args.dest), args.force)
         console.print(f"→ {results[m.name]}")
 
     summary = Table(title="summary")
