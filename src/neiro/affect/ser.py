@@ -16,11 +16,21 @@ pretending they are the same number.
 ledger) and this runs on a rolling window *while the user is still
 speaking*, so a slower-but-free inference costs the turn budget nothing.
 `device="cuda"` is available for the box tier where VRAM is not scarce.
+
+**The window is fitted to the checkpoint's clip length, by the recipe's
+own function.** Training pads every example to `--seconds` with trailing
+zeros or centre-crops it, and w2v-bert's feature extractor normalises
+each mel bin over that whole span before the head mean-pools it. This
+used to hand the model the raw 3 s rolling window instead — all speech,
+no padding — an input composition it had not seen in a single training
+example. The length comes from the checkpoint, not from config, because
+it is not a tunable: the weights were fitted at exactly that length.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +55,41 @@ class SerUnavailable(RuntimeError):
     """
 
 
+def _recipe():
+    """The training recipe, imported lazily because it pulls in torch.
+
+    The runtime takes two things from it and re-declares neither: the
+    `SerRegressor` architecture and the `fit_clip` length convention. A
+    copy of either could drift from what the checkpoint was trained
+    with, and nothing in the checkpoint would say so.
+    """
+    recipes = str(REPO_ROOT / "training" / "recipes")
+    if recipes not in sys.path:
+        sys.path.insert(0, recipes)
+    import ser_train
+
+    return ser_train
+
+
+def clip_seconds_from(state: dict) -> float:
+    """The clip length the checkpoint was trained at, in seconds.
+
+    From the checkpoint and not from config, on purpose: it is not a
+    tunable. The weights were fitted to inputs of exactly this length,
+    so a runtime value that could disagree with it would be the very bug
+    this exists to prevent. A checkpoint that does not record it cannot
+    be served honestly, and says so at load time rather than guessing.
+    """
+    seconds = (state.get("args") or {}).get("seconds")
+    if seconds is None:
+        raise SerUnavailable(
+            "The checkpoint does not record the clip length it was trained at "
+            "(`args.seconds`), so the runtime cannot fit the window the way training "
+            "did. Retrain with training/recipes/ser_train.py, which saves it."
+        )
+    return float(seconds)
+
+
 @dataclass
 class SerAffectProvider:
     """protocols.AffectProvider backed by the trained regressor.
@@ -62,6 +107,7 @@ class SerAffectProvider:
     calibration: LaneBCalibration = field(default_factory=LaneBCalibration)
     _model: object = None
     _processor: object = None
+    _clip_seconds: float | None = None  # the checkpoint's; set by load()
     _last: tuple[float, float] | None = None
 
     def load(self) -> None:
@@ -82,15 +128,13 @@ class SerAffectProvider:
         except ImportError as exc:  # pragma: no cover
             raise SerUnavailable("torch is not installed in the runtime venv") from exc
 
-        import sys
-
-        sys.path.insert(0, str(REPO_ROOT / "training" / "recipes"))
-        from ser_train import SerRegressor  # the exact architecture that was trained
+        recipe = _recipe()
         from transformers import AutoFeatureExtractor
 
         state = torch.load(self.checkpoint, map_location=self.device, weights_only=False)
+        self._clip_seconds = clip_seconds_from(state)
         unfreeze = (state.get("args") or {}).get("unfreeze", 4)
-        model = SerRegressor(self.encoder, unfreeze_layers=unfreeze)
+        model = recipe.SerRegressor(self.encoder, unfreeze_layers=unfreeze)
         model.load_state_dict(state["model"])
         model.eval().to(self.device)
         self._model = model
@@ -109,11 +153,21 @@ class SerAffectProvider:
         return time.perf_counter() - started
 
     def _predict(self, pcm: np.ndarray) -> tuple[float, float]:
-        """Raw circumplex prediction: `(valence, arousal)` in [-1, 1]."""
+        """Raw circumplex prediction: `(valence, arousal)` in [-1, 1].
+
+        The window is first fitted to the checkpoint's clip length by the
+        recipe's `fit_clip` — trailing zeros for a short one, centre crop
+        for a long one — so a 3 s rolling window reaches the feature
+        extractor as the same audio-plus-silence every under-length
+        training clip did.
+        """
         import torch
 
+        if self._clip_seconds is None:
+            raise SerUnavailable("Lane B was asked to predict before load() set its clip length")
+        audio = _recipe().fit_clip(pcm, int(self._clip_seconds * SAMPLERATE))
         features = self._processor(
-            [np.asarray(pcm, dtype=np.float32).reshape(-1)],
+            [audio],
             sampling_rate=SAMPLERATE,
             return_tensors="pt",
         )["input_features"].to(self.device)

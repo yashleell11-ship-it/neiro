@@ -131,6 +131,11 @@ class AffectConfig(BaseModel):
     lane_b_enabled: bool = False
     lane_b_interval_s: float = 1.5
     lane_b_device: str = "cpu"
+    # Deliberately no clip-length knob. The length every training
+    # example was padded or cropped to is recorded in the checkpoint
+    # (`args.seconds`), and affect/ser.py fits the live window to THAT
+    # with the recipe's own function. A value here could disagree with
+    # the weights, and the weights would not say so.
 
     # --- window (affect/prosody.py) ---
     window_seconds: float = 3.0  # rolling analysis window

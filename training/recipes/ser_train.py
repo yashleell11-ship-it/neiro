@@ -126,6 +126,34 @@ def auc_above(pred: np.ndarray, true: np.ndarray, boundary: float) -> float | No
 # data
 
 
+def fit_clip(audio: np.ndarray, length: int, start: int | None = None) -> np.ndarray:
+    """Pad or crop one waveform to exactly `length` samples.
+
+    This is THE length convention, shared by training and by the runtime
+    provider — `affect/ser.py` imports this function rather than
+    re-deriving it, exactly as it imports `SerRegressor` rather than
+    re-declaring it. Shorter audio gets trailing zeros, the way a
+    recorded clip ends; longer audio is centre-cropped unless the caller
+    chooses `start` (training does, for a random crop).
+
+    Why it has to be one function: w2v-bert's feature extractor
+    normalises each mel bin over the clip's own time axis, so a 2.5 s
+    CREMA-D clip trained inside 4 s of audio was normalised against
+    1.5 s of padding at the mel floor, and the head then mean-pooled
+    over all of it. The runtime used to hand the model its raw 3 s
+    window instead — all speech, no padding — a composition the model
+    had not seen in a single training example.
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if len(audio) > length:
+        if start is None:
+            start = (len(audio) - length) // 2
+        return audio[start : start + length]
+    if len(audio) < length:
+        return np.pad(audio, (0, length - len(audio)))
+    return audio
+
+
 @dataclass
 class Clip:
     audio: np.ndarray
@@ -134,9 +162,16 @@ class Clip:
 
 
 class EmotionClips(Dataset):
-    """Audio → fixed-length float32 at 16 kHz, plus its two targets."""
+    """Audio → fixed-length float32 at 16 kHz, plus its two targets.
 
-    def __init__(self, rows: list[Utterance], seconds: float = 4.0, train: bool = False) -> None:
+    `seconds` is the clip length the model is trained at. It has no
+    default here on purpose: it comes from `--seconds`, is saved into the
+    checkpoint with the other arguments, and `affect/ser.py` reads it
+    back from there to fit the live window with the same `fit_clip` —
+    one number, recorded once, honoured at both ends.
+    """
+
+    def __init__(self, rows: list[Utterance], seconds: float, train: bool = False) -> None:
         self.rows = [r for r in rows if not r.in_archive]
         self.length = int(seconds * SAMPLERATE)
         self.train = train
@@ -162,17 +197,12 @@ class EmotionClips(Dataset):
 
             audio = librosa.resample(audio, orig_sr=sr, target_sr=SAMPLERATE)
 
-        if len(audio) > self.length:
-            # Train: random crop, for a little augmentation. Eval: centre,
-            # so a number is reproducible run to run.
-            start = (
-                int(np.random.randint(0, len(audio) - self.length))
-                if self.train
-                else (len(audio) - self.length) // 2
-            )
-            audio = audio[start : start + self.length]
-        elif len(audio) < self.length:
-            audio = np.pad(audio, (0, self.length - len(audio)))
+        start = None
+        if self.train and len(audio) > self.length:
+            # Train: random crop, for a little augmentation. Eval and
+            # runtime: centre, so a number is reproducible run to run.
+            start = int(np.random.randint(0, len(audio) - self.length))
+        audio = fit_clip(audio, self.length, start=start)
 
         return (
             torch.from_numpy(np.ascontiguousarray(audio)),
@@ -282,7 +312,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--seconds", type=float, default=4.0)
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=4.0,
+        help="clip length every example is fitted to; saved in the checkpoint, and "
+        "affect/ser.py fits the live window to that same value",
+    )
     ap.add_argument("--unfreeze", type=int, default=4, help="top encoder blocks to train")
     # "High" means above neutral, the circumplex origin — one definition
     # for the whole run and for every subset in the report. See

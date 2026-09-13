@@ -31,6 +31,7 @@ from neiro.affect.prosody import (
 )
 from neiro.config import Neiro
 from neiro.state import Locality, Tier, UserAffect
+from neiro.training.corpora import Utterance
 
 SR = 16000
 
@@ -649,3 +650,87 @@ class TestEvaluate:
         # report.json's `config`, so a reported AUC can always be traced
         # to the class definition it was scored against.
         assert {"arousal_boundary", "valence_boundary", "seconds"} <= set(vars(args))
+
+
+class TestFitClip:
+    """One pad/crop convention, owned by the recipe, run at both ends."""
+
+    def test_a_short_clip_gets_trailing_zeros(self, recipe) -> None:
+        out = recipe.fit_clip(np.array([1, 1, 1], dtype=np.float32), 5)
+        assert out.tolist() == [1, 1, 1, 0, 0]
+        assert out.dtype == np.float32
+
+    def test_a_long_clip_is_centre_cropped_unless_told_where(self, recipe) -> None:
+        audio = np.arange(10, dtype=np.float32)
+        assert recipe.fit_clip(audio, 4).tolist() == [3, 4, 5, 6]
+        assert recipe.fit_clip(audio, 4, start=1).tolist() == [1, 2, 3, 4]
+
+    def test_the_right_length_is_left_alone(self, recipe) -> None:
+        audio = np.arange(4, dtype=np.float32)
+        assert recipe.fit_clip(audio, 4).tolist() == audio.tolist()
+
+
+class TestTrainAndServeAgree:
+    """The bug: training padded every example to `--seconds` while the
+    runtime fed the model the raw rolling window. Both ends must hand the
+    feature extractor the same number of samples, padded at the same end.
+    """
+
+    def test_a_corpus_clip_and_a_live_window_reach_the_model_alike(self, recipe, tmp_path) -> None:
+        import soundfile as sf
+        import torch
+
+        from neiro.affect import ser
+
+        assert recipe.SAMPLERATE == ser.SAMPLERATE == SR
+        seconds = recipe.build_parser().parse_args([]).seconds  # what a checkpoint records
+        length = int(seconds * SR)
+        cfg = Neiro()
+        assert cfg.affect.window_seconds < seconds, "the live window is shorter than a clip"
+
+        # Training side: a CREMA-D-length clip through the dataset. Not
+        # speech, but every sample is known, so the test can see exactly
+        # where the padding begins.
+        clip = speech_like(f0=150, amp=0.3, dur=2.5)
+        sf.write(tmp_path / "clip.wav", clip, SR, subtype="FLOAT")
+        row = Utterance(str(tmp_path / "clip.wav"), 0.8, 0.5, "crema-d", "crema-d:1", "happy")
+        trained = recipe.EmotionClips([row], seconds)[0][0].numpy()
+
+        # Runtime side: a full rolling window through the provider, with
+        # the model and the feature extractor replaced by recorders.
+        handed: list[np.ndarray] = []
+
+        def processor(batch, sampling_rate, return_tensors):
+            handed.extend(batch)
+            return {"input_features": torch.zeros(1, 1)}
+
+        p = ser.SerAffectProvider(
+            _model=lambda features: torch.zeros(1, 2),
+            _processor=processor,
+            _clip_seconds=seconds,
+        )
+        window = speech_like(f0=150, amp=0.3, dur=cfg.affect.window_seconds)
+        p._predict(window)
+        (served,) = handed
+
+        assert trained.shape == served.shape == (length,)
+        assert np.array_equal(trained[: len(clip)], clip)
+        assert not trained[len(clip) :].any(), "training pads with trailing zeros"
+        assert np.array_equal(served[: len(window)], window)
+        assert not served[len(window) :].any(), "and so must serving"
+
+    def test_the_checkpoint_says_how_long_and_a_mute_one_is_refused(self) -> None:
+        from neiro.affect.ser import SerUnavailable, clip_seconds_from
+
+        assert clip_seconds_from({"args": {"seconds": 4.0, "unfreeze": 4}}) == 4.0
+        # No config fallback, on purpose: the length is a property of the
+        # weights, and guessing it is exactly the bug.
+        with pytest.raises(SerUnavailable, match="seconds"):
+            clip_seconds_from({"args": {"unfreeze": 4}})
+
+    def test_predicting_before_load_is_refused_rather_than_unpadded(self) -> None:
+        from neiro.affect.ser import SerAffectProvider, SerUnavailable
+
+        p = SerAffectProvider(_model=lambda f: f, _processor=lambda *a, **k: None)
+        with pytest.raises(SerUnavailable):
+            p._predict(speech_like(f0=150, amp=0.3, dur=1.0))
