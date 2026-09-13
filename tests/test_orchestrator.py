@@ -450,21 +450,86 @@ class TestBargeInBeforeTheFirstToken:
 
 
 class TestBackpressure:
-    def test_the_queue_actually_blocks_the_producer(self) -> None:
-        # Asserting CHUNK_QUEUE_DEPTH <= 4 tested a constant, not the
-        # behaviour: the orchestrator could stop using the queue entirely
-        # and that assertion would still pass.
-        async def go() -> bool:
-            queue: asyncio.Queue = asyncio.Queue(maxsize=CHUNK_QUEUE_DEPTH)
-            for i in range(CHUNK_QUEUE_DEPTH):
-                await queue.put(i)
-            try:
-                await asyncio.wait_for(queue.put(99), timeout=0.05)
-            except TimeoutError:
-                return True
-            return False
+    """The producer blocks when the voice is behind.
 
-        assert asyncio.run(go())
+    Two earlier versions of this test could not fail on the property
+    they were named for: one asserted `CHUNK_QUEUE_DEPTH <= 4`, a
+    constant, and its replacement built its own `asyncio.Queue` and
+    proved that asyncio's queue blocks. Dropping `maxsize` from the
+    orchestrator's queue — no backpressure at all, the LLM running the
+    whole reply ahead of the voice — left both green. This one stalls
+    the synthesiser and watches how far the LLM gets.
+    """
+
+    SENTENCES = 12
+
+    class GatedTts(FakeTts):
+        """Holds the first sentence until released: the voice is behind."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def synth(self, text: str, state=None):
+            self.texts.append(text)
+            self.states.append(state)
+            await self.gate.wait()
+            yield np.zeros(240, dtype=np.float32), None
+
+    class OneSentencePerEventLlm:
+        """Streams one complete sentence per event and counts how many it
+        has handed over, so the test can see exactly how far ahead of
+        the voice the model was allowed to run.
+        """
+
+        def __init__(self, sentences: int) -> None:
+            self.sentences = sentences
+            self.streamed = 0
+            self.finished = False
+
+        async def stream(self, messages: list[dict], tools=None) -> AsyncIterator[dict]:
+            yield {"text": "<e:neutral:5> "}
+            for i in range(self.sentences):
+                self.streamed += 1
+                yield {"text": f"Sentence number {i}. "}
+            self.finished = True
+            yield {"done": StreamAccumulator(text="")}
+
+    def test_the_producer_blocks_when_the_voice_stalls(self) -> None:
+        llm = self.OneSentencePerEventLlm(self.SENTENCES)
+        tts = self.GatedTts()
+        orch, _ = build(llm=llm, tts=tts)
+
+        async def go() -> TurnResult:
+            task = asyncio.create_task(orch.run(AUDIO))
+            # Nothing in the fakes sleeps, so the pipeline reaches a
+            # standstill — voice parked on the gate, producer parked on
+            # `put()` — within a handful of loop iterations. Spinning
+            # is deterministic where a timed sleep would not be.
+            for _ in range(50):
+                await asyncio.sleep(0)
+            assert not task.done()
+
+            # One sentence in the synthesiser, CHUNK_QUEUE_DEPTH waiting
+            # behind it, and one more blocked in `put()`. Without the
+            # bound the model streams all twelve and finishes.
+            assert llm.streamed <= CHUNK_QUEUE_DEPTH + 2, llm.streamed
+            assert not llm.finished
+            assert tts.texts == ["Sentence number 0."]
+
+            tts.gate.set()
+            return await asyncio.wait_for(task, timeout=5)
+
+        result = asyncio.run(go())
+        assert result.error is None and not result.cancelled
+        assert llm.finished
+        # Releasing the voice loses nothing and reorders nothing.
+        assert tts.texts == [f"Sentence number {i}." for i in range(self.SENTENCES)]
+
+    def test_the_lookahead_is_small(self) -> None:
+        # The test above proves the bound exists; this one guards its
+        # size. Two sentences of lookahead is what a barge-in throws
+        # away.
         assert CHUNK_QUEUE_DEPTH <= 4
 
     def test_a_slow_voice_does_not_lose_sentences(self) -> None:
