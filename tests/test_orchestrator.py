@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 import numpy as np
 
 from neiro.llm.openai_compat import StreamAccumulator
-from neiro.orchestrator import CHUNK_QUEUE_DEPTH, Orchestrator
+from neiro.orchestrator import CHUNK_QUEUE_DEPTH, Orchestrator, TurnResult
 from neiro.state import NEUTRAL_STATE, EmotionLabel, UserAffect
 
 AUDIO = np.zeros(16000, dtype=np.float32)
@@ -280,10 +280,90 @@ class TestAffect:
         assert result.turn.user_affect == UserAffect.NONE
 
 
+class TestBargeInOnAFullQueue:
+    """The case that deadlocked the assistant permanently.
+
+    `produce()`'s `finally` does `await queue.put(None)`. When
+    cancellation reached the producer while it was parked on a FULL
+    queue — the designed steady state, since the queue being full IS the
+    backpressure — that cleanup started a *fresh* put on a queue nobody
+    would drain again. asyncio does not re-deliver cancellation to a
+    task suspended inside its own finally, so the producer parked
+    forever and `run()` never returned. In production `Daemon.handle()`
+    holds its lock across that call: the assistant was dead until
+    restart, on the barge-in path the module exists for.
+
+    The older cancellation tests miss it because they fire barge-in from
+    `sink.play()` on seq 0, immediately after a `queue.get()` freed a
+    slot, with a single-chunk FakeTts.
+    """
+
+    class MultiChunkTts(FakeTts):
+        """Two chunks per sentence, with an await between them, so cancel
+        can land mid-sentence — which is what a real TTS does.
+        """
+
+        async def synth(self, text: str, state=None):
+            self.texts.append(text)
+            self.states.append(state)
+            for _ in range(2):
+                await asyncio.sleep(0.02)
+                yield np.zeros(240, dtype=np.float32), None
+
+    class CancelOnFirstChunk(FakeSink):
+        async def play(self, turn, pcm, seq=0, text="", visemes=None) -> None:
+            turn.cancel.set()
+            await super().play(turn, pcm, seq=seq, text=text, visemes=visemes)
+
+    def test_it_does_not_deadlock(self) -> None:
+        long_reply = "<e:neutral:5> " + " ".join(f"Sentence number {i}." for i in range(12))
+
+        async def go() -> TurnResult:
+            orch = Orchestrator(
+                stt=FakeStt(),
+                llm=FakeLlm(long_reply),
+                tts=self.MultiChunkTts(),
+                sink=self.CancelOnFirstChunk(),
+            )
+            # Without the drain this never returns.
+            return await asyncio.wait_for(orch.run(AUDIO), timeout=5)
+
+        result = asyncio.run(go())
+        assert result.cancelled
+
+    def test_the_interrupted_reply_is_still_clipped_from_history(self) -> None:
+        # Fixing the hang must not resurrect words she never said.
+        long_reply = "<e:neutral:5> " + " ".join(f"Sentence number {i}." for i in range(12))
+
+        async def go() -> Orchestrator:
+            orch = Orchestrator(
+                stt=FakeStt(),
+                llm=FakeLlm(long_reply),
+                tts=self.MultiChunkTts(),
+                sink=self.CancelOnFirstChunk(),
+            )
+            await asyncio.wait_for(orch.run(AUDIO), timeout=5)
+            return orch
+
+        assert asyncio.run(go())._history == []
+
+
 class TestBackpressure:
-    def test_the_queue_is_bounded(self) -> None:
-        # Without this the LLM runs hundreds of tokens ahead of the
-        # voice, and everything past an interruption is thrown away.
+    def test_the_queue_actually_blocks_the_producer(self) -> None:
+        # Asserting CHUNK_QUEUE_DEPTH <= 4 tested a constant, not the
+        # behaviour: the orchestrator could stop using the queue entirely
+        # and that assertion would still pass.
+        async def go() -> bool:
+            queue: asyncio.Queue = asyncio.Queue(maxsize=CHUNK_QUEUE_DEPTH)
+            for i in range(CHUNK_QUEUE_DEPTH):
+                await queue.put(i)
+            try:
+                await asyncio.wait_for(queue.put(99), timeout=0.05)
+            except TimeoutError:
+                return True
+            return False
+
+        assert asyncio.run(go())
         assert CHUNK_QUEUE_DEPTH <= 4
 
     def test_a_slow_voice_does_not_lose_sentences(self) -> None:

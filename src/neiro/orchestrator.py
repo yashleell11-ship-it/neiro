@@ -215,6 +215,11 @@ class Orchestrator:
                     item = await queue.get()
                     if item is None:
                         return
+                    # Between sentences is a legitimate cancel point, and
+                    # without this check a barge-in that lands while the
+                    # consumer is parked on `get()` is only noticed after
+                    # the next whole sentence has been synthesised.
+                    self._check(turn)
                     yield item
 
             producer = asyncio.create_task(produce())
@@ -225,6 +230,27 @@ class Orchestrator:
                 # task would keep streaming into a queue nobody reads and
                 # hold the HTTP connection open.
                 producer.cancel()
+                # ...but DRAIN FIRST, or that await never returns.
+                #
+                # `produce()`'s own `finally` does `await queue.put(None)`.
+                # When cancellation reaches the producer while it is
+                # parked on a FULL queue — the designed steady state,
+                # since the queue being full IS the backpressure — that
+                # cleanup starts a *fresh* put on a queue nobody will
+                # drain again. asyncio does not re-deliver cancellation
+                # to a task that suspends inside its own finally, so the
+                # producer parks forever and this gather never returns.
+                #
+                # In production `Daemon.handle()` holds its lock across
+                # this call, so the whole assistant is dead until
+                # restart — on the barge-in path this module exists for.
+                # Reproduced before fixing; see tests/test_orchestrator.py.
+                #
+                # The queued sentences are garbage at this point by
+                # design: they belong to a reply that is no longer being
+                # given.
+                while not queue.empty():
+                    queue.get_nowait()
                 await asyncio.gather(producer, return_exceptions=True)
 
             # The producer's failure IS the turn's failure. Its `finally`
