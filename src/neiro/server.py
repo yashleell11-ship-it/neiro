@@ -91,6 +91,21 @@ def server_message(kind: str, **fields: Any) -> str:
     return json.dumps({"t": kind, **fields}, separators=(",", ":"))
 
 
+def _token_matches(presented: str, expected: str) -> bool:
+    """Constant-time equality that cannot raise.
+
+    `secrets.compare_digest` on two `str`s raises TypeError instead of
+    returning False the moment either holds a non-ASCII character — and
+    a header value decoded as latin-1 can hold any byte. Comparing as
+    bytes keeps the constant-time property and turns "weird token" into
+    "wrong token", which is what `Session.check` promises. `surrogatepass`
+    is there so no `str` at all can make the encode itself raise.
+    """
+    return secrets.compare_digest(
+        presented.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass")
+    )
+
+
 def parse_client_message(raw: str) -> dict:
     try:
         message = json.loads(raw)
@@ -122,7 +137,7 @@ class Session:
         that has somehow read the token connect; an Origin alone is
         forgeable by a non-browser client.
         """
-        if not token or not secrets.compare_digest(token, self.token):
+        if not token or not _token_matches(token, self.token):
             raise PermissionError("bad or missing token")
         # A non-browser client sends no Origin at all. That is allowed
         # only because it cannot be a hostile *web page* — the token is

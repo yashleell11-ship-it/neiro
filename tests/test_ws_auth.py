@@ -25,7 +25,9 @@ from neiro.server import (
     server_message,
 )
 
-ORIGINS = {"http://127.0.0.1:8760", "http://localhost:8760"}
+HOST, PORT = "127.0.0.1", 8760
+GOOD_ORIGIN = f"http://{HOST}:{PORT}"
+ORIGINS = {GOOD_ORIGIN, f"http://localhost:{PORT}"}
 
 
 class TestAuth:
@@ -44,6 +46,19 @@ class TestAuth:
         s = Session()
         with pytest.raises(PermissionError):
             s.check("guessed", "http://127.0.0.1:8760", ORIGINS)
+
+    @pytest.mark.parametrize("weird", ["\u00e9", "\U0001f642", "\udcff"])
+    def test_a_weird_token_is_refused_not_a_crash(self, weird: str) -> None:
+        # `secrets.compare_digest` on two strs raises TypeError, not
+        # False, for any non-ASCII character — and a header decoded as
+        # latin-1 can hold any byte. The contract is PermissionError.
+        # The lone surrogate is the case a plain `.encode()` would turn
+        # into a UnicodeEncodeError instead.
+        s = Session()
+        with pytest.raises(PermissionError):
+            s.check(weird, GOOD_ORIGIN, ORIGINS)
+        with pytest.raises(PermissionError):
+            s.check(s.token + weird, GOOD_ORIGIN, ORIGINS)
 
     def test_a_hostile_page_with_the_token_is_still_refused(self) -> None:
         # Defence in depth: both checks, always. A token could leak.
