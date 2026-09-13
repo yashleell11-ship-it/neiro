@@ -31,6 +31,17 @@ and the tag on the stream that follows the result is the one that
 drives her voice. The clients only surface calls when a stream is done,
 so suppression means what it can: nothing queued but unspoken survives,
 and nothing from a tool round is remembered as something she said.
+
+**Narration that reached the voice is a design limit, not a bug to
+fix here.** Real suppression would mean holding every sentence of
+every turn until its stream ends, which is the whole first-audio
+budget spent on the rare turn that needs it; and a one-token hold
+would not do — live, the 4B's "Let me check the battery, memory, and
+disk space for you." left the chunker as two comma-split pieces, the
+first released while the second was still streaming. The prompt is
+the lever (v5, "Doing things"), and how often the model still narrates
+or skips a call it should make is a Stage 3 compliance measurement,
+alongside tag compliance.
 """
 
 from __future__ import annotations

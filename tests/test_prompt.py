@@ -122,6 +122,13 @@ class TestCharacterRules:
         assert "call" in prompt
         assert "let me check" in prompt
 
+    def test_says_the_numbers_come_from_a_tool(self) -> None:
+        # Seen live: offered system_stats and asked how the machine was
+        # doing, the 4B sometimes answered with a battery figure it made
+        # up instead of calling. "Don't fill the gap with a confident
+        # guess" was already there; this names the case.
+        assert "didn't get from a tool" in load_prompt().lower()
+
     def test_the_previous_prompt_is_kept_and_differs(self) -> None:
         # PROMPT_VERSION is logged with every turn so a behaviour change
         # can be traced to the prompt that produced it — which only
