@@ -113,6 +113,43 @@ class TestLocalityRouting:
         r.current = Tier.TUNNEL
         assert r.tier_for(Locality.LAN_TIERABLE) is not Tier.TUNNEL
 
+    @staticmethod
+    def _at_the_hostel() -> TierResolver:
+        # The tunnel is only ever current because the LAN failed to
+        # build a streak: every probe of the ethernet address fails
+        # while every probe of the tunnel succeeds.
+        r = TierResolver()
+        for _ in range(SUCCESSES_TO_PROMOTE):
+            r.observe(Tier.LAN, False)
+            r.observe(Tier.TUNNEL, True)
+        assert r.resolve() is Tier.TUNNEL
+        return r
+
+    def test_stt_stays_local_when_the_tunnel_is_up_because_the_lan_is_down(self) -> None:
+        # The resolver holds the evidence that the LAN is dead. Sending
+        # STT there anyway means every utterance goes to an address
+        # that cannot answer — she hears nothing while looking healthy.
+        r = self._at_the_hostel()
+        assert r.tier_for(Locality.LAN_TIERABLE) is Tier.LOCAL
+
+    def test_stt_uses_a_lan_that_is_back_before_the_resolver_promotes_to_it(self) -> None:
+        # One good probe is below the promotion streak, so the tunnel
+        # stays current — but the LAN is reachable, and STT may use it.
+        r = self._at_the_hostel()
+        r.observe(Tier.LAN, True)
+        assert r.resolve() is Tier.TUNNEL
+        assert r.tier_for(Locality.LAN_TIERABLE) is Tier.LAN
+
+    def test_a_turn_failure_on_the_lan_pulls_stt_back_to_local(self) -> None:
+        # The route must self-correct from the strongest evidence there
+        # is: a turn that actually failed there.
+        r = self._at_the_hostel()
+        r.observe(Tier.LAN, True)
+        assert r.tier_for(Locality.LAN_TIERABLE) is Tier.LAN
+        r.record_failure(Tier.LAN)
+        assert r.tier_for(Locality.LAN_TIERABLE) is Tier.LOCAL
+        assert r.resolve() is Tier.TUNNEL, "the tunnel did not fail; only the LAN did"
+
     @pytest.mark.parametrize("locality", list(Locality))
     def test_every_locality_resolves_to_something_it_allows(self, locality: Locality) -> None:
         r = TierResolver()

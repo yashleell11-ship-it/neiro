@@ -98,12 +98,24 @@ class TierResolver:
             if self._streak[tier] >= SUCCESSES_TO_PROMOTE:
                 self.current = tier
                 return tier
-            if tier is self.current and self._streak[tier] > -FAILURES_TO_DEMOTE:
+            if tier is self.current and self._usable(tier):
                 # Already here and not yet failing — stay, rather than
                 # flapping while the streak rebuilds.
                 return tier
         self.current = Tier.LOCAL
         return Tier.LOCAL
+
+    def _usable(self, tier: Tier) -> bool:
+        """May a turn be sent to this tier at all?
+
+        `local` always — the machine in front of him. Anything else only
+        while its streak is above the demotion line. This is the one
+        copy of that line: `resolve()` uses it to decide whether to stay,
+        `tier_for()` to decide whether a fallback is somewhere worth
+        going. A tier that has never been probed has no evidence against
+        it and passes; one that has failed does not.
+        """
+        return tier is Tier.LOCAL or self._streak[tier] > -FAILURES_TO_DEMOTE
 
     @staticmethod
     def allowed(locality: Locality, tier: Tier) -> bool:
@@ -116,11 +128,19 @@ class TierResolver:
         A `LOCAL_PINNED` provider stays local even when the box is up —
         the mic and the desktop are wherever Yash is, and no amount of
         available GPU changes that.
+
+        A fallback is only taken where the evidence says it works. This
+        matters for STT (`LAN_TIERABLE`) when the tunnel is current: the
+        tunnel is only ever current because the LAN failed to build a
+        streak, so routing STT to the LAN would send every utterance at
+        an address the resolver already knows is dead — the assistant
+        hears nothing while the LLM and TTS look healthy. It stays local
+        instead, and moves to the LAN as soon as a probe says it is back.
         """
         chosen = self.current
         if locality.allows(chosen):
             return chosen
-        for fallback in (Tier.LAN, Tier.LOCAL):
-            if locality.allows(fallback):
+        for fallback in PREFERENCE:
+            if locality.allows(fallback) and self._usable(fallback):
                 return fallback
         return Tier.LOCAL
