@@ -8,6 +8,8 @@ look like an improvement.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from neiro.evals.wer import DatasetScore, edit_distance, normalize, score, wer
@@ -134,7 +136,73 @@ class TestDatasetScore:
         result = score([("a", "hello", "hello"), ("b", "world", "world")])
         assert result.wer == 0.0
 
-    def test_empty_dataset_does_not_divide_by_zero(self) -> None:
+    def test_empty_dataset_is_nan_not_zero(self) -> None:
+        # It used to return 0.0, which does not divide by zero and is
+        # worse: "WER 0.0%" is indistinguishable from a flawless run, and
+        # a silently-empty dataset is exactly what produces it.
         result = DatasetScore(utterances=[])
-        assert result.wer == 0.0
+        assert math.isnan(result.wer)
         assert result.total_ref_words == 0
+
+
+class TestCorpusLevelNotMeanOfRates:
+    """The distinction the benchmark exists to get right.
+
+    A three-word utterance with one error scores 33%; a thirty-word
+    utterance with one error scores 3%. Averaging those weights the short
+    one ten times too heavily. Corpus WER is total errors over total
+    reference words, which is what everyone means by the word.
+    """
+
+    def test_a_short_bad_utterance_does_not_dominate(self) -> None:
+        pairs = [
+            ("short", "yes it is", "no it is"),  # 1 error / 3 words  = 33%
+            ("long", " ".join(["word"] * 30), " ".join(["word"] * 29 + ["wrong"])),  # 1/30 = 3%
+        ]
+        result = score(pairs)
+        mean_of_rates = (1 / 3 + 1 / 30) / 2
+        assert result.wer == pytest.approx(2 / 33, abs=1e-6)
+        assert result.wer < mean_of_rates / 2
+
+    def test_it_equals_total_errors_over_total_words(self) -> None:
+        pairs = [("a", "one two three", "one two four"), ("b", "four five", "four five")]
+        assert score(pairs).wer == pytest.approx(1 / 5)
+
+    def test_an_empty_corpus_is_nan_not_a_perfect_score(self) -> None:
+        # 0 errors over 0 words is not 0% WER, it is no measurement --
+        # and 0.0 prints as "WER 0.0%", indistinguishable from a flawless
+        # run, which is exactly what a silently-empty dataset produces.
+        import math
+
+        assert math.isnan(score([]).wer)
+
+    def test_a_corpus_of_empty_references_is_also_nan(self) -> None:
+        assert math.isnan(score([("a", "", "something")]).wer)
+
+
+class TestBenchmarkHarness:
+    def test_every_corpus_names_its_transcript_column(self) -> None:
+        # Adding a corpus is a line in the table, not a change to the
+        # harness — but a wrong column name would silently score against
+        # empty references, which reads as 100% WER and looks like a
+        # broken recogniser.
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        from bench_stt import CORPORA
+
+        for name, spec in CORPORA.items():
+            assert spec["text"] and spec["audio"], name
+            assert spec["dir"], name
+
+    def test_the_gate_is_about_his_voice_not_a_corpus(self) -> None:
+        # A corpus number is a prior, not the gate. If this docstring
+        # ever stops saying so, the benchmark will get mistaken for G3a.
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        import bench_stt
+
+        assert "own voice" in bench_stt.__doc__

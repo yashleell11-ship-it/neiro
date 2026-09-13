@@ -116,8 +116,15 @@ class DatasetScore:
         NOT the mean of per-utterance WERs — that would weight a
         three-word command the same as a thirty-word ramble, and is the
         single most common way a reported WER ends up wrong.
+
+        An empty corpus is **NaN, not 0.0**. Zero errors over zero words
+        is not a perfect score, it is no measurement — and 0.0 would
+        print as "WER 0.0%", which is indistinguishable from a flawless
+        run and is exactly what a silently-empty dataset produces.
         """
-        return self.total_errors / self.total_ref_words if self.total_ref_words else 0.0
+        if not self.total_ref_words:
+            return float("nan")
+        return self.total_errors / self.total_ref_words
 
 
 def score(pairs: list[tuple[str, str, str]]) -> DatasetScore:
