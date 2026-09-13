@@ -237,5 +237,14 @@ class ProsodyAffectProvider:
         self._recent_bands.clear()
         return reset
 
+    def discard_utterance(self) -> None:
+        """End of turn, but this utterance must not shape his normal:
+        nothing usable was said, or it was cut off. The staged features
+        and the hysteresis history both go — a rejected utterance's band
+        must not decide the next one.
+        """
+        self._last_features = None
+        self._recent_bands.clear()
+
     def save(self) -> None:
         self.store.save()

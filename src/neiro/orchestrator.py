@@ -83,9 +83,6 @@ class Orchestrator:
         self._history: list[dict] = []
         self._history_limit = history_limit
         self._turn_id = 0
-        # The turn in flight, so barge-in can reach it. `None` between
-        # turns; set by `begin_turn()` and cleared when `run()` returns.
-        self.live: Turn | None = None
 
     # -- history --------------------------------------------------------
 
@@ -203,8 +200,7 @@ class Orchestrator:
         window, so it cannot be created inside `run()`.
         """
         self._turn_id += 1
-        self.live = Turn.new(turn_id=self._turn_id)
-        return self.live
+        return Turn.new(turn_id=self._turn_id)
 
     async def run(
         self, audio: np.ndarray, annotation: str | None = None, turn: Turn | None = None
@@ -219,7 +215,6 @@ class Orchestrator:
         observe.
         """
         turn = turn if turn is not None else self.begin_turn()
-        self.live = turn
         turn.audio = audio
         turn.stamp("endpoint")
         result = TurnResult(turn=turn)
@@ -346,10 +341,15 @@ class Orchestrator:
             # were folded into his baseline one turn late. And `live`
             # stayed pointing at a finished turn, so the next barge-in
             # "cancelled" it and reported success.
-            if self.affect is not None and not result.cancelled:
-                # Once per utterance, never per window. Not on a barge-in:
-                # an interrupted utterance is not a sample of how he
-                # normally sounds.
-                self.affect.commit_utterance()
-            self.live = None
+            if self.affect is not None:
+                if result.cancelled or result.error == "empty_transcript":
+                    # Not a sample of how he normally sounds: nothing
+                    # usable was said, or it was cut off. Dropped, so it
+                    # neither enters the baseline nor decides the next
+                    # turn's band. A downstream failure (LLM down) still
+                    # commits — he spoke normally; she just could not answer.
+                    self.affect.discard_utterance()
+                else:
+                    # Once per utterance, never per window.
+                    self.affect.commit_utterance()
         return result

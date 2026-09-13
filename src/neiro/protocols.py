@@ -58,6 +58,21 @@ class AffectProvider(Protocol):
 
     async def observe(self, pcm_window_16k: np.ndarray) -> UserAffect: ...
 
+    def commit_utterance(self) -> bool:
+        """End of a turn he really spoke: fold what was heard into his
+        baseline. Once per utterance, never per window. Returns True if
+        drift detection reset the baseline.
+        """
+        ...
+
+    def discard_utterance(self) -> None:
+        """End of a turn that is not a sample of how he normally sounds —
+        a rejected transcript (the STT floor said nothing usable was
+        said) or an interrupted one. Drops what observe() staged so it
+        can neither enter the baseline nor decide the next turn's band.
+        """
+        ...
+
 
 class LLM(Protocol):
     """One OpenAI-compatible client shape for every tier — promoting to

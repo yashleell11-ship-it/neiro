@@ -74,6 +74,7 @@ class FakeAffect:
     def __init__(self) -> None:
         self.observations = 0
         self.commits = 0
+        self.discards = 0
 
     async def observe(self, window: np.ndarray) -> UserAffect:
         self.observations += 1
@@ -82,6 +83,9 @@ class FakeAffect:
     def commit_utterance(self) -> bool:
         self.commits += 1
         return False
+
+    def discard_utterance(self) -> None:
+        self.discards += 1
 
 
 def build(**kw) -> tuple[Orchestrator, dict]:
@@ -192,14 +196,6 @@ class TestFailures:
         orch, _ = build(stt=FakeStt("   \n "))
         assert asyncio.run(orch.run(AUDIO)).error == "empty_transcript"
 
-    def test_a_rejected_utterance_leaves_no_live_turn(self) -> None:
-        # The early return used to skip `live = None`, so the next
-        # barge-in cancelled a turn that had already finished and
-        # reported success.
-        orch, _ = build(stt=FakeStt(""))
-        asyncio.run(orch.run(AUDIO))
-        assert orch.live is None
-
     def test_a_failing_llm_does_not_raise_out_of_the_turn(self) -> None:
         # She has to say something in character about it, which she
         # cannot do if the turn threw.
@@ -254,6 +250,8 @@ class TestCancellation:
         result = asyncio.run(orch.run(AUDIO))
         assert result.cancelled
         assert affect.commits == 0
+        # ...but it is discarded, not left staged for the next turn.
+        assert affect.discards == 1
 
 
 class TestAffect:
@@ -281,12 +279,14 @@ class TestAffect:
         asyncio.run(orch.run(AUDIO))
         assert affect.commits == 1
 
-    def test_a_rejected_utterance_still_closes_its_window(self) -> None:
+    def test_a_rejected_utterance_is_discarded_not_committed(self) -> None:
         # The STT floor blanking the transcript does not un-hear the
         # windows affect observed while he spoke. The provider staged
         # them waiting for exactly one close per utterance; the early
         # return skipped it, and the next turn's band was decided against
-        # this utterance's history.
+        # this utterance's history. The close is a DISCARD: nothing
+        # usable was said, so a possibly hallucinated window must not
+        # become part of his normal.
         affect = FakeAffect()
         orch, _ = build(stt=FakeStt(""), affect=affect)
 
@@ -298,7 +298,22 @@ class TestAffect:
         result = asyncio.run(go())
         assert result.error == "empty_transcript"
         assert affect.observations == 1
+        assert affect.commits == 0
+        assert affect.discards == 1
+
+    def test_a_downstream_failure_still_commits_what_he_said(self) -> None:
+        # LLM down is her problem, not a fact about his voice.
+        class Broken:
+            async def stream(self, messages, tools=None):
+                raise ConnectionError("llama-server is not running")
+                yield  # pragma: no cover
+
+        affect = FakeAffect()
+        orch, _ = build(affect=affect, llm=Broken())
+        result = asyncio.run(orch.run(AUDIO))
+        assert result.error == "ConnectionError"
         assert affect.commits == 1
+        assert affect.discards == 0
 
     def test_no_affect_provider_is_fine(self) -> None:
         orch, _ = build(affect=None)

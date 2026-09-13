@@ -20,5 +20,9 @@ class NullAffectProvider:
     async def observe(self, pcm_window_16k: np.ndarray) -> UserAffect:
         return UserAffect.NONE
 
-    def commit_utterance(self) -> None:
+    def commit_utterance(self) -> bool:
         """No baseline to update."""
+        return False
+
+    def discard_utterance(self) -> None:
+        """Nothing was staged."""

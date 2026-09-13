@@ -220,3 +220,7 @@ class SerAffectProvider:
         self.calibration.observe(arousal, valence)
         self._last = None
         return False
+
+    def discard_utterance(self) -> None:
+        """Drop the staged prediction without calibrating on it."""
+        self._last = None
