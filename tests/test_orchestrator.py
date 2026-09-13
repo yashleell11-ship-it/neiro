@@ -15,7 +15,7 @@ import numpy as np
 
 from neiro.llm.openai_compat import StreamAccumulator
 from neiro.orchestrator import CHUNK_QUEUE_DEPTH, Orchestrator, TurnResult
-from neiro.state import NEUTRAL_STATE, EmotionLabel, UserAffect
+from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState, UserAffect
 
 AUDIO = np.zeros(16000, dtype=np.float32)
 
@@ -486,9 +486,36 @@ class TestStateSeparation:
     def test_user_affect_and_her_state_stay_apart(self) -> None:
         # CLAUDE.md rule 5. Sharing one variable is how an assistant ends
         # up reading its own TTS back as the user's mood.
+        #
+        # Drives both writers: observe_while_speaking() is the only thing
+        # that sets user_affect, and run() the only thing that sets
+        # neiro_state. The previous version ran only run() and inspected
+        # the Turn's untouched defaults, so `neiro_state = user_affect`
+        # inside observe_while_speaking() left the suite green.
         affect = FakeAffect()
         orch, _ = build(affect=affect)
-        result = asyncio.run(orch.run(AUDIO))
-        assert type(result.turn.user_affect) is UserAffect
-        assert result.turn.neiro_state is not NEUTRAL_STATE or result.state is not None
-        assert not isinstance(result.turn.neiro_state, UserAffect)
+
+        async def go() -> tuple[TurnResult, UserAffect, NeiroState]:
+            turn = orch.begin_turn()
+            for _ in range(3):
+                await orch.observe_while_speaking(turn, AUDIO)
+            # Snapshot what the speaking phase wrote, before the reply
+            # can overwrite either side.
+            heard, felt = turn.user_affect, turn.neiro_state
+            return await orch.run(AUDIO, turn=turn), heard, felt
+
+        result, heard, felt = asyncio.run(go())
+        turn = result.turn
+
+        # Observing his voice wrote what was heard and nothing else.
+        assert type(heard) is UserAffect
+        assert heard.arousal_z == 2.5 and heard.confidence == 0.9
+        assert felt is NEUTRAL_STATE
+
+        # The reply wrote what she feels and nothing else.
+        assert type(turn.neiro_state) is NeiroState
+        assert turn.neiro_state.label is EmotionLabel.HAPPY
+        assert turn.user_affect is heard
+
+        # The rule itself: two objects, never the same one.
+        assert turn.neiro_state is not turn.user_affect
