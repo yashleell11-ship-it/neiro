@@ -293,10 +293,23 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(items)} datasets, {Manifest.total_gb(items)} GB, {Manifest.total_hours(items)} h audio",
         )
     )
-    free_gb = shutil.disk_usage(args.dest.parent if args.dest.exists() else REPO).free / 1e9
-    console.print(f"free on disk: {free_gb:.0f} GB")
-    if Manifest.total_gb(items) > free_gb * 0.8:
-        console.print("[red]that does not fit comfortably — narrow the selection[/]")
+    # Only what still has to come down. Counting corpora already on disk
+    # made this refuse a run needing 70 GB because the selection totalled
+    # 180 — while advising "narrow the selection", which would have
+    # dropped exactly the datasets that were missing.
+    outstanding = [
+        d
+        for d in items
+        if d.access in AUTOMATABLE and (args.force or not (args.dest / d.name / MARKER).exists())
+    ]
+    need_gb = Manifest.total_gb(outstanding)
+    free_gb = shutil.disk_usage(args.dest if args.dest.exists() else REPO).free / 1e9
+    console.print(
+        f"still to fetch: [bold]{len(outstanding)}[/] of {len(items)}, {need_gb} GB   "
+        f"free on disk: {free_gb:.0f} GB"
+    )
+    if need_gb > free_gb * 0.8:
+        console.print("[red]that does not fit comfortably — narrow with --target or --only[/]")
         if not args.dry_run:
             return 2
     if args.dry_run:
