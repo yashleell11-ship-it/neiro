@@ -8,9 +8,11 @@ separate from any notion of an average.
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from neiro.metrics import (
@@ -24,6 +26,7 @@ from neiro.metrics import (
     stage_durations_ms,
     summarise,
 )
+from neiro.orchestrator import Orchestrator
 from neiro.state import Turn
 
 REPO = Path(__file__).resolve().parents[1]
@@ -42,7 +45,15 @@ STAMPED_BUT_NOT_A_STAGE = {
 }
 
 
+KNOWN_STAMPS = set(STAGE_ORDER) | STAMPED_BUT_NOT_A_STAGE
+
+
 def _turn_with(timeline: dict[str, float], turn_id: int = 1) -> Turn:
+    # A fixture may only use names the pipeline really stamps. This file
+    # once built its timelines from names nothing stamped, and every test
+    # in it passed while the waterfall was wrong for every real turn.
+    unknown = set(timeline) - KNOWN_STAMPS
+    assert not unknown, f"not a stamp the pipeline makes: {sorted(unknown)}"
     turn = Turn.new(turn_id)
     turn.timeline.update(timeline)
     return turn
@@ -150,6 +161,58 @@ class TestStageOrderFollowsThePipeline:
         # exception list would keep vouching for it forever.
         assert STAMPED_BUT_NOT_A_STAGE <= _names_stamped_in_the_tree()
         assert not STAMPED_BUT_NOT_A_STAGE & set(STAGE_ORDER)
+
+    def test_a_real_turn_stamps_exactly_the_waterfall_in_its_order(self) -> None:
+        # The seam the fabricated fixtures skipped: the orchestrator's own
+        # stamps, read back through metrics.py. Every stage present,
+        # nothing unknown, the order the waterfall assumes, one bar per
+        # boundary, and a headline number at the end of it.
+        orch = Orchestrator(stt=_Stt(), llm=_Llm(), tts=_Tts(), sink=_BrowserShapedSink())
+        result = asyncio.run(orch.run(np.zeros(16000, dtype=np.float32)))
+        assert result.error is None and not result.cancelled
+
+        timeline = result.turn.timeline
+        assert set(timeline) == set(STAGE_ORDER)
+        assert sorted(timeline, key=timeline.__getitem__) == list(STAGE_ORDER)
+        assert list(stage_durations_ms(result.turn)) == list(STAGE_ORDER[1:])
+        headline = headline_latency_ms(result.turn)
+        assert headline is not None and headline > 0
+
+
+class _Stt:
+    async def transcribe(self, pcm: np.ndarray) -> str:
+        return "what's my battery at"
+
+
+class _Llm:
+    reply = "<e:happy:7> Ninety six percent. Still charging."
+
+    async def stream(self, messages: list[dict], tools=None):
+        for i in range(0, len(self.reply), 5):
+            yield {"text": self.reply[i : i + 5]}
+
+
+class _Tts:
+    async def synth(self, text: str, state=None):
+        yield np.zeros(240, dtype=np.float32), None
+
+
+class _BrowserShapedSink:
+    """Stamps `sink_played` the way the browser will: from a later
+    message, after `play()` has returned and `sink_first_sent` is down.
+
+    Stamping inside `play()` — what the bench's fake does — lands
+    `sink_played` BEFORE `sink_first_sent`. That is the file sink's
+    shape, not the browser's, and the order test above would then pass
+    or fail on a fake's accident rather than on the pipeline.
+    """
+
+    async def play(self, turn: Turn, pcm, seq: int = 0, text: str = "", visemes=None) -> None:
+        if seq == 0:
+            asyncio.get_running_loop().call_soon(turn.stamp, "sink_played")
+
+    async def cancel(self, turn: Turn) -> None:
+        pass
 
 
 class TestPercentile:
