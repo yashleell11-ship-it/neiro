@@ -317,6 +317,10 @@ class TestXlam:
                     "count": {"description": "how many", "type": "int"},
                     "platform": {"description": "where", "type": "str", "default": "pc"},
                     "ids": {"description": "ids", "type": "List[int]"},
+                    "at": {"description": "lat, lon", "type": "Tuple[float, float]"},
+                    "tags": {"description": "tags", "type": "set"},
+                    "fn": {"description": "curve", "type": "Callable[[float], float]"},
+                    "page": {"description": "page", "type": "str, optional, default='20'"},
                 },
             }
         ]
@@ -352,8 +356,14 @@ class TestXlam:
         assert params["properties"]["type"]["type"] == "string"
         assert params["properties"]["count"]["type"] == "integer"
         assert params["properties"]["ids"]["type"] == "array"
+        assert params["properties"]["at"]["type"] == "array", "the comma inside the brackets"
+        assert params["properties"]["tags"]["type"] == "array"
+        assert params["properties"]["fn"]["type"] == "Callable[[float], float]", (
+            "no JSON type for it: left whole, not truncated at the comma"
+        )
+        assert params["properties"]["page"]["type"] == "string"
         assert params["properties"]["platform"]["default"] == "pc"
-        assert params["required"] == ["count", "ids"], (
+        assert params["required"] == ["count", "ids", "at", "tags", "fn"], (
             "optional and defaulted params are not required"
         )
 

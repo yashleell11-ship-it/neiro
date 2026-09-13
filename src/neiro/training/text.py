@@ -215,18 +215,43 @@ _SCHEMA_TYPES: dict[str, str] = {
     "list": "array",
     "array": "array",
     "tuple": "array",
+    "set": "array",
     "dict": "object",
     "object": "object",
 }
+# A generic of any of these is an array too: `List[int]`, `Tuple[float,
+# float]`, `Set[str]`. Only the head is looked at; the element type is
+# not carried into the schema (JSON schema would want `items`, and the
+# corpora never say enough to fill it honestly).
+_ARRAY_HEADS = ("list[", "list<", "tuple[", "set[")
+_BRACKETS = {"[": "]", "(": ")", "<": ">"}
+
+
+def _type_head(spelling: str) -> str:
+    """The type itself, without xLAM's trailing qualifiers: `"str,
+    optional"` → `"str"`, `"int, optional, default=100"` → `"int"`.
+    The cut is at the first comma *outside* brackets, so the comma in
+    `Tuple[float, float]` is left alone — a split on any comma turned
+    1,332 of those into the non-type `Tuple[float` in the last run.
+    """
+    depth = 0
+    for i, ch in enumerate(spelling):
+        if ch in _BRACKETS:
+            depth += 1
+        elif ch in _BRACKETS.values():
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return spelling[:i].strip()
+    return spelling.strip()
 
 
 def _schema_type(spelling: str) -> str:
-    """`"str, optional"` → `"string"`. The `, optional` suffix is xLAM's
-    (and, inherited, When2Call's) way of saying not-required; it is not
-    part of the type.
+    """A corpus type spelling → the JSON-schema type, or the spelling
+    itself when there is no mapping (`Callable[[float], float]` is not
+    a JSON type and is left as it is rather than guessed at).
     """
-    key = spelling.split(",")[0].strip()
-    if key.lower().startswith(("list[", "list<")):
+    key = _type_head(spelling)
+    if key.lower().startswith(_ARRAY_HEADS):
         return "array"
     return _SCHEMA_TYPES.get(key.lower(), key)
 
