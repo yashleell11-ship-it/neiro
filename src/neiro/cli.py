@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -386,3 +387,150 @@ def fetch_datasets(
     for name in only or []:
         argv += ["--only", name]
     raise typer.Exit(code=fetch_main(argv))
+
+
+@app.command()
+def affect(
+    wav: Annotated[Path, typer.Argument(help="A WAV file to analyse.")],
+    device: str = typer.Option("earbuds", "--device", help="Which baseline to score against."),
+    baseline_from: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--baseline-from",
+            help="WAV(s) of his ORDINARY voice to build a baseline from. Repeatable. "
+            "Without these the stored baseline for --device is used, and a cold "
+            "baseline correctly says nothing at all.",
+        ),
+    ] = None,
+    reply: str = typer.Option(
+        "<e:happy:7> Oh, that actually worked?",
+        "--reply",
+        help="A sample reply with an emotion tag, to show the output half of the loop.",
+    ),
+) -> None:
+    """Show the whole emotional loop for one recording.
+
+    Prosody measured, scored against his own normal, turned into the
+    annotation she would actually see — and then the other direction:
+    her tag becoming face weights and a voice instruction.
+
+    This is the differentiator made visible without a mic, a model, or a
+    browser.
+    """
+    import asyncio
+
+    import numpy as np
+    import soundfile as sf
+    from rich.console import Console
+    from rich.table import Table
+
+    from neiro.affect import features as feat
+    from neiro.affect.baseline import BaselineStore
+    from neiro.affect.prosody import ProsodyAffectProvider, band_for, describe
+    from neiro.config import Neiro
+    from neiro.emotion.blend import ExpressionBlender
+    from neiro.emotion.voice import exaggeration_for, instruct_for
+    from neiro.llm.emotion_tag import EmotionTagParser
+
+    console = Console()
+    cfg = Neiro()
+
+    def read(path: Path) -> np.ndarray:
+        audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        if sr != 16000:
+            import librosa
+
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+        return audio
+
+    if not wav.exists():
+        console.print(f"[red]No such file:[/] {wav}")
+        raise typer.Exit(code=2)
+
+    feat.warm(cfg)
+    provider = ProsodyAffectProvider(cfg=cfg, device=device)
+    if baseline_from:
+        # An in-memory baseline, so experimenting never pollutes the real
+        # one on disk.
+        provider.store = BaselineStore(path=Path("/dev/null"))
+        for path in baseline_from:
+            measured = feat.extract(read(path), cfg)
+            if measured:
+                provider.baseline.observe(measured, cfg)
+        console.print(f"baseline built from {provider.baseline.n} recording(s)")
+
+    measured = feat.extract(read(wav), cfg)
+    if measured is None:
+        console.print(
+            "[yellow]Nothing measurable in that recording[/] — too short, silent, or unvoiced."
+        )
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"what {wav.name} sounds like", show_header=True)
+    table.add_column("feature")
+    table.add_column("measured", justify="right")
+    table.add_column("vs his normal", justify="right")
+    z_scores = provider.baseline.z_scores(measured, cfg)
+    for name, value in measured.vector().items():
+        z = z_scores.get(name)
+        table.add_row(name, f"{value:.3f}", "—" if z is None else f"{z:+.2f}σ")
+    console.print(table)
+
+    # The live system calls observe() every ~750 ms on a rolling window,
+    # so hysteresis has several readings to settle on before the band is
+    # trusted. Analysing a file must do the same, or a one-shot call is
+    # always penalised for "disagreeing" with an empty history.
+    audio = read(wav)
+    step = int(0.75 * 16000)
+    window = int(cfg.affect.window_seconds * 16000)
+    starts = list(range(0, max(1, len(audio) - window + 1), step)) or [0]
+    for start in starts:
+        affect_now = asyncio.run(provider.observe(audio[start : start + window]))
+    if affect_now.confidence <= 0:
+        console.print(
+            f"\n[yellow]No reading.[/] The baseline for {device!r} has seen "
+            f"{provider.baseline.n} utterance(s); it needs "
+            f"{cfg.affect.warmup_utterances} before it will say anything. "
+            "That is the intended behaviour, not a failure — pass --baseline-from "
+            "with a few recordings of his ordinary voice."
+        )
+    else:
+        band = band_for(affect_now.arousal_z, cfg.affect.dead_band_z)
+        console.print(
+            f"\narousal [bold]{affect_now.arousal_z:+.2f}σ[/] ({band})   "
+            f"confidence {affect_now.confidence:.2f}"
+        )
+        # Shown, but never as an equal. Measured on 30 CREMA-D speakers:
+        # arousal AUC 0.839, valence 0.511 — chance. Printing them side
+        # by side without saying so would imply a symmetry that does not
+        # exist.
+        console.print(
+            f"[dim]valence {affect_now.valence_z:+.2f}σ — measured at chance "
+            f"(AUC 0.51); not used to decide anything[/]"
+        )
+        annotation = describe(affect_now, cfg)
+        console.print(
+            f"prompt gets: [bold]\\[voice: {annotation}][/]"
+            if annotation
+            else "prompt gets: [dim]nothing — below the dead-band or the confidence floor, "
+            "so it is omitted rather than softened[/]"
+        )
+
+    parser = EmotionTagParser()
+    state, spoken = parser.feed(reply)
+    if state is None:
+        state, more = parser.flush()
+        spoken += more
+    from neiro.state import NEUTRAL_STATE
+
+    state = state or NEUTRAL_STATE
+    console.print(f"\nher reply {reply!r}")
+    console.print(f"  spoken    {spoken.strip()!r}  [dim](the tag never reaches the TTS)[/]")
+    console.print(f"  state     {state.label.value} at {state.intensity:.1f}")
+    weights = ExpressionBlender(cfg=cfg).settle(state)
+    shown = {k: round(v, 2) for k, v in weights.items() if v > 0.01}
+    console.print(f"  face      {shown or 'at rest'}")
+    console.print(f"  voice     {instruct_for(state)}")
+    console.print(f"  (chatterbox exaggeration {exaggeration_for(state):.2f})")

@@ -29,6 +29,7 @@ mispitched syllable, which reads as broken rather than alive.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -152,7 +153,16 @@ class ProsodyAffectProvider:
         """
         if n < self.cfg.affect.warmup_utterances:
             return 0.0
-        maturity = min(1.0, n / max(1, self.cfg.affect.baseline_window))
+        # sqrt, not linear. The z-score is only as good as the sigma
+        # estimated from n samples, and the relative error of that
+        # estimate shrinks as ~1/sqrt(2n) — roughly 32% at n=5, 16% at
+        # n=20, 10% at n=50. A linear ramp made confidence far too
+        # pessimistic early: with a 10-utterance baseline a +3.5σ reading
+        # still scored 0.32, under the 0.45 floor, so she stayed silent
+        # about tone for the first ~25 utterances of every new device
+        # despite an unmistakable signal. sqrt puts n=5 (the documented
+        # warm-up) right at the floor and rises from there.
+        maturity = min(1.0, math.sqrt(n / max(1, self.cfg.affect.baseline_window)))
         voiced = min(1.0, features.voiced_ratio / 0.5)
         length = min(1.0, features.duration_s / self.cfg.affect.window_seconds)
         return float(max(0.0, min(1.0, 0.4 + 0.6 * maturity) * voiced * length))
@@ -175,9 +185,21 @@ class ProsodyAffectProvider:
 
         # Hysteresis: the band only moves when two of the last three
         # windows agree, so one mispitched syllable can't flip her face.
+        #
+        # ...but only once there IS a history to disagree with. A short
+        # utterance produces a single window, and requiring agreement
+        # there meant every short sentence was penalised for
+        # contradicting an empty deque — so a 2.3 s "what?!" could never
+        # produce an annotation at all. Brevity is already accounted for
+        # by the `length` term in `_confidence`; charging for it twice
+        # silently disabled the feature on exactly the utterances most
+        # likely to carry emotion.
         candidate = band_for(arousal, self.cfg.affect.dead_band_z)
         self._recent_bands.append(candidate)
-        if self._recent_bands.count(candidate) >= HYSTERESIS_AGREE:
+        if (
+            len(self._recent_bands) < HYSTERESIS_AGREE
+            or self._recent_bands.count(candidate) >= HYSTERESIS_AGREE
+        ):
             self._band = candidate
         confidence = self._confidence(features, baseline.n)
         if self._band != candidate:

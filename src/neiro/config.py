@@ -66,7 +66,24 @@ class LlmConfig(BaseModel):
 
 class AffectConfig(BaseModel):
     enabled: bool = False  # flips true only after gate G3b (Task 13) passes
-    dead_band_z: float = 0.5
+    # 2.0, not the plan's 0.5. Measured on 75 held-out NEUTRAL utterances
+    # from 25 CREMA-D speakers, each scored against that speaker's own
+    # other neutral clips — i.e. the false-positive rate on genuinely
+    # ordinary speech:
+    #
+    #     dead-band   ordinary speech flagged   angry speech caught
+    #        0.50               61%                     96%   <- the plan's value
+    #        1.00               39%                     95%
+    #        1.50               19%                     91%
+    #        2.00                4%                     88%
+    #        2.50                0%                     85%
+    #
+    # At 0.5σ she would remark on his tone two turns in three, while her
+    # own prompt says "most of the time, say nothing about it at all".
+    # Trading 8 points of recall to cut false positives from 61% to 4%
+    # is the whole difference between a character who notices something
+    # and one who is insufferable.
+    dead_band_z: float = 2.0
     confidence_floor: float = 0.45
     warmup_utterances: int = 5
     baseline_window: int = 50

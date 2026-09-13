@@ -382,16 +382,38 @@ class TestProvider:
         assert describe(affect, p.cfg) is not None
 
     def test_hysteresis_needs_agreement_before_the_band_moves(self, tmp_path) -> None:
+        # With a history present, one disagreeing window must not move
+        # the band. (With NO history there is nothing to disagree with,
+        # which is a separate case -- see the short-utterance test.)
         p = self._provider(tmp_path)
         f = feat.extract(CALM)
         assert f is not None
         for _ in range(30):
             p.baseline.observe(f, p.cfg)
+        for _ in range(3):
+            asyncio.run(p.observe(CALM))  # establish a "usual" history
         assert p._band == "usual"
-        asyncio.run(p.observe(EXCITED))  # one disagreeing window
+        asyncio.run(p.observe(EXCITED))
         assert p._band == "usual", "one window must not flip her face"
         asyncio.run(p.observe(EXCITED))
         assert p._band == "higher"
+
+    def test_a_single_window_utterance_is_not_penalised_for_having_no_history(
+        self, tmp_path
+    ) -> None:
+        # A 2-3 second sentence produces ONE analysis window. Requiring
+        # hysteresis agreement there meant every short utterance was
+        # charged for contradicting an empty deque, so a brief "what?!"
+        # could never produce a reading -- exactly the utterances most
+        # likely to carry emotion.
+        p = self._provider(tmp_path)
+        f = feat.extract(CALM)
+        assert f is not None
+        for _ in range(30):
+            p.baseline.observe(f, p.cfg)
+        first = asyncio.run(p.observe(EXCITED))
+        assert p._band == "higher"
+        assert first.confidence > 0
 
     def test_commit_updates_the_baseline_once_per_utterance(self, tmp_path) -> None:
         # Six analysis windows of one sentence must add ONE sample, or a

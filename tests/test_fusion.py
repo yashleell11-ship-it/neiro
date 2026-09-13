@@ -84,8 +84,11 @@ class TestFusion:
         assert fuse(None, only) == only
 
     def test_agreement_raises_confidence(self) -> None:
-        a = UserAffect(arousal_z=1.5, confidence=0.6)
-        b = UserAffect(arousal_z=1.2, confidence=0.6)
+        # Relative to the configured dead-band, so tuning it does not
+        # silently turn this test into one about something else.
+        band = Neiro().affect.dead_band_z
+        a = UserAffect(arousal_z=band * 1.5, confidence=0.6)
+        b = UserAffect(arousal_z=band * 1.2, confidence=0.6)
         fused = fuse(a, b)
         assert fused.arousal_z > 0
         assert fused.confidence > 0.6
@@ -94,8 +97,9 @@ class TestFusion:
         # Two independent measurements pointing opposite ways mean the
         # reading is unreliable — the prompt's "ignore it at low
         # confidence" rule is what should act on this.
-        a = UserAffect(arousal_z=1.8, confidence=0.8)
-        b = UserAffect(arousal_z=-1.8, confidence=0.8)
+        band = Neiro().affect.dead_band_z
+        a = UserAffect(arousal_z=band * 1.5, confidence=0.8)
+        b = UserAffect(arousal_z=-band * 1.5, confidence=0.8)
         fused = fuse(a, b)
         assert fused.confidence < 0.8 * DISAGREEMENT_PENALTY * 1.01
         assert fused.confidence < Neiro().affect.confidence_floor
@@ -104,7 +108,7 @@ class TestFusion:
         # Sitting inside the dead-band is declining to say, not
         # contradicting. Counting it as conflict would suppress every
         # reading where one lane is simply quiet.
-        a = UserAffect(arousal_z=1.8, confidence=0.8)
+        a = UserAffect(arousal_z=Neiro().affect.dead_band_z * 1.5, confidence=0.8)
         quiet = UserAffect(arousal_z=0.0, confidence=0.8)
         assert fuse(a, quiet).confidence > 0.8 * DISAGREEMENT_PENALTY * 1.5
 
