@@ -275,9 +275,23 @@ class TestPersistence:
 
     def test_a_stale_schema_is_discarded(self, tmp_path) -> None:
         # Old feature vectors are not comparable to new ones; mixing them
-        # would corrupt every z-score silently.
+        # would corrupt every z-score silently. The fixture is what THIS
+        # build writes with only the schema number changed, and the
+        # positive control proves it loads as written — so the schema
+        # guard is the only thing that can empty the store. The earlier
+        # fixture had an empty device payload, which from_json rejected
+        # on its own: the test passed with the guard deleted.
         path = tmp_path / "b.json"
-        path.write_text(json.dumps({"schema": BASELINE_SCHEMA + 99, "devices": {"x": {}}}))
+        store = BaselineStore(path=path)
+        f = feat.extract(CALM)
+        assert f is not None
+        store.for_device("x").observe(f)
+        store.save()
+        assert BaselineStore.load(path).baselines["x"].n == 1  # positive control
+
+        stale = json.loads(path.read_text())
+        stale["schema"] = BASELINE_SCHEMA + 99
+        path.write_text(json.dumps(stale))
         assert BaselineStore.load(path).baselines == {}
 
     def test_save_is_atomic(self, tmp_path) -> None:
