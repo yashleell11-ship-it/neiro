@@ -22,7 +22,7 @@ import time
 import numpy as np
 import pytest
 
-from neiro.audio.sink_ws import SEND_TIMEOUT_S, WsSink
+from neiro.audio.sink_ws import FIRST_AUDIO_TIMEOUT_S, SEND_TIMEOUT_S, WsSink
 from neiro.config import Neiro
 from neiro.metrics import headline_latency_ms
 from neiro.server import (
@@ -423,6 +423,40 @@ class TestPlayedEndsTheMetric:
             assert sink.poll() == 0
 
         run(go())
+
+    def test_poll_gives_up_on_a_tab_that_never_reports_played(
+        self, session: Session, monkeypatch
+    ) -> None:
+        # The tab has the frames but its AudioContext is suspended and
+        # the unlock button is never clicked: no `played`, ever. The
+        # sink says "speaking" for as long as the HUD would wait for the
+        # report, then stops — the loop must not carry a reply nobody
+        # heard as "speaking" until the next keypress.
+        now = [1000.0]
+        monkeypatch.setattr(time, "perf_counter", lambda: now[0])
+        sink = WsSink(session)
+        turn = _turn()
+
+        async def go() -> None:
+            await sink.play(turn, _pcm(2400), seq=0)
+            assert sink.poll() is None  # still being sent: no close yet
+            sink.close()
+            assert sink.poll() is None
+            now[0] += FIRST_AUDIO_TIMEOUT_S * 0.9
+            assert sink.poll() is None  # within the allowance
+            now[0] += FIRST_AUDIO_TIMEOUT_S * 0.2
+            assert sink.poll() == 0  # given up on
+            assert headline_latency_ms(turn) is None  # and no number was invented
+
+        run(go())
+
+    def test_poll_is_done_when_the_tab_goes_away(self, session: Session) -> None:
+        sink = WsSink(session)
+        run(sink.play(_turn(), _pcm(2400), seq=0))
+        sink.close()
+        assert sink.poll() is None
+        session.detach()
+        assert sink.poll() == 0
 
 
 class TestEndToEnd:

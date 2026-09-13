@@ -64,6 +64,17 @@ log = logging.getLogger(__name__)
 # used to apply when a full queue was waited on without limit.
 SEND_TIMEOUT_S = 0.5
 
+# How long the browser is given, once the reply has been sent, to report
+# the first chunk playing. The HUD waits this long before printing the
+# turn without the number, and `poll()` stops saying "speaking" after it:
+# a tab whose AudioContext is still suspended (the unlock button never
+# clicked) never reports, and a phase that never comes back would be
+# carried by the talk loop for the rest of the run. By the time the wait
+# starts the whole reply has been synthesised and sequence 0 was sent
+# long ago, so the report is normally already in; the bound is for a tab
+# mid-reload, or one that is never going to play.
+FIRST_AUDIO_TIMEOUT_S = 2.0
+
 # Viseme times are seconds relative to the chunk start; four decimals is
 # a tenth of a millisecond, finer than any frame the face will draw.
 VISEME_DECIMALS = 4
@@ -107,6 +118,7 @@ class WsSink:
     _turn: Turn | None = field(default=None, repr=False)
     _state: NeiroState | None = field(default=None, repr=False)
     _seconds_sent: float = field(default=0.0, repr=False)
+    _closed_at: float | None = field(default=None, repr=False)
 
     # -- the Sink protocol ----------------------------------------------
 
@@ -179,6 +191,7 @@ class WsSink:
         if self.audio_id is None or self.cancelled or self.ended:
             return
         self.ended = True
+        self._closed_at = time.perf_counter()
         if not self.session.push(server_message("utt.end", audio_id=self.audio_id)):
             self.dropped += 1
 
@@ -204,13 +217,26 @@ class WsSink:
         The browser reports when playback *started*, not when it ended,
         so the end is the start plus what was sent — an estimate, and
         only the HUD label rests on it.
+
+        Until the browser reports, "speaking" is a guess, and a bounded
+        one: a tab that has the frames but never reports (its
+        AudioContext still suspended, the unlock button never clicked)
+        gets `FIRST_AUDIO_TIMEOUT_S` after `close()` — the same
+        allowance the HUD gives the report — and is then given up on.
+        Otherwise the loop would carry a reply nobody heard as "speaking"
+        until the next keypress, however long that is.
         """
         if self.audio_id is None or self.cancelled or self._turn is None:
             return 0
+        if not self.session.connected:
+            return 0  # whatever was playing died with the socket
+        now = time.perf_counter()
         started = self._turn.timeline.get(HEADLINE_END)
-        if started is None:
-            return None if self.session.connected else 0
-        return None if time.perf_counter() < started + self._seconds_sent else 0
+        if started is not None:
+            return None if now < started + self._seconds_sent else 0
+        if self._closed_at is None:
+            return None  # still being sent
+        return None if now < self._closed_at + FIRST_AUDIO_TIMEOUT_S else 0
 
     # -- internals --------------------------------------------------------
 

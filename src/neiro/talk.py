@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 import numpy as np
 
 from neiro import metrics
+from neiro.audio.sink_ws import FIRST_AUDIO_TIMEOUT_S
 from neiro.config import Neiro
 from neiro.daemon import AFFECT_INTERVAL_S, Daemon
 from neiro.orchestrator import TurnResult
@@ -77,11 +78,6 @@ KEY_POLL_S = 0.05
 DRAIN_TIMEOUT_S = 2.0
 # Tried in order; the first one present plays the reply.
 PLAYERS: tuple[tuple[str, ...], ...] = (("paplay",), ("aplay", "-q"))
-# How long the HUD waits, after a turn, for the browser to report the
-# first chunk playing before printing without the number. By then the
-# whole reply has been synthesised and sequence 0 was sent long ago, so
-# the report is normally already in; the bound is for a tab mid-reload.
-FIRST_AUDIO_TIMEOUT_S = 2.0
 # The command that opens the face. One attempt, never retried: a desktop
 # without it prints the URL and that is enough.
 OPENERS: tuple[tuple[str, ...], ...] = (("xdg-open",),)
