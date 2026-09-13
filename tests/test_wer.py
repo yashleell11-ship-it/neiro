@@ -172,8 +172,6 @@ class TestCorpusLevelNotMeanOfRates:
         # 0 errors over 0 words is not 0% WER, it is no measurement --
         # and 0.0 prints as "WER 0.0%", indistinguishable from a flawless
         # run, which is exactly what a silently-empty dataset produces.
-        import math
-
         assert math.isnan(score([]).wer)
 
     def test_a_corpus_of_empty_references_is_also_nan(self) -> None:
