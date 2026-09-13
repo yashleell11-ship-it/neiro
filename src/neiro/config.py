@@ -121,6 +121,17 @@ class AffectConfig(BaseModel):
     voiced_db_below_peak: float = 25.0
     silence_db_below_peak: float = 35.0  # a frame this far under peak is a pause
 
+    # --- Lane B, the trained model (affect/ser.py) ---
+    # Off until gate G3b passes. Measured 2026-09-13 on this laptop:
+    # Lane B costs ~590 ms per window on CPU against Lane A's ~10 ms —
+    # 59x, and against a 750 ms interval that leaves almost no headroom
+    # while STT and the browser are also running. So Lane B gets its own,
+    # longer interval, and `lane_b_device` exists for the box tier where
+    # VRAM is not scarce.
+    lane_b_enabled: bool = False
+    lane_b_interval_s: float = 1.5
+    lane_b_device: str = "cpu"
+
     # --- window (affect/prosody.py) ---
     window_seconds: float = 3.0  # rolling analysis window
     min_window_seconds: float = 0.7  # shorter than this says nothing at all

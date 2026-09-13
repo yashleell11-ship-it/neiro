@@ -448,3 +448,50 @@ class TestNullProvider:
         # affect on is a config flip, not a code path.
         for name in ("observe", "commit_utterance", "locality"):
             assert hasattr(NullAffectProvider, name), name
+
+
+class TestLaneBProvider:
+    """The trained model at runtime. No checkpoint needed for most of it."""
+
+    def test_it_is_local_pinned(self) -> None:
+        # It reads the microphone, and audio is the one thing not worth
+        # sending over a link.
+        from neiro.affect.ser import SerAffectProvider
+
+        assert SerAffectProvider.locality is Locality.LOCAL_PINNED
+        assert not SerAffectProvider.locality.allows(Tier.LAN)
+
+    def test_a_missing_checkpoint_says_how_to_train_one(self, tmp_path) -> None:
+        # At construction time, not at the first utterance: a model that
+        # cannot load should stop start-up, not fail mid-conversation.
+        from neiro.affect.ser import SerAffectProvider, SerUnavailable
+
+        p = SerAffectProvider(checkpoint=tmp_path / "nope.pt")
+        with pytest.raises(SerUnavailable, match="ser_train"):
+            p.load()
+
+    def test_it_is_interchangeable_with_the_other_providers(self) -> None:
+        # Turning Lane B on must be a config flip, not a code path.
+        from neiro.affect.ser import SerAffectProvider
+
+        for name in ("observe", "commit_utterance", "warm", "locality"):
+            assert hasattr(SerAffectProvider, name), name
+
+    def test_it_is_off_by_default_and_paced_slower_than_lane_a(self) -> None:
+        # Measured: ~590 ms per window against Lane A's ~10 ms, on a
+        # 750 ms cadence with STT and a browser also running.
+        cfg = Neiro()
+        assert cfg.affect.lane_b_enabled is False
+        assert cfg.affect.lane_b_interval_s > 0.75
+
+    def test_an_uncalibrated_reading_says_nothing(self) -> None:
+        # The model predicts absolute circumplex coordinates learned from
+        # actors. Until it has been baselined on HIM, that number means
+        # nothing about him, and reporting it would be worse than silence.
+        import asyncio
+
+        from neiro.affect.ser import SerAffectProvider
+
+        p = SerAffectProvider()
+        assert p.calibration.n == 0
+        assert asyncio.run(p.observe(np.zeros(100, dtype=np.float32))) == UserAffect.NONE
