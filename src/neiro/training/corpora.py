@@ -202,6 +202,42 @@ def load(names: list[str] | None = None, datasets_dir: Path | None = None) -> li
     return rows
 
 
+def ensure_extracted(name: str, datasets_dir: Path | None = None) -> Path:
+    """Extract a corpus's archives once, into `<corpus>/extracted/`.
+
+    Indexing can read member names straight out of a `.tar.gz`, which is
+    what makes the table inspectable before committing disk. *Training*
+    cannot: random access into a gzip stream is O(n) per read, so a
+    training epoch over 7441 clips would decompress the whole archive
+    7441 times.
+
+    Idempotent — a marker file means a re-run is free.
+    """
+    base = datasets_dir or DATASETS_DIR
+    root = base / name
+    target = root / "extracted"
+    marker = target / ".extracted"
+    if marker.exists():
+        return target
+    archives = list(root.rglob("*.tar.gz")) + list(root.rglob("*.tgz"))
+    if not archives:
+        return root  # already plain files
+    target.mkdir(parents=True, exist_ok=True)
+    for archive in archives:
+        with tarfile.open(archive, "r:gz") as tar:
+            members = [
+                m
+                for m in tar.getmembers()
+                # Refuse absolute paths and traversal: an archive is
+                # untrusted input, and `..` in a member name writes
+                # wherever it likes.
+                if m.isfile() and not m.name.startswith(("/", "..")) and "/.." not in m.name
+            ]
+            tar.extractall(target, members=members, filter="data")
+    marker.write_text(f"{len(archives)} archive(s)\n")
+    return target
+
+
 def _bucket(speaker: str, buckets: int = 100) -> int:
     """Stable hash of a speaker id. Python's `hash()` is salted per
     process, so using it would reshuffle the split on every run and leak

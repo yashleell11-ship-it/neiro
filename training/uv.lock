@@ -768,6 +768,7 @@ source = { editable = "../" }
 dependencies = [
     { name = "ctranslate2" },
     { name = "faster-whisper" },
+    { name = "librosa" },
     { name = "numpy" },
     { name = "nvidia-cublas-cu12" },
     { name = "onnxruntime" },
@@ -783,6 +784,7 @@ dependencies = [
 requires-dist = [
     { name = "ctranslate2", specifier = ">=4.7.0" },
     { name = "faster-whisper", specifier = "==1.2.1" },
+    { name = "librosa", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "nvidia-cublas-cu12", specifier = ">=12.9.2.10" },
     { name = "onnxruntime", specifier = ">=1.30.0" },
