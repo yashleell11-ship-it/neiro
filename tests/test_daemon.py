@@ -17,12 +17,18 @@ import asyncio
 
 import numpy as np
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from neiro.config import Neiro
 from neiro.daemon import Daemon
+from neiro.llm.openai_compat import StreamAccumulator
 from neiro.orchestrator import TurnResult
-from neiro.speech.errors import Failure
+from neiro.speech.errors import ErrorSpeech, Failure
 from neiro.state import Turn, UserAffect
+from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+from neiro.tools.confirm import NotificationConfirmer
+from neiro.tools.registry import ToolNotConfirmed, ToolRegistry, ToolSpec
+from neiro.tools.tiers import Tier
 
 AUDIO = np.zeros(16000, dtype=np.float32)
 
@@ -393,3 +399,211 @@ class TestSpokenErrors:
         down = d.spoken_error(TurnResult(turn=Turn.new(1), error="ConnectionError"))
         assert slow != down
         assert d.errors.line_for(Failure.LLM_SLOW)
+
+    def test_a_denied_tool_is_not_a_failed_one(self) -> None:
+        # He said no. "That didn't work" would claim she tried.
+        d = build_daemon()
+        denied = d.spoken_error(TurnResult(turn=Turn.new(1), error="ToolNotConfirmed"))
+        assert denied == ErrorSpeech().line_for(Failure.TOOL_DENIED)
+        # Every other tool failure is hers, and rotates through the
+        # TOOL_FAILED lines in step with a fresh speaker.
+        expected = ErrorSpeech()
+        for error in ("ToolRejected", "RateLimited", "TooManyToolRounds", "OSError"):
+            failed = d.spoken_error(TurnResult(turn=Turn.new(1), error=error))
+            assert failed == expected.line_for(Failure.TOOL_FAILED), error
+            assert failed != denied
+
+
+# -- tools --------------------------------------------------------------
+
+
+class NoArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PercentArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    percent: int = Field(ge=0, le=100)
+
+
+class CallingLlm(Recorder):
+    """Asks for `battery` on its first request, answers on the second."""
+
+    def __init__(self) -> None:
+        super().__init__([], "llm")
+        self.requests: list[tuple[list[dict], list[dict] | None]] = []
+
+    async def stream(self, messages, tools=None):
+        self.requests.append((list(messages), tools))
+        accumulator = StreamAccumulator()
+        if len(self.requests) == 1:
+            yield {"text": "<e:neutral:5>"}
+            accumulator.add_delta(
+                {"tool_calls": [{"index": 0, "function": {"name": "battery", "arguments": "{}"}}]}
+            )
+        else:
+            yield {"text": "<e:happy:7> Ninety six percent."}
+        yield {"done": accumulator}
+
+
+def fake_registry(tmp_path, confirm=None) -> tuple[ToolRegistry, AuditLog, list[int]]:
+    ran: list[int] = []
+    audit = AuditLog(path=tmp_path / "audit.jsonl")
+    r = ToolRegistry(confirm=confirm, audit=audit)
+    r.register(
+        ToolSpec(
+            name="battery",
+            description="How much charge is left.",
+            tier=Tier.GREEN,
+            args_model=NoArgs,
+            handler=lambda: ran.append(1) or "Ninety six percent, charging.",
+        )
+    )
+    r.register(
+        ToolSpec(
+            name="volume",
+            description="Set the speaker volume.",
+            tier=Tier.YELLOW,
+            args_model=PercentArgs,
+            handler=lambda percent: f"Volume {percent}.",
+        )
+    )
+    return r, audit, ran
+
+
+class FakeNotify:
+    """A `notify-send --wait` that prints the chosen action and records
+    the question it was asked."""
+
+    def __init__(self, chosen: str) -> None:
+        self.chosen = chosen
+        self.questions: list[str] = []
+
+    def __call__(self, cmd, **kw):
+        self.questions.append(cmd[-1])
+        return type("R", (), {"stdout": self.chosen})()
+
+
+class TestTools:
+    def test_build_registers_the_builtin_tools_and_hands_them_over(self) -> None:
+        # The orchestrator only ever sees a registry; this is the one
+        # place that decides what is in it.
+        d = build_daemon()
+        assert "system_stats" in d.tools and "set_volume" in d.tools
+        assert d.orchestrator.tools is d.tools
+        offered = [t["function"]["name"] for t in d.orchestrator.tool_schemas()]
+        assert "system_stats" in offered
+        # YELLOW tools are offered because the notification can ask.
+        assert "set_volume" in offered
+
+    def test_an_injected_registry_is_the_one_used(self, tmp_path) -> None:
+        r, _, _ = fake_registry(tmp_path)
+        d = Daemon(cfg=Neiro())
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            tools=r,
+        )
+        assert d.tools is r and d.orchestrator.tools is r
+        assert [t["function"]["name"] for t in d.orchestrator.tool_schemas()] == ["battery"]
+
+    def test_a_green_tool_runs_through_handle(self, tmp_path) -> None:
+        # The whole Stage 3 loop from the daemon's door: he asks, the
+        # model calls, the tool runs, the result comes back, she answers.
+        r, audit, ran = fake_registry(tmp_path)
+        llm = CallingLlm()
+        d = Daemon(cfg=Neiro())
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=llm,
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            tools=r,
+        )
+        result = run(d.handle(AUDIO))
+        assert result.error is None and not result.cancelled
+        assert ran == [1]
+        assert result.reply == "Ninety six percent."
+        assert len(llm.requests) == 2
+        assert llm.requests[1][0][-1]["role"] == "tool"
+        assert [e["event"] for e in audit.entries] == [ATTEMPTED, SUCCEEDED]
+        assert audit.entries[0]["turn"] == result.turn.id
+
+    def test_the_gate_and_log_handed_in_reach_the_real_registry(self, tmp_path) -> None:
+        # `confirm` and `audit` replace just those two parts of the
+        # builtin registry, so a test can deny everything and log to a
+        # temporary file while the tools themselves stay real.
+        audit = AuditLog(path=tmp_path / "audit.jsonl")
+        d = Daemon(cfg=Neiro())
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            confirm=lambda *_: False,
+            audit=audit,
+        )
+        with pytest.raises(ToolNotConfirmed):
+            d.tools.call("set_volume", {"percent": 30}, turn_id=1)
+        assert audit.entries and audit.entries[0]["tool"] == "set_volume"
+
+
+class TestConfirmation:
+    """The default gate for `neiro talk`: a clickable notification."""
+
+    def _ask(self, chosen: str, tool: str = "set_volume", args=None) -> tuple[bool, FakeNotify]:
+        notify = FakeNotify(chosen)
+        d = build_daemon()
+        d.notifier = NotificationConfirmer(runner=notify)
+        spec, parsed = d.tools.validate(tool, args if args is not None else {"percent": 30})
+        return d.notification_confirm(spec, parsed, "nonce"), notify
+
+    def test_a_clicked_yes_allows(self) -> None:
+        allowed, _ = self._ask("yes\n")
+        assert allowed
+
+    def test_a_clicked_no_denies(self) -> None:
+        allowed, _ = self._ask("no\n")
+        assert not allowed
+
+    def test_a_dismissed_notification_denies(self) -> None:
+        # Silence is no. An assistant that acts on a dismissed popup is
+        # worse than one that asks twice.
+        allowed, _ = self._ask("")
+        assert not allowed
+
+    def test_the_question_says_what_would_run(self) -> None:
+        # A yes must be a yes to THIS: the tool and every argument.
+        _, notify = self._ask("yes\n")
+        assert notify.questions == ["set volume, percent 30?"]
+        _, notify = self._ask("yes\n", "adjust_brightness", {"direction": "down", "steps": 2})
+        assert notify.questions == ["adjust brightness, direction down, steps 2?"]
+
+    def test_the_default_registry_asks_through_the_notifier(self, tmp_path, monkeypatch) -> None:
+        # Not just that the method works — that the registry the daemon
+        # built actually calls it. A registry built with `confirm=None`
+        # refuses every YELLOW tool with the same exception, so this
+        # checks the yes path: the notifier is asked and the tool runs.
+        from neiro.tools import system
+
+        notify = FakeNotify("yes\n")
+        d = Daemon(cfg=Neiro())
+        d.notifier = NotificationConfirmer(runner=notify)
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=Recorder(order, "llm"),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            audit=AuditLog(path=tmp_path / "audit.jsonl"),
+        )
+        # The handler's subprocess seam is stubbed so the suite never
+        # actually mutes the speakers.
+        monkeypatch.setattr(system, "_run", lambda cmd, timeout=0.0: "")
+        d.tools.call("set_mute", {"state": "toggle"}, turn_id=1)
+        assert notify.questions == ["set mute, state toggle?"]

@@ -22,6 +22,13 @@ reach of the collector entirely.
 **One turn at a time.** A lock, not a queue. If Yash speaks while she is
 answering, that is barge-in — a new turn that *cancels* the old one —
 not a second turn to run afterwards.
+
+**The confirmation gate is wired here, not in the registry.** The
+registry knows a YELLOW tool needs a yes; only the daemon knows what
+this machine can ask with. Today that is the clickable notification
+alone — the spoken channel needs the microphone and STT that `talk.py`
+owns, and until it is joined the click is the one channel that cannot
+hallucinate anyway.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import time
 from dataclasses import dataclass, field
 
 import numpy as np
+from pydantic import BaseModel
 
 from neiro.affect.null import NullAffectProvider
 from neiro.affect.prosody import ProsodyAffectProvider, describe
@@ -41,6 +49,10 @@ from neiro.config import Neiro
 from neiro.orchestrator import Orchestrator, TurnResult
 from neiro.speech.errors import ErrorSpeech, Failure
 from neiro.state import Turn
+from neiro.tools.audit import AuditLog
+from neiro.tools.builtin import build_registry
+from neiro.tools.confirm import NotificationConfirmer, decide
+from neiro.tools.registry import ToolRegistry, ToolSpec
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +91,32 @@ class Daemon:
         self._pending: Turn | None = None
         self._live: Turn | None = None
         self.errors = ErrorSpeech()
+        self.tools: ToolRegistry | None = None
+        # The clickable half of the confirmation. A field so a test can
+        # hand it a fake runner instead of a desktop.
+        self.notifier = NotificationConfirmer()
 
     # -- start-up -------------------------------------------------------
 
-    def build(self, stt=None, llm=None, tts=None, sink=None) -> Orchestrator:
-        """Choose the providers. Injectable so the daemon is testable."""
+    def build(
+        self,
+        stt=None,
+        llm=None,
+        tts=None,
+        sink=None,
+        *,
+        tools: ToolRegistry | None = None,
+        confirm=None,
+        audit: AuditLog | None = None,
+    ) -> Orchestrator:
+        """Choose the providers. Injectable so the daemon is testable.
+
+        The builtin tools are registered here because this is the one
+        place that decides what runs; the orchestrator only ever sees a
+        registry. `tools` replaces the whole registry (a test's fakes);
+        `confirm` and `audit` replace just the gate and the log of the
+        real one.
+        """
         from neiro.audio.sink_local import LocalWavSink
         from neiro.llm.ollama_native import OllamaNativeLlm
         from neiro.stt.faster_whisper import FasterWhisperStt
@@ -97,6 +130,9 @@ class Daemon:
             if self.cfg.affect.enabled
             else NullAffectProvider()
         )
+        self.tools = tools or build_registry(
+            confirm=confirm or self.notification_confirm, audit=audit or AuditLog()
+        )
         self.orchestrator = Orchestrator(
             stt=stt or FasterWhisperStt(self.cfg),
             llm=llm or OllamaNativeLlm(self.cfg),
@@ -104,8 +140,32 @@ class Daemon:
             sink=sink or LocalWavSink(),
             affect=self.affect,
             cfg=self.cfg,
+            tools=self.tools,
         )
         return self.orchestrator
+
+    # -- confirmation ---------------------------------------------------
+
+    @staticmethod
+    def confirmation_question(spec: ToolSpec, parsed: BaseModel) -> str:
+        """What the notification asks. Names the tool and every argument,
+        because a yes must be a yes to *this* — "set volume, percent 30?"
+        — and arguments are enums and integers by construction, so there
+        is nothing here the model wrote.
+        """
+        args = ", ".join(f"{key} {value}" for key, value in parsed.model_dump().items())
+        what = spec.name.replace("_", " ")
+        return f"{what}, {args}?" if args else f"{what}?"
+
+    def notification_confirm(self, spec: ToolSpec, parsed: BaseModel, nonce: str) -> bool:
+        """The registry's gate, over the click channel.
+
+        The nonce is deliberately unused: it binds the registry's own
+        record of what was asked, and never appears where the model
+        could read it — which includes the notification.
+        """
+        answer = self.notifier.ask(self.confirmation_question(spec, parsed))
+        return decide(None, answer).allowed
 
     def warm(self) -> WarmReport:
         """Pay every first-call cost now, in the order a turn uses them.
@@ -210,6 +270,9 @@ class Daemon:
             "ThinkingModeError": Failure.LLM_DOWN,
             "ReadTimeout": Failure.LLM_SLOW,
             "TimeoutException": Failure.LLM_SLOW,
+            # He said no, or nothing, to a YELLOW tool. Not a failure of
+            # hers, and "that didn't work" would claim she tried.
+            "ToolNotConfirmed": Failure.TOOL_DENIED,
         }.get(result.error, Failure.TOOL_FAILED)
         return self.errors.line_for(failure)
 
