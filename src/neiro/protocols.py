@@ -19,15 +19,19 @@ from neiro.state import Locality, NeiroState, Turn, UserAffect
 
 
 class Endpointer(Protocol):
-    """Decides when the user has stopped talking. Stage 0: PTT release
-    (locality is irrelevant — there is no model). Stage 2: Silero VAD +
-    smart-turn v3.2.
+    """Decides whether the user has stopped talking. Stage 0: PTT release
+    (no model, nothing to ask). Stage 2: Silero VAD triggers, smart-turn
+    v3.2 decides — this is the decider's shape. LOCAL_PINNED: it runs
+    where the microphone is.
     """
 
     locality: Locality
 
-    def on_frame(self, frame: np.ndarray) -> bool:
-        """Return True the instant end-of-speech is decided."""
+    def is_complete(self, pcm: np.ndarray, waited_s: float = 0.0) -> tuple[bool, float]:
+        """`(decided, probability)` for the speech captured so far.
+        `waited_s` is how long since the VAD trigger, so the caller's
+        max-delay rule can be applied inside one place.
+        """
         ...
 
 
@@ -90,6 +94,18 @@ class Sink(Protocol):
     is written once, not twice.
     """
 
-    async def play(self, turn: Turn, pcm_chunk: np.ndarray) -> None: ...
+    async def play(
+        self,
+        turn: Turn,
+        pcm: np.ndarray,
+        seq: int = 0,
+        text: str = "",
+        visemes: list[tuple[float, str, float]] | None = None,
+    ) -> None:
+        """One 24 kHz chunk. `seq` 0 is the chunk whose playback ends the
+        one metric; `text` and `visemes` are what the face needs to move
+        its mouth in time with it.
+        """
+        ...
 
     async def cancel(self, turn: Turn) -> None: ...

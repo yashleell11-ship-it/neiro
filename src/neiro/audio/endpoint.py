@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from neiro.config import Neiro
+from neiro.state import Locality
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +81,9 @@ def log_mel(pcm: np.ndarray, cfg: Neiro, samplerate: int = SAMPLERATE) -> np.nda
 
 @dataclass
 class SmartTurnEndpointer:
-    """Probability that the utterance is complete."""
+    """Probability that the utterance is complete. protocols.Endpointer."""
+
+    locality = Locality.LOCAL_PINNED
 
     cfg: Neiro = field(default_factory=Neiro)
     model_path: Path | None = None
