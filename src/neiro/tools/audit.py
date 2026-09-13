@@ -34,6 +34,7 @@ SUCCEEDED = "succeeded"
 FAILED = "failed"
 DENIED = "denied"
 RATE_LIMITED = "rate-limited"
+OUTCOMES = frozenset({SUCCEEDED, FAILED, DENIED, RATE_LIMITED})
 
 
 @dataclass
@@ -41,6 +42,9 @@ class AuditLog:
     path: Path = AUDIT_PATH
     clock: Any = time.time
     _entries: list[dict] = field(default_factory=list)
+    # How many calls each turn has made so far, so an attempt can be
+    # numbered within its turn.
+    _calls_in_turn: dict[int, int] = field(default_factory=dict)
 
     def _write(self, record: dict) -> dict:
         record = {"t": round(self.clock(), 3), **record}
@@ -65,27 +69,55 @@ class AuditLog:
     def attempt(self, tool: str, args: dict, tier: str, turn_id: int) -> dict:
         """Before execution. The existence of this line without a
         matching outcome is what tells you a tool did not finish.
+
+        Numbered within the turn: `call` is the identity the outcome
+        line must echo, because (tool, turn) is not one. The model can
+        call the same tool twice in a turn, and one outcome must not
+        close both.
         """
+        call = self._calls_in_turn.get(turn_id, 0) + 1
+        self._calls_in_turn[turn_id] = call
         return self._write(
-            {"event": ATTEMPTED, "tool": tool, "args": args, "tier": tier, "turn": turn_id}
+            {
+                "event": ATTEMPTED,
+                "tool": tool,
+                "args": args,
+                "tier": tier,
+                "turn": turn_id,
+                "call": call,
+            }
         )
 
-    def succeeded(self, tool: str, turn_id: int, result: str = "") -> dict:
+    # `call` on every outcome is the number the attempt line was given.
+    # Keyword-only and required: forgetting it is a TypeError at the
+    # call site, not an outcome that quietly closes nothing.
+
+    def succeeded(self, tool: str, turn_id: int, result: str = "", *, call: int) -> dict:
         # Truncated: a tool result is spoken aloud, so it is short by
         # design, but a future one returning a page of text should not
         # bloat the log.
         return self._write(
-            {"event": SUCCEEDED, "tool": tool, "turn": turn_id, "result": result[:200]}
+            {
+                "event": SUCCEEDED,
+                "tool": tool,
+                "turn": turn_id,
+                "call": call,
+                "result": result[:200],
+            }
         )
 
-    def failed(self, tool: str, turn_id: int, error: str) -> dict:
-        return self._write({"event": FAILED, "tool": tool, "turn": turn_id, "error": error[:200]})
+    def failed(self, tool: str, turn_id: int, error: str, *, call: int) -> dict:
+        return self._write(
+            {"event": FAILED, "tool": tool, "turn": turn_id, "call": call, "error": error[:200]}
+        )
 
-    def denied(self, tool: str, turn_id: int, reason: str) -> dict:
-        return self._write({"event": DENIED, "tool": tool, "turn": turn_id, "reason": reason[:200]})
+    def denied(self, tool: str, turn_id: int, reason: str, *, call: int) -> dict:
+        return self._write(
+            {"event": DENIED, "tool": tool, "turn": turn_id, "call": call, "reason": reason[:200]}
+        )
 
-    def rate_limited(self, tool: str, turn_id: int) -> dict:
-        return self._write({"event": RATE_LIMITED, "tool": tool, "turn": turn_id})
+    def rate_limited(self, tool: str, turn_id: int, *, call: int) -> dict:
+        return self._write({"event": RATE_LIMITED, "tool": tool, "turn": turn_id, "call": call})
 
     # -- reading --------------------------------------------------------
 
@@ -96,18 +128,23 @@ class AuditLog:
     def unfinished(self) -> list[dict]:
         """Attempts with no matching outcome — the interesting ones.
 
-        Keyed by (tool, turn): a tool called twice in one turn and
-        finishing once would otherwise look complete.
+        Matched on (tool, turn, call). Tool and turn alone are not an
+        identity: the same tool called twice in one turn shared a key,
+        so one success closed both attempts and the call that hung was
+        exactly the one that vanished. The call number is stamped on the
+        attempt and echoed by its outcome, so an outcome closes one
+        attempt — its own. Pairing by count would get the number right
+        and the arguments wrong when the second call is the one that
+        finished, and the arguments are what you read at three in the
+        morning.
         """
-        outcomes = {
-            (e["tool"], e["turn"])
-            for e in self._entries
-            if e["event"] in (SUCCEEDED, FAILED, DENIED, RATE_LIMITED)
+        closed = {
+            (e["tool"], e["turn"], e["call"]) for e in self._entries if e["event"] in OUTCOMES
         }
         return [
             e
             for e in self._entries
-            if e["event"] == ATTEMPTED and (e["tool"], e["turn"]) not in outcomes
+            if e["event"] == ATTEMPTED and (e["tool"], e["turn"], e["call"]) not in closed
         ]
 
     @classmethod

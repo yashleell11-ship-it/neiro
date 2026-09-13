@@ -172,8 +172,8 @@ class TestAuditLog:
     def test_an_attempt_is_written_before_the_outcome(self, tmp_path) -> None:
         # A log written only after success cannot answer "did it run?"
         log = AuditLog(path=tmp_path / "audit.jsonl")
-        log.attempt("set_volume", {"percent": 30}, "yellow", 1)
-        log.succeeded("set_volume", 1, "volume 30 percent")
+        first = log.attempt("set_volume", {"percent": 30}, "yellow", 1)
+        log.succeeded("set_volume", 1, "volume 30 percent", call=first["call"])
         events = [e["event"] for e in log.entries]
         assert events == [ATTEMPTED, SUCCEEDED]
 
@@ -182,25 +182,70 @@ class TestAuditLog:
         # and that gap is the evidence.
         log = AuditLog(path=tmp_path / "audit.jsonl")
         log.attempt("focus_window", {"index": 2}, "yellow", 1)
-        log.attempt("set_volume", {"percent": 30}, "yellow", 2)
-        log.succeeded("set_volume", 2)
+        done = log.attempt("set_volume", {"percent": 30}, "yellow", 2)
+        log.succeeded("set_volume", 2, call=done["call"])
         unfinished = log.unfinished()
         assert len(unfinished) == 1
         assert unfinished[0]["tool"] == "focus_window"
 
     def test_the_same_tool_twice_in_a_turn_is_not_falsely_closed(self, tmp_path) -> None:
+        # The model calls focus_window twice in one turn; the first
+        # returns, the second hangs on the Hyprland socket and the daemon
+        # is killed. Keyed on (tool, turn) alone, the one success closed
+        # both attempts and the hung call left no trace at all. One
+        # outcome closes exactly one attempt.
+        log = AuditLog(path=tmp_path / "audit.jsonl")
+        first = log.attempt("focus_window", {"index": 0}, "yellow", 7)
+        log.succeeded("focus_window", 7, call=first["call"])
+        hung = log.attempt("focus_window", {"index": 1}, "yellow", 7)
+        unfinished = log.unfinished()
+        assert len(unfinished) == 1
+        assert unfinished[0]["call"] == hung["call"]
+        assert unfinished[0]["args"] == {"index": 1}
+
+    def test_an_outcome_closes_its_own_attempt_not_the_earliest(self, tmp_path) -> None:
+        # Two calls in flight and the SECOND finishes first. Pairing
+        # outcomes with attempts by count would report the right number
+        # of hung calls with the wrong arguments, and the arguments are
+        # what you read at three in the morning.
+        log = AuditLog(path=tmp_path / "audit.jsonl")
+        first = log.attempt("focus_window", {"index": 0}, "yellow", 7)
+        second = log.attempt("focus_window", {"index": 1}, "yellow", 7)
+        log.failed("focus_window", 7, "socket timeout", call=second["call"])
+        unfinished = log.unfinished()
+        assert [e["call"] for e in unfinished] == [first["call"]]
+        assert unfinished[0]["args"] == {"index": 0}
+
+    def test_the_turn_is_part_of_the_identity(self, tmp_path) -> None:
+        # Same tool, same call number, different turn: turn 2's outcome
+        # must not close turn 1's attempt. Dropping the turn from the key
+        # once left the whole suite green, which is why this exists.
         log = AuditLog(path=tmp_path / "audit.jsonl")
         log.attempt("set_volume", {"percent": 10}, "yellow", 1)
-        log.succeeded("set_volume", 1)
-        assert log.unfinished() == []
+        later = log.attempt("set_volume", {"percent": 20}, "yellow", 2)
+        assert later["call"] == 1  # numbering restarts each turn
+        log.succeeded("set_volume", 2, call=later["call"])
+        assert [e["turn"] for e in log.unfinished()] == [1]
+
+    def test_the_call_number_is_on_both_lines(self, tmp_path) -> None:
+        # The pair of lines IS the record, so `tail` must be able to
+        # pair them without any of this code: the outcome echoes the
+        # attempt's number.
+        path = tmp_path / "audit.jsonl"
+        log = AuditLog(path=path)
+        log.attempt("set_volume", {"percent": 10}, "yellow", 1)
+        second = log.attempt("set_volume", {"percent": 20}, "yellow", 1)
+        log.succeeded("set_volume", 1, call=second["call"])
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        assert [line["call"] for line in lines] == [1, 2, 2]
 
     def test_it_is_append_only_jsonl(self, tmp_path) -> None:
         # Readable with `tail` at three in the morning without any of
         # this code working.
         path = tmp_path / "audit.jsonl"
         log = AuditLog(path=path)
-        log.attempt("a", {}, "green", 1)
-        log.succeeded("a", 1)
+        first = log.attempt("a", {}, "green", 1)
+        log.succeeded("a", 1, call=first["call"])
         lines = path.read_text().strip().splitlines()
         assert len(lines) == 2
         assert all(json.loads(line)["event"] for line in lines)
@@ -224,7 +269,8 @@ class TestAuditLog:
 
     def test_results_are_truncated(self, tmp_path) -> None:
         log = AuditLog(path=tmp_path / "audit.jsonl")
-        record = log.succeeded("a", 1, "x" * 5000)
+        first = log.attempt("a", {}, "green", 1)
+        record = log.succeeded("a", 1, "x" * 5000, call=first["call"])
         assert len(record["result"]) <= 200
 
     def test_arguments_are_recorded_because_they_cannot_be_free_text(self, tmp_path) -> None:
