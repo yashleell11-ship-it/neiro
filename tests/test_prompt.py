@@ -9,8 +9,11 @@ is how she becomes a generic assistant with a face.
 
 from __future__ import annotations
 
+import hashlib
+
 from neiro.llm.prompt import (
     PROMPT_VERSION,
+    PROMPTS_DIR,
     load_prompt,
     prompt_fingerprint,
     system_message,
@@ -22,11 +25,17 @@ class TestLoader:
     def test_prompt_loads(self) -> None:
         assert load_prompt().strip()
 
-    def test_bytes_are_stable_across_calls(self) -> None:
+    def test_bytes_are_the_file_on_disk_every_turn(self) -> None:
         # The KV prefix cache depends on this being byte-identical every
-        # turn — a drifting prompt is a silent latency cliff.
-        assert load_prompt() == load_prompt()
-        assert prompt_fingerprint() == prompt_fingerprint()
+        # turn — a drifting prompt is a silent latency cliff. Compare
+        # against the file read independently: `load_prompt() ==
+        # load_prompt()` cannot fail (it is lru_cached) and proved
+        # nothing about interpolation.
+        on_disk = (PROMPTS_DIR / f"{PROMPT_VERSION}.md").read_text().strip()
+        assert system_message()["content"] == on_disk
+        user_message("yeah, I'm fine", voice_annotation="energy +9.9σ")  # a turn happened
+        assert system_message()["content"] == on_disk
+        assert prompt_fingerprint() == hashlib.sha256(on_disk.encode()).hexdigest()[:12]
 
     def test_system_message_shape(self) -> None:
         msg = system_message()
