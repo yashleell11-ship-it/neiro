@@ -74,17 +74,34 @@ class AffectConfig(BaseModel):
     ema_alpha_words: float = 0.35
 
     # --- feature extraction (affect/features.py) ---
-    # "pyin" is ~48 ms per 3 s window here and returns a per-frame voicing
-    # probability, which is what makes voiced_ratio and pause_ratio
-    # trustworthy. "yin" is ~18x faster but guesses a pitch for silence.
-    # This runs WHILE the user is still speaking, so 48 ms costs the turn
-    # budget nothing — quality wins unless a slower machine disagrees.
-    f0_algorithm: str = "pyin"
+    # "yin" + an energy gate, chosen by measurement on 60 real clips —
+    # see the table in affect/features.py::_f0. pyin marked most real
+    # short-utterance speech as UNVOICED (24-28 of 60 usable) at 20x the
+    # cost; yin was 60/60 at correct pitch. "pyin" stays available for
+    # long clean single-speaker audio, where its voicing is better.
+    f0_algorithm: str = "yin"
     f0_min_hz: float = 60.0  # below a typical adult male floor
     f0_max_hz: float = 400.0  # above a typical adult female ceiling
-    frame_length: int = 1024  # 64 ms at 16 kHz — long enough for 60 Hz
+    frame_length: int = 1024  # 64 ms at 16 kHz — the ENERGY analysis frame
+    # Pitch needs a much longer window than energy does. librosa's own
+    # requirement for pyin is frame_length >= 4 * sr / fmin, which at
+    # fmin=60 and 16 kHz is 1067 — so the 1024 used for energy is just
+    # under it. Measured consequence on real speech (CREMA-D,
+    # 2026-09-13): at 1024 pyin returned ZERO voiced frames for a normal
+    # male speaking voice; at 2048 the same clip gave 36 voiced frames at
+    # 122.8 Hz. 2048 = 128 ms, about 15 periods at 120 Hz.
+    f0_frame_length: int = 2048
     hop_length: int = 256  # 16 ms
-    voiced_prob_floor: float = 0.5  # pyin voicing probability to count a frame
+    # 0 = trust pyin's own voiced_flag, which is what you want. This is
+    # NOT a 0-1 confidence: it is posterior mass on the winning pitch
+    # candidate, ~0.15 at most on real speech. A 0.5 floor here
+    # rejected 100% of real utterances while passing synthetic tones.
+    voiced_prob_floor: float = 0.0  # unused by the yin path; see _f0
+    # A frame is "voiced" if it is within this many dB of the clip's own
+    # peak AND yin found a pitch in band. Relative, not absolute dBFS:
+    # mic gain and distance move absolute level far more than the effect
+    # being measured.
+    voiced_db_below_peak: float = 25.0
     silence_db_below_peak: float = 35.0  # a frame this far under peak is a pause
 
     # --- window (affect/prosody.py) ---

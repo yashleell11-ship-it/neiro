@@ -96,29 +96,83 @@ def _pause_ratio(rms: np.ndarray, cfg: Neiro) -> float:
 
 
 def _f0(pcm: np.ndarray, sr: int, cfg: Neiro) -> tuple[np.ndarray, float]:
-    """Voiced F0 values, and the fraction of frames that were voiced."""
+    """Voiced F0 values, and the fraction of frames that were voiced.
+
+    **Pitch by yin, voicing by energy — and that pairing was measured,
+    not assumed.** The first version of this used `librosa.pyin` and
+    trusted its `voiced_flag`, on the reasoning that a built-in voicing
+    decision beats a hand-rolled one. On 60 real CREMA-D clips
+    (2026-09-13) that turned out backwards:
+
+        method         usable (voiced_ratio >= 0.15)   mean ratio   ms/clip
+        pyin  fl=1024            25/60                    0.135        57
+        pyin  fl=2048            24/60                    0.139        51
+        pyin  fl=4096            28/60                    0.214        54
+        yin   fl=1024            60/60                    0.989         2
+        yin   fl=2048            60/60                    0.995         4
+
+    pyin's HMM is far too conservative on short (~2 s) utterances — it
+    marked most genuinely voiced speech as unvoiced, at 20x the cost.
+    The earlier choice looked right only because it was validated on a
+    synthetic tone, which is the easiest possible input for it.
+
+    yin has the opposite flaw: it reports a pitch for silence too, so
+    its output alone makes `voiced_ratio` meaninglessly close to 1.0. So
+    voicing is decided here, from two cheap and independent signals —
+    the frame has enough energy relative to the clip's own peak, and the
+    pitch yin found sits inside a plausible human range. That is a
+    standard construction, it is ~20x faster than pyin, and unlike pyin
+    it works on the audio this project actually sees.
+    """
     import librosa
 
+    frame_length = cfg.affect.f0_frame_length
+    required = 4 * sr / cfg.affect.f0_min_hz
+    if frame_length < required:
+        raise ValueError(
+            f"f0_frame_length={frame_length} is below librosa's 4*sr/fmin="
+            f"{required:.0f} for fmin={cfg.affect.f0_min_hz} Hz at {sr} Hz. "
+            "The estimator would return garbage or nothing at all, silently."
+        )
+
+    hop = cfg.affect.hop_length
     kwargs = {
         "fmin": cfg.affect.f0_min_hz,
         "fmax": cfg.affect.f0_max_hz,
         "sr": sr,
-        "frame_length": cfg.affect.frame_length,
-        "hop_length": cfg.affect.hop_length,
+        "frame_length": frame_length,
+        "hop_length": hop,
     }
     if cfg.affect.f0_algorithm == "pyin":
-        f0, voiced_flag, voiced_prob = librosa.pyin(pcm, **kwargs)
-        voiced = np.asarray(voiced_flag, dtype=bool) & (
-            np.asarray(voiced_prob) >= cfg.affect.voiced_prob_floor
-        )
+        # Kept as an option — on long, clean, single-speaker audio pyin's
+        # voicing is genuinely better. It is not the default because this
+        # project's input is short conversational utterances.
+        f0, voiced_flag, _ = librosa.pyin(pcm, **kwargs)
+        voiced = np.asarray(voiced_flag, dtype=bool)
     else:
-        # yin guesses a pitch for silence too, so voicing has to be
-        # inferred from the value landing inside the plausible band.
         f0 = librosa.yin(pcm, **kwargs)
-        voiced = np.isfinite(f0) & (f0 > cfg.affect.f0_min_hz) & (f0 < cfg.affect.f0_max_hz)
+        voiced = np.ones(np.shape(f0), dtype=bool)
 
     f0 = np.asarray(f0, dtype=np.float64)
+
+    # Energy gate, computed on the SAME frame grid so the two agree
+    # frame-for-frame. Relative to the clip's own peak, because absolute
+    # level varies with mic gain and distance by far more than the effect
+    # being measured.
+    rms = librosa.feature.rms(y=pcm, frame_length=frame_length, hop_length=hop, center=True)[0]
+    if rms.size and float(rms.max()) > 0:
+        floor = float(rms.max()) * (10.0 ** (-cfg.affect.voiced_db_below_peak / 20.0))
+        loud_enough = rms >= floor
+    else:
+        loud_enough = np.zeros(np.shape(f0), dtype=bool)
+
+    n = min(len(f0), len(loud_enough), len(voiced))
+    f0, loud_enough, voiced = f0[:n], loud_enough[:n], voiced[:n]
+
+    voiced &= loud_enough
     voiced &= np.isfinite(f0)
+    voiced &= (f0 > cfg.affect.f0_min_hz) & (f0 < cfg.affect.f0_max_hz)
+
     ratio = float(np.mean(voiced)) if voiced.size else 0.0
     return f0[voiced], ratio
 
@@ -141,6 +195,28 @@ def _onset_rate_hz(pcm: np.ndarray, sr: int, cfg: Neiro) -> float:
         onset_envelope=strength, sr=sr, hop_length=cfg.affect.hop_length, units="frames"
     )
     return float(len(onsets) / duration) if duration > 0 else 0.0
+
+
+def warm(cfg: Neiro | None = None, samplerate: int = 16000) -> float:
+    """Run one throwaway extraction so the first real utterance doesn't
+    pay the JIT cost. Returns seconds taken.
+
+    Measured on this machine: the first `extract()` call takes ~1210 ms
+    and the second ~54 ms — librosa's lazy imports plus numba compiling
+    the pyin and onset kernels. That is the same shape of trap Gate G1
+    found in ctranslate2 (7.44 s cold → 0.36 s warm), and it has the
+    same fix: warm at process start, not on the first thing Yash says in
+    the morning.
+    """
+    import time
+
+    t = np.linspace(0, 1.0, samplerate, endpoint=False)
+    fake = (0.4 * np.sin(2 * np.pi * 150 * t) + 0.2 * np.sin(2 * np.pi * 300 * t)).astype(
+        np.float32
+    )
+    started = time.perf_counter()
+    extract(fake, cfg, samplerate)
+    return time.perf_counter() - started
 
 
 def extract(

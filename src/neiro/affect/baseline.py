@@ -126,13 +126,25 @@ class SpeakerBaseline:
         reset = False
         if self.n >= cfg.affect.warmup_utterances:
             zs = self.z_scores(features, cfg)
-            extreme = zs and all(abs(z) >= cfg.affect.drift_z_threshold for z in zs.values())
+            # ANY feature extreme, not ALL of them — measured on CREMA-D
+            # 2026-09-13 by baselining one speaker and scoring five
+            # others. Mean max|z| per utterance:
+            #
+            #     same speaker   2.32     (0.1 features at |z| >= 4)
+            #     five others    4.44-6.00 (1.0-1.4 features at |z| >= 4)
+            #
+            # A different person mostly moves PITCH and leaves pausing and
+            # voiced ratio alone, so requiring every feature to be extreme
+            # meant drift detection would never have fired at all. The
+            # false-positive guard is the sustained-run requirement below,
+            # not the width of the shift.
+            extreme = bool(zs) and any(abs(z) >= cfg.affect.drift_z_threshold for z in zs.values())
             self._drift_run = self._drift_run + 1 if extreme else 0
             if self._drift_run >= cfg.affect.drift_consecutive:
                 log.warning(
-                    "Prosody baseline for %s reset: %d consecutive utterances at "
-                    "|z| >= %.1f on every feature. That is a different voice, a "
-                    "changed mic gain, or a new headset on the same node name — "
+                    "Prosody baseline for %s reset: %d consecutive utterances with "
+                    "at least one feature at |z| >= %.1f. That is a different voice, "
+                    "a changed mic gain, or a new headset on the same node name — "
                     "not an emotion.",
                     self.device,
                     self._drift_run,

@@ -74,10 +74,6 @@ class TestFeatures:
         [
             ("digital silence", np.zeros(SR * 3, dtype=np.float32)),
             ("too short", speech_like(150, 0.5, dur=0.3)),
-            (
-                "unvoiced noise",
-                (np.random.default_rng(0).standard_normal(SR * 3) * 0.01).astype(np.float32),
-            ),
             ("empty", np.zeros(0, dtype=np.float32)),
         ],
     )
@@ -86,6 +82,38 @@ class TestFeatures:
         # other is a measurement. The whole omit-don't-soften rule
         # downstream depends on the difference.
         assert feat.extract(pcm) is None, name
+
+    def test_broadband_noise_is_measured_and_that_is_a_known_limitation(self) -> None:
+        """Pure white noise gets features rather than None, deliberately.
+
+        Every discriminator measured on 2026-09-13 that rejects noise
+        also rejects real speech:
+
+          - F0 contour continuity: white noise 0.765 vs real speech
+            0.800 (min 0.661). They overlap; no threshold separates them.
+          - Spectral flatness: white noise 0.56 vs real speech 0.0096, a
+            clean 20x separation — BUT the same clip plus mild noise at
+            roughly 30 dB SNR reads 0.51. A gate strict enough to reject
+            noise would reject Yash speaking in a hostel room, which is
+            the entire deployment environment.
+
+        So it is handled upstream instead: audio reaches the affect path
+        only behind push-to-talk (Stage 0) and Silero VAD (Stage 2).
+        Broadband noise is not a realistic input here, and pretending to
+        filter it would cost real utterances.
+        """
+        noise = (np.random.default_rng(0).standard_normal(SR * 3) * 0.1).astype(np.float32)
+        assert feat.extract(noise) is not None
+
+    def test_quiet_frames_inside_a_window_are_not_counted_as_voice(self) -> None:
+        # What the energy gate does buy: room tone between words is
+        # excluded, so voiced_ratio means something.
+        rng = np.random.default_rng(1)
+        loud = speech_like(f0=140, amp=0.6, dur=1.5)
+        quiet = (rng.standard_normal(int(SR * 1.5)) * 0.001).astype(np.float32)
+        f = feat.extract(np.concatenate([loud, quiet]))
+        assert f is not None
+        assert f.voiced_ratio < 0.75, "the silent half must not count as voiced"
 
     def test_nan_input_does_not_crash(self) -> None:
         pcm = np.full(SR * 3, np.nan, dtype=np.float32)
@@ -181,6 +209,20 @@ class TestDrift:
         assert other is not None
         resets = [b.observe(other, cfg) for _ in range(cfg.affect.drift_consecutive + 2)]
         assert any(resets), "a sustained, extreme shift should reset, not be read as emotion"
+
+    def test_a_realistic_speaker_change_resets_even_though_only_pitch_moves(self) -> None:
+        # The case the original rule missed. A different person mostly
+        # shifts PITCH; pausing and voiced ratio stay similar. Requiring
+        # every feature to be extreme meant drift never fired at all.
+        cfg = Neiro()
+        b = SpeakerBaseline(device="earbuds")
+        mine = feat.extract(speech_like(f0=120, amp=0.30, rate=3.0))
+        theirs = feat.extract(speech_like(f0=250, amp=0.32, rate=3.0))  # only pitch differs
+        assert mine is not None and theirs is not None
+        for _ in range(cfg.affect.baseline_window):
+            b.observe(mine, cfg)
+        resets = [b.observe(theirs, cfg) for _ in range(cfg.affect.drift_consecutive + 2)]
+        assert any(resets)
 
     def test_one_loud_utterance_does_not_reset(self) -> None:
         cfg = Neiro()
@@ -301,6 +343,17 @@ class TestProvider:
         assert ProsodyAffectProvider.locality.allows(Tier.LOCAL)
         assert not ProsodyAffectProvider.locality.allows(Tier.LAN)
         assert not ProsodyAffectProvider.locality.allows(Tier.TUNNEL)
+
+    def test_warm_actually_runs(self, tmp_path) -> None:
+        # Regression: `warm()` was referenced by the provider but never
+        # existed in features.py, so calling it raised AttributeError at
+        # runtime -- and nothing exercised it. An edit had silently
+        # no-opped. Any public method the provider offers gets called by
+        # a test, or it is not known to work.
+        p = self._provider(tmp_path)
+        elapsed = p.warm()
+        assert elapsed > 0
+        assert feat.warm(p.cfg) > 0
 
     def test_cold_provider_says_nothing(self, tmp_path) -> None:
         p = self._provider(tmp_path)
