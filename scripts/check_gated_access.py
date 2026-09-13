@@ -35,6 +35,56 @@ from neiro.training.manifest import Manifest
 DATA_SUFFIXES = (".parquet", ".tar", ".tar.gz", ".tgz", ".zip", ".arrow", ".wav", ".flac")
 
 
+def _classify(token: str, whoami) -> tuple[str, str]:
+    """Name the token kind, and say why it cannot read a gated repo.
+
+    Three kinds have now each cost an hour here, and none of them
+    announce themselves — every one reads public metadata perfectly and
+    403s on the first real file:
+
+      1. an **oauth session token** (`hf_oauth…`), which is what
+         `hf auth login` makes by default via the browser flow;
+      2. a **fine-grained token scoped to your own account only** —
+         `canReadGatedRepos: true` looks right, but the repo permissions
+         are scoped to one entity, so someone else's gated repo is still
+         out of reach;
+      3. no token at all.
+
+    A classic **Read** token is the one that works.
+    """
+    fix = (
+        "    Make a classic READ token (NOT fine-grained) at\n"
+        "    https://huggingface.co/settings/tokens, then:\n"
+        "      uv run hf auth login --token <that token>"
+    )
+    if token.startswith("hf_oauth"):
+        return (
+            "oauth session token",
+            "  ^ a browser SESSION token. It reads public metadata and cannot pull "
+            "one gated file.\n" + fix,
+        )
+    try:
+        auth = (whoami(token).get("auth") or {}) or {}
+        access = auth.get("accessToken") or {}
+        role = access.get("role", "?")
+        if role != "fineGrained":
+            return (f"{role} token", "")
+        fine = access.get("fineGrained") or {}
+        scoped = fine.get("scoped") or []
+        entities = [str((e.get("entity") or {}).get("name", "?")) for e in scoped]
+        if fine.get("canReadGatedRepos") and entities:
+            return (
+                f"fine-grained, scoped to {', '.join(entities)}",
+                "  ^ canReadGatedRepos is true, but the repo permissions are scoped to "
+                f"{', '.join(entities)} only.\n"
+                "    A gated dataset owned by someone else (ai4bharat, ARTPARK-IISc) is "
+                "still out of reach.\n" + fix,
+            )
+        return ("fine-grained", "  ^ fine-grained tokens rarely cover others' gated repos.\n" + fix)
+    except Exception as exc:  # noqa: BLE001 — an unreadable token is not fatal
+        return (f"unreadable ({type(exc).__name__})", "")
+
+
 def main() -> int:
     from huggingface_hub import get_token, hf_hub_download, list_repo_tree, whoami
     from huggingface_hub.errors import GatedRepoError
@@ -44,19 +94,10 @@ def main() -> int:
         print("No token. Run: uv run hf auth login --token <a READ token>")
         return 2
 
-    kind = "unknown"
-    try:
-        kind = (whoami(token).get("auth") or {}).get("accessToken", {}).get("type", "unknown")
-    except Exception as exc:  # noqa: BLE001 — an unreadable type is not fatal
-        kind = f"unreadable ({type(exc).__name__})"
-    print(f"token type: {kind}")
-    if kind == "oauth" or token.startswith("hf_oauth"):
-        print(
-            "  ^ this is a browser SESSION token. It reads public metadata fine and "
-            "cannot pull a single gated file.\n"
-            "    Make a READ token at https://huggingface.co/settings/tokens, then:\n"
-            "      uv run hf auth login --token <that token>"
-        )
+    kind, diagnosis = _classify(token, whoami)
+    print(f"token: {kind}")
+    if diagnosis:
+        print(diagnosis)
 
     manifest = Manifest.load(REPO / "data" / "datasets.toml")
     gated = [
