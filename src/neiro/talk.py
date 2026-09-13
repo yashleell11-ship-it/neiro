@@ -19,6 +19,15 @@ stream would have to stay alive across the await that runs the next
 turn; a child process is simply killable mid-sentence, which is all
 barge-in asks of it.
 
+**`--browser` swaps the speaker for the face.** The sink becomes the
+WebSocket one, the server runs as a task beside the loop on the same
+event loop, and the reply is played by the tab — which is the only
+place the one metric can honestly end, because only the tab knows when
+sound left the speaker. The loop does not change shape for it: a
+`sink_factory` decides what a turn plays through, and the finished
+sink stands in for the paplay process so SPACE during the tail of a
+reply stops the browser the way it kills the player.
+
 **Affect is observed while he speaks.** Every `AFFECT_INTERVAL_S` the
 loop hands the daemon the last `window_seconds` from the ring, so the
 annotation is ready at the endpoint and costs the turn budget nothing —
@@ -26,7 +35,7 @@ the design's central latency trick, working from the first command
 that runs the loop.
 
 Everything a test needs to drive this is injectable: keys, capture,
-playback and the daemon's providers.
+playback, the sink, the server and the daemon's providers.
 """
 
 from __future__ import annotations
@@ -40,10 +49,10 @@ import sys
 import termios
 import time
 import tty
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, Self
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 import numpy as np
 
@@ -51,6 +60,10 @@ from neiro import metrics
 from neiro.config import Neiro
 from neiro.daemon import AFFECT_INTERVAL_S, Daemon
 from neiro.orchestrator import TurnResult
+from neiro.protocols import Sink
+
+if TYPE_CHECKING:
+    from neiro.server import Face
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +77,14 @@ KEY_POLL_S = 0.05
 DRAIN_TIMEOUT_S = 2.0
 # Tried in order; the first one present plays the reply.
 PLAYERS: tuple[tuple[str, ...], ...] = (("paplay",), ("aplay", "-q"))
+# How long the HUD waits, after a turn, for the browser to report the
+# first chunk playing before printing without the number. By then the
+# whole reply has been synthesised and sequence 0 was sent long ago, so
+# the report is normally already in; the bound is for a tab mid-reload.
+FIRST_AUDIO_TIMEOUT_S = 2.0
+# The command that opens the face. One attempt, never retried: a desktop
+# without it prints the URL and that is enough.
+OPENERS: tuple[tuple[str, ...], ...] = (("xdg-open",),)
 
 
 class Capture(Protocol):
@@ -82,10 +103,22 @@ class Capture(Protocol):
     def recent(self, seconds: float) -> np.ndarray: ...
 
 
+@runtime_checkable
 class Playback(Protocol):
+    """Something that is speaking right now and can be stopped: a paplay
+    process, or the browser sink of a turn that has finished sending."""
+
     def terminate(self) -> None: ...
 
     def poll(self) -> int | None: ...
+
+
+@runtime_checkable
+class ReportsFirstAudio(Protocol):
+    """A sink whose first-audio moment arrives later, from somewhere else
+    — the browser's `played`. The HUD waits for it, bounded."""
+
+    async def wait_played(self, timeout: float) -> bool: ...
 
 
 class MicCapture:
@@ -188,6 +221,19 @@ def subprocess_player(path: Path) -> Playback | None:
     return None
 
 
+def xdg_open(url: str) -> bool:
+    """Open `url` in whatever the desktop calls a browser. False if there
+    is no opener; the URL was printed, and that is the fallback.
+    """
+    for command in OPENERS:
+        try:
+            subprocess.Popen([*command, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            continue
+        return True
+    return False
+
+
 @dataclass
 class TalkLoop:
     """The keyboard-driven loop. Nothing here knows how a model works."""
@@ -201,6 +247,14 @@ class TalkLoop:
     on_tick: Callable[[str, float], None] | None = None
     reply_path: Path = REPLY_PATH
     turns_path: Path | None = None  # None: do not append to turns.jsonl
+    # What each turn plays through. None: a fresh LocalWavSink per turn,
+    # played with `play`. `--browser` supplies WebSocket sinks instead.
+    sink_factory: Callable[[], Sink] | None = None
+    # Runs beside the loop for its whole life — the face's server. Started
+    # before the first key is read, cancelled when the loop ends; if it
+    # dies first, the loop ends with an error rather than talking to
+    # nobody.
+    server: Callable[[], Awaitable[None]] | None = None
 
     turns_done: int = 0
     interrupted: int = 0
@@ -208,14 +262,25 @@ class TalkLoop:
     _annotation: str | None = field(default=None, repr=False)
     _inflight: asyncio.Task | None = field(default=None, repr=False)
     _playing: Playback | None = field(default=None, repr=False)
+    _server_task: asyncio.Task | None = field(default=None, repr=False)
 
     # -- the loop -------------------------------------------------------
 
     async def run(self, max_turns: int | None = None) -> int:
         """Poll keys until 'q' (or `max_turns` completed turns, for tests)."""
         last_observe = 0.0
+        if self.server is not None:
+            self._server_task = asyncio.create_task(self.server())
+            # Let it actually start before the first key is read: a task
+            # only runs at the next await, and the tab may already be
+            # trying to connect.
+            await asyncio.sleep(0)
         try:
             while True:
+                if self._server_task is not None and self._server_task.done():
+                    exc = self._server_task.exception()
+                    self.out(f"face server stopped: {exc or 'exited'}")
+                    return 1
                 key = self.read_key()
                 if key == "q":
                     return 0
@@ -242,6 +307,9 @@ class TalkLoop:
         finally:
             await self._stop_everything()
             await self.daemon.aclose()
+            if self._server_task is not None and not self._server_task.done():
+                self._server_task.cancel()
+                await asyncio.gather(self._server_task, return_exceptions=True)
 
     @property
     def phase(self) -> str:
@@ -275,11 +343,9 @@ class TalkLoop:
     # -- one turn -------------------------------------------------------
 
     async def _turn(self, audio: np.ndarray, annotation: str | None) -> TurnResult:
-        from neiro.audio.sink_local import LocalWavSink
-
-        # A fresh sink per turn: the file sink accumulates, and a reply
-        # must never start with the tail of the previous one.
-        sink = LocalWavSink(path=self.reply_path)
+        # A fresh sink per turn: a sink accumulates (a file, an audio_id),
+        # and a reply must never start with the tail of the previous one.
+        sink = self._new_sink()
         assert self.daemon.orchestrator is not None, "call build() first"
         self.daemon.orchestrator.sink = sink
 
@@ -291,20 +357,42 @@ class TalkLoop:
             self.out("(interrupted)")
             return result
         if result.error is not None:
+            # Closed, not played: the browser gets its `utt.end` for
+            # whatever was sent before the failure, and nothing starts.
+            _close(sink)
             self.out(f"[{result.error}] {self.daemon.spoken_error(result)}")
             return result
 
         self.out(f"you    {result.transcript}")
         self.out(f"neiro  {result.reply}")
+        self._playing = self._start_playback(sink)
+        if isinstance(sink, ReportsFirstAudio):
+            # The metric's end is the browser's report, which arrives on
+            # its own time. Bounded, so a tab that never answers costs a
+            # HUD line that says "no audio" rather than a hung loop.
+            await sink.wait_played(FIRST_AUDIO_TIMEOUT_S)
         record = metrics.record_turn(result.turn)
         self.out(metrics.format_hud(record))
         if self.turns_path is not None:
             metrics.append_turn(record, self.turns_path)
-
-        path = sink.close()
-        if path is not None:
-            self._playing = self.play(path)
         return result
+
+    def _new_sink(self) -> Sink:
+        if self.sink_factory is not None:
+            return self.sink_factory()
+        from neiro.audio.sink_local import LocalWavSink
+
+        return LocalWavSink(path=self.reply_path)
+
+    def _start_playback(self, sink: Sink) -> Playback | None:
+        """A file sink hands back a path the player plays; the browser
+        sink played it already and hands back itself, so `phase` and
+        barge-in treat the tail of the reply the same way either way.
+        """
+        path = _close(sink)
+        if path is not None:
+            return self.play(path)
+        return sink if isinstance(sink, Playback) else None
 
     # -- housekeeping ---------------------------------------------------
 
@@ -333,6 +421,16 @@ class TalkLoop:
         self._inflight = None
 
 
+def _close(sink: Sink) -> Path | None:
+    """`close()` is the sinks' own end-of-reply call, not part of the
+    `Sink` protocol the orchestrator sees — the file sink writes its
+    WAV and returns the path, the browser sink sends `utt.end` and
+    returns None. A sink without one has nothing to finish.
+    """
+    close = getattr(sink, "close", None)
+    return close() if close is not None else None
+
+
 # -- the command --------------------------------------------------------
 
 
@@ -341,7 +439,29 @@ def _tty_key() -> str | None:
     return sys.stdin.read(1) if ready else None
 
 
-def run(cfg: Neiro | None = None) -> int:
+def browser_options(
+    cfg: Neiro, out: Callable[[str], None] = print, port: int | None = None
+) -> tuple[Face, dict]:
+    """The `TalkLoop` fields `--browser` sets, and the face they belong to.
+
+    The port is bound here, before any model loads: a taken port is an
+    `OSError` with a message at the top of the run, not a stopped server
+    task twenty seconds of warm-up later. `port` None is the server's
+    default; tests pass 0 for a free one.
+    """
+    from neiro.audio.sink_ws import WsSink
+    from neiro.server import DEFAULT_PORT, Face
+
+    face = Face(cfg, port=DEFAULT_PORT if port is None else port)
+    out(f"face: {face.bind()}")
+    options = {
+        "sink_factory": lambda: WsSink(face.session, cfg),
+        "server": face.serve,
+    }
+    return face, options
+
+
+def run(cfg: Neiro | None = None, browser: bool = False) -> int:
     """`neiro talk`. Needs a real terminal, like `neiro ptt`."""
     from rich.console import Console
     from rich.live import Live
@@ -357,6 +477,14 @@ def run(cfg: Neiro | None = None) -> int:
         )
         return 1
 
+    face, options = None, {}
+    if browser:
+        try:
+            face, options = browser_options(cfg, out=console.print)
+        except OSError as exc:
+            console.print(f"[red]cannot serve the face:[/red] {exc}")
+            return 1
+
     daemon = Daemon(cfg)
     daemon.build()
     console.print("warming…")
@@ -365,6 +493,8 @@ def run(cfg: Neiro | None = None) -> int:
         f"[bold]neiro talk[/bold] — profile '{cfg.audio.active_profile}'. "
         "SPACE to start/stop talking (SPACE while she speaks interrupts her), q to quit.\n"
     )
+    if face is not None and not xdg_open(face.url):
+        console.print(f"open {face.url} in a browser.")
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -389,6 +519,7 @@ def run(cfg: Neiro | None = None) -> int:
                 out=lambda line: console.print(f"\n{line}"),
                 on_tick=lambda phase, level: live.update(f"{_bar(level)}  {labels[phase]}"),
                 turns_path=metrics.TURNS_PATH,
+                **options,
             )
             return asyncio.run(loop.run())
     finally:

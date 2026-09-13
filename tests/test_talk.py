@@ -14,6 +14,7 @@ from collections import deque
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from neiro.config import Neiro
 from neiro.daemon import Daemon
@@ -214,3 +215,158 @@ class TestPhase:
             return phases
 
         assert asyncio.run(go()) == ["recording", "thinking", "recording", "speaking"]
+
+
+class FakeSink:
+    """A sink with no file and no browser: it records what it was given."""
+
+    def __init__(self) -> None:
+        self.plays: list[tuple[int, str]] = []
+        self.cancels = 0
+        self.closed = 0
+
+    async def play(self, turn, pcm, seq=0, text="", visemes=None) -> None:
+        self.plays.append((seq, text))
+
+    async def cancel(self, turn) -> None:
+        self.cancels += 1
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+class FakeBrowserSink(FakeSink):
+    """Shaped like the WebSocket sink after a turn: it is the playback."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.terminated = 0
+        self.played_waits: list[float] = []
+
+    def terminate(self) -> None:
+        self.terminated += 1
+
+    def poll(self) -> int | None:
+        return 0 if self.terminated else None
+
+    async def wait_played(self, timeout: float) -> bool:
+        self.played_waits.append(timeout)
+        return True
+
+
+class TestBrowserWiring:
+    """`--browser` is a `sink_factory` and a `server`; the loop itself
+    does not change. These drive it with fakes of both."""
+
+    def test_the_factory_decides_what_a_turn_plays_through(self, tmp_path: Path) -> None:
+        made: list[FakeSink] = []
+
+        def factory() -> FakeSink:
+            made.append(FakeSink())
+            return made[-1]
+
+        loop, lines = _loop(tmp_path, [" ", " "], ScriptedLlm())
+        loop.sink_factory = factory
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+
+        assert len(made) == 1
+        assert loop.daemon.orchestrator.sink is made[0]
+        # Both sentences of the reply went to the fake, in order.
+        assert [seq for seq, _ in made[0].plays] == [0, 1]
+        assert made[0].closed == 1
+        # Nothing was written or handed to paplay: the sink played it.
+        assert loop.play.started == []
+        assert not (tmp_path / "reply.wav").exists()
+        assert any(line.startswith("turn ") for line in lines), "no HUD line"
+
+    def test_a_fresh_sink_per_turn(self, tmp_path: Path) -> None:
+        made: list[FakeSink] = []
+
+        def factory() -> FakeSink:
+            made.append(FakeSink())
+            return made[-1]
+
+        keys: list[str | None] = [" ", " ", None, None, " ", " "]
+        loop, _ = _loop(tmp_path, keys, ScriptedLlm())
+        loop.sink_factory = factory
+        asyncio.run(loop.run(max_turns=2))
+        assert len(made) == 2 and made[0] is not made[1]
+
+    def test_the_finished_browser_sink_stands_in_for_the_player(self, tmp_path: Path) -> None:
+        # SPACE during the tail of a reply kills paplay for the file
+        # sink; for the browser sink it must reach the same call.
+        sink = FakeBrowserSink()
+        loop, _ = _loop(tmp_path, [], ScriptedLlm())
+        loop.sink_factory = lambda: sink
+
+        async def go() -> list[str]:
+            phases = []
+            await loop.toggle()
+            await loop.toggle()
+            await asyncio.wait_for(loop._inflight, 2.0)
+            loop._reap()
+            phases.append(loop.phase)
+            await loop.toggle()  # barge-in on the tail
+            phases.append(loop.phase)
+            await loop._stop_everything()
+            return phases
+
+        assert asyncio.run(go()) == ["speaking", "recording"]
+        assert sink.terminated == 1
+        # The HUD waited (bounded) for the browser's `played` before
+        # printing, so the line can carry the real number.
+        assert sink.played_waits and all(t > 0 for t in sink.played_waits)
+
+    def test_the_server_runs_beside_the_loop_and_stops_with_it(self, tmp_path: Path) -> None:
+        events: list[str] = []
+        loop, _ = _loop(tmp_path, [" ", " "], ScriptedLlm())
+        # The first key is read only after the server task exists.
+        real_read = loop.read_key
+
+        def read_key() -> str | None:
+            events.append("key")
+            return real_read()
+
+        async def server() -> None:
+            events.append("up")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                events.append("down")
+
+        loop.read_key = read_key
+        loop.server = server
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert events[0] == "up" and events[-1] == "down"
+        assert "key" in events
+
+    def test_a_dead_server_ends_the_loop_with_an_error(self, tmp_path: Path) -> None:
+        async def server() -> None:
+            raise RuntimeError("port taken")
+
+        loop, lines = _loop(tmp_path, [None, None, None], ScriptedLlm())
+        loop.server = server
+        assert asyncio.run(loop.run()) == 1
+        assert any("face server stopped" in line and "port taken" in line for line in lines)
+
+    def test_browser_options_bind_a_face_and_make_websocket_sinks(self) -> None:
+        from neiro.audio.sink_ws import WsSink
+        from neiro.talk import browser_options
+
+        lines: list[str] = []
+        cfg = Neiro()
+        face, options = browser_options(cfg, out=lines.append, port=0)
+        try:
+            assert lines == [f"face: {face.url}"]
+            assert str(face.port) in face.url and face.port != 0
+            sink = options["sink_factory"]()
+            assert isinstance(sink, WsSink)
+            assert sink.session is face.session
+            assert options["server"] == face.serve
+            # Bound now, not later: the port is already taken.
+            from neiro.server import Face
+
+            with pytest.raises(OSError):
+                Face(cfg, port=face.port).bind()
+        finally:
+            face.close()

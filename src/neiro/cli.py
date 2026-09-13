@@ -308,18 +308,30 @@ def ptt() -> None:
 
 
 @app.command()
-def talk() -> None:
+def talk(
+    browser: bool = typer.Option(
+        False,
+        "--browser",
+        help="Serve the face on 127.0.0.1 and play her replies in the browser tab instead "
+        "of through paplay. The tab owns the audio clock, so this is where the one metric "
+        "(endpoint -> first audio actually played) is measured honestly.",
+    ),
+) -> None:
     """Stage 0 Task 10: the whole loop from one command. SPACE, speak,
     SPACE, hear her answer; SPACE while she is speaking interrupts her;
     q quits. Prints one HUD line per turn and appends it to turns.jsonl.
 
     Push-to-talk in the terminal, like `neiro ptt` — the compositor bind
     is Task 11. Needs llama-server/ollama up (`neiro doctor`).
+
+    With --browser the face is served at http://127.0.0.1:8760 (opened
+    once with xdg-open) and the reply plays there, mouth and expression
+    in time with it.
     """
     from neiro.config import Neiro
     from neiro.talk import run as run_talk
 
-    raise typer.Exit(code=run_talk(Neiro()))
+    raise typer.Exit(code=run_talk(Neiro(), browser=browser))
 
 
 @app.command(name="fetch-models")
