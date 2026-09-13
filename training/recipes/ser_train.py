@@ -285,6 +285,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"split by speaker: train={len(train_rows)} val={len(val_rows)} test={len(test_rows)}")
     overlap = {r.speaker for r in train_rows} & {r.speaker for r in test_rows}
     assert not overlap, f"speaker leak: {sorted(overlap)[:5]}"
+    # A speaker-hash split can hand a small corpus an empty val or test
+    # partition — and then training runs to completion, saves no
+    # checkpoint (nothing ever beats the initial best), and reports NaN
+    # as though it were a result.
+    if not val_rows or not test_rows:
+        print(
+            f"Split left val={len(val_rows)} test={len(test_rows)}. The speaker hash "
+            "put every speaker on one side, which happens with few speakers. Add a "
+            "corpus or widen --corpora; training now would save no checkpoint and "
+            "report NaN.",
+            file=sys.stderr,
+        )
+        return 2
 
     if not args.encoder.exists():
         print(f"Encoder not at {args.encoder} — run `neiro fetch-models --only w2v-bert-2.0`.")
@@ -385,6 +398,22 @@ def main(argv: list[str] | None = None) -> int:
                 args.out / "best.pt",
             )
             print(f"  saved (best val ccc_arousal {best:.4f})")
+
+    # Reload the BEST checkpoint before scoring the test set.
+    #
+    # Without this the report describes the model as it stood after the
+    # LAST epoch, while `best.pt` — the file `affect/ser.py` actually
+    # loads at runtime — holds different weights. Every number published
+    # would then be for a model nobody runs, and the gap grows with
+    # exactly the overfitting that makes early stopping worth having.
+    checkpoint = args.out / "best.pt"
+    if checkpoint.exists():
+        state = torch.load(checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(state["model"])
+        model.to(device, dtype=dtype)
+        print(f"reloaded {checkpoint.name} (val ccc_arousal {best:.4f}) for the test pass")
+    else:
+        print("WARNING: no best.pt was saved; reporting the last-epoch model instead")
 
     final = evaluate(model, loaders["test"], device, dtype)
     by_kind: dict[str, dict] = {}
