@@ -8,8 +8,9 @@
 # path right. Entries that failed were dropped, not downgraded.
 #
 # priority follows Yash's stated order (2026-09-13): emotion first
-# ("i want the emotional feel mainly"), Hindi second ("u have to add
-# hindi"). Corpora over 150 GB are forced to tier 3 whatever their
+# ("i want the emotional feel mainly"), then Hindi AND English as equals
+# ("english is same as hindi so have a balance") -- keep speech hours
+# comparable between them in every tier. Corpora over 150 GB are forced to tier 3 whatever their
 # research value -- one of them would eat the whole disk budget alone.
 #
 # flags: permissive | NC | ND | SA | research-only | request-required | gated | unclear
@@ -24,7 +25,7 @@ schema_version = 1
 [[dataset]]
 name = "librispeech-asr-corpus"
 target = "wakeword_speaker_noise"
-priority = 2
+priority = 1
 hf_id = "openslr/librispeech_asr"
 license = "CC BY 4.0"
 flags = ["permissive"]
@@ -340,7 +341,7 @@ note = "SCRIPT-BASED HF dataset like vctk/dailydialog/massive: the repo holds on
 [[dataset]]
 name = "ravdess"
 target = "ser_lane_b"
-priority = 2
+priority = 1
 hf_id = "birgermoell/ravdess"
 license = "Creative Commons Attribution Non Commercial Share Alike 4.0 Interna..."
 flags = ["NC", "SA"]
@@ -580,7 +581,7 @@ note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, 
 [[dataset]]
 name = "jenny-tts-dataset"
 target = "tts_voice"
-priority = 2
+priority = 1
 hf_id = "reach-vb/jenny_tts_dataset"
 license = "Custom attribution licence stated in the card: 'Attribution is requ..."
 flags = ["permissive"]
@@ -825,7 +826,7 @@ note = "The best emotional-TTS training data reachable without a request form: 4
 [[dataset]]
 name = "emonet-voice-bench"
 target = "emotion_deep"
-priority = 2
+priority = 1
 hf_id = "t1a5anu-anon/emonet-voice-bench"
 license = "cc-by-4.0"
 flags = ["permissive"]
