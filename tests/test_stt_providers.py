@@ -80,3 +80,40 @@ class TestTheTradeIsRecorded:
 
         assert "VRAM" in m.__doc__
         assert "269" in m.__doc__
+
+
+class TestTheEventLoopStaysFree:
+    @pytest.mark.parametrize("cls", [FasterWhisperStt, MoonshineStt])
+    def test_decoding_runs_off_the_event_loop(self, cls) -> None:
+        # A recogniser that blocks the loop for 300 ms blocks the browser
+        # socket, the affect window and the cancel check with it. Inside
+        # a worker thread there is no running loop; on the loop there is.
+        seen: dict[str, bool] = {}
+
+        def record() -> None:
+            try:
+                asyncio.get_running_loop()
+                seen["on_loop"] = True
+            except RuntimeError:
+                seen["on_loop"] = False
+
+        class FakeWhisperModel:
+            def transcribe(self, pcm, **_kw):
+                record()
+                return iter([]), None
+
+        stt = cls()
+        if cls is FasterWhisperStt:
+            stt._model = FakeWhisperModel()
+        else:
+            stt.load = lambda: None  # type: ignore[method-assign]
+            stt._model = "fake"
+
+            def _run(pcm):
+                record()
+                return ""
+
+            stt._run = _run  # type: ignore[method-assign]
+
+        assert asyncio.run(stt.transcribe(np.zeros(16000, dtype=np.float32))) == ""
+        assert seen["on_loop"] is False, f"{cls.__name__} decoded on the event loop"

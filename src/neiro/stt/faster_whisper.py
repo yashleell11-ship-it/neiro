@@ -23,6 +23,7 @@ string return means "nothing usable was said," not an error.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import numpy as np
@@ -92,6 +93,16 @@ class FasterWhisperStt:
         return time.perf_counter() - t0
 
     async def transcribe(self, pcm_16k: np.ndarray) -> str:
+        # ctranslate2 is synchronous and holds the GIL for most of the
+        # 150-400 ms it spends decoding. Inline, that freezes the event
+        # loop that is also serving the browser socket, the rolling
+        # affect window and the cancel check — "cancel is checked at
+        # every await" is only true if the awaits can actually run.
+        # Same shape as KokoroTts and MoonshineStt.
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._transcribe_sync, pcm_16k)
+
+    def _transcribe_sync(self, pcm_16k: np.ndarray) -> str:
         if self._model is None:
             self.warm()
 
