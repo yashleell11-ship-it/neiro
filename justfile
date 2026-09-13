@@ -1,39 +1,83 @@
+# Neiro's commands. `just` is not installed yet (needs sudo), so every
+# recipe here is a plain command you can also paste directly — that is
+# deliberate: a task runner should save typing, not become a dependency
+# for running the project at all.
+
 default:
     @just --list
 
+# --- the ones you run most -------------------------------------------
+
+# Check every assumption, naming the fix for each failure.
 doctor:
     uv run neiro doctor
 
-run:
-    uv run neiro run
+# The whole emotional loop for one recording: prosody, z-scores, the
+# annotation the prompt would get, her face weights, her voice.
+affect WAV:
+    uv run neiro affect {{WAV}}
 
-bench:
-    uv run neiro bench
+# Hear her say something. An <e:LABEL:D> tag is honoured.
+say TEXT:
+    uv run neiro say "{{TEXT}}"
 
+# --- data -------------------------------------------------------------
+
+fetch-models:
+    uv run neiro fetch-models --runs local --purpose runtime
+
+fetch-datasets TIER="1":
+    uv run neiro fetch-datasets --tier {{TIER}}
+
+# Can this token actually pull the gated corpora? Downloads a real data
+# file, because dataset_info() and README.md both succeed on a gated repo.
+check-access:
+    uv run scripts/check_gated_access.py
+
+# --- gates ------------------------------------------------------------
+
+# G2: does everything fit in 7730 MiB at once?
+gate-vram:
+    #!/usr/bin/env bash
+    source env.sh && uv run scripts/spike_vram.py
+
+# G3b rehearsal on acted corpora. The real gate is Yash's own voice.
+gate-arousal:
+    uv run scripts/spike_arousal.py
+
+# Stage 1 gate: >=98% of replies open with a well-formed emotion tag.
+gate-tags N="100":
+    uv run scripts/eval_tag_compliance.py --n {{N}}
+
+# Does the [voice: ...] annotation actually change what she says?
+persona:
+    uv run scripts/eval_persona.py
+
+# G3a: WER on Yash's own recordings. Needs `neiro record-set` first.
 wer:
-    uv run neiro wer
+    #!/usr/bin/env bash
+    source env.sh && uv run neiro wer
+
+# --- training (separate venv, CUDA torch) ------------------------------
+
+train-ser CORPORA="crema-d ravdess rasa":
+    cd training && uv run python recipes/ser_train.py --corpora {{CORPORA}}
+
+extract-rasa:
+    cd training && uv run python ../scripts/extract_rasa.py
+
+# --- development -------------------------------------------------------
 
 test:
     uv run pytest -q
 
 lint:
-    uv run ruff check .
+    uv run ruff check src tests scripts training/recipes
+    uv run ruff format --check src tests scripts training/recipes
 
-# Gate G1 (Stage 0 Task 2): does ctranslate2 actually run int8 on this
-# Blackwell GPU? Runs the spike twice — once with ~/.nv/ComputeCache
-# cleared (forces any PTX JIT to happen and pays for it), once warm —
-# so a multi-second first-load stall shows up as a number, not a mystery.
-gate-g1:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source env.sh
-    echo "=== cold run (~/.nv/ComputeCache cleared — forces PTX JIT if any) ==="
-    rm -rf ~/.nv/ComputeCache
-    uv run python scripts/spike_blackwell.py | tee /tmp/neiro-g1-cold.log
-    echo
-    echo "=== warm run (cache populated by the run above) ==="
-    uv run python scripts/spike_blackwell.py | tee /tmp/neiro-g1-warm.log
-    echo
-    cold=$(grep MODEL_LOAD_SECONDS /tmp/neiro-g1-cold.log | cut -d= -f2)
-    warm=$(grep MODEL_LOAD_SECONDS /tmp/neiro-g1-warm.log | cut -d= -f2)
-    echo "model load — cold: ${cold}s   warm: ${warm}s"
+fix:
+    uv run ruff check --fix src tests scripts training/recipes
+    uv run ruff format src tests scripts training/recipes
+
+# Everything that must be green before a commit.
+check: lint test doctor
