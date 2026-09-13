@@ -38,14 +38,14 @@ note = "Large clean English speech that never says 'Neiro' — the backbone of t
 name = "musan"
 target = "wakeword_speaker_noise"
 priority = 2
-url = "https://www.openslr.org/17/"
+url = "https://www.openslr.org/resources/17/musan.tar.gz"
 license = "Attribution 4.0 International (CC BY 4.0)"
 flags = ["permissive"]
 access = "direct"
 size_gb = 11.0
 hours = 109.0
 weights_publishable = "yes"
-note = "Canonical additive-noise/music/babble augmentation corpus: ~60 h speech (LibriVox + US government recordings, 12 languages), ~42 h music, ~6 h technical/ambient noise. Doubles as wake-word negative data (music + babble that never contains 'Neiro') and as impostor/babble for speaker-verification r..."
+note = "The manifest url pointed at OpenSLR's index PAGE, so wget saved index.html and reported success. Verified direct file: HTTP 200, 11.1 GB. Canonical additive-noise/music/babble augmentation corpus: ~60 h speech (LibriVox + US government recordings, 12 languages), ~42 h music, ~6 h technical/ambient noise. Doubles as wake-word negative data (music + babble that never contains 'Neiro') and as impostor/babble for speaker-verification r..."
 
 [[dataset]]
 name = "fsd50k"
@@ -64,14 +64,14 @@ note = "51,197 human-labelled sound-event clips over 200 AudioSet-ontology class
 name = "rirs-noises"
 target = "wakeword_speaker_noise"
 priority = 2
-url = "https://www.openslr.org/28/"
+url = "https://www.openslr.org/resources/28/rirs_noises.zip"
 license = "Apache 2.0"
 flags = ["permissive"]
 access = "direct"
 size_gb = 1.3
 hours = 0.0
 weights_publishable = "yes"
-note = "The standard reverb+noise augmentation set (Kaldi/ESPnet/SpeechBrain recipes): real RIRs from RWCP, REVERB'14 and AIR, simulated small/medium/large-room RIRs, isotropic noises and MUSAN point-source noises at 16 kHz. Convolve every wake-word positive/negative, STT and emotion clip with these to s..."
+note = "Same index-page trap as musan. Verified direct file: HTTP 200, 1.3 GB. The standard reverb+noise augmentation set (Kaldi/ESPnet/SpeechBrain recipes): real RIRs from RWCP, REVERB'14 and AIR, simulated small/medium/large-room RIRs, isotropic noises and MUSAN point-source noises at 16 kHz. Convolve every wake-word positive/negative, STT and emotion clip with these to s..."
 
 [[dataset]]
 name = "openwakeword-precomputed-negative-featur"
@@ -209,12 +209,12 @@ target = "persona_lora"
 priority = 2
 hf_id = "li2017dailydialog/daily_dialog"
 license = "cc-by-nc-sa-4.0"
-flags = ["NC", "SA"]
-access = "direct"
+flags = ["unclear"]
+access = "unavailable"
 size_gb = 0.0
 hours = 0.0
-weights_publishable = "no"
-note = "13,118 dialogues (train 11,118 / val 1,000 / test 1,000), ~103k utterances with a per-utterance emotion label {no emotion, anger, disgust, fear, happiness, sadness, surprise} plus dialogue act; the only widely used dialogue set that labels the responder's own turn, which is precisely the <e:LABEL..."
+weights_publishable = "unclear"
+note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, so snapshot_download gets no data. It needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo -- a decision for a person, not a fetch script, in a project whose threat model is about exactly that. Marked unavailable until a parquet mirror is found or the risk is accepted deliberately. 13,118 dialogues (train 11,118 / val 1,000 / test 1,000), ~103k utterances with a per-utterance emotion label {no emotion, anger, disgust, fear, happiness, sadness, surprise} plus dialogue act; the only widely used dialogue set that labels the responder's own turn, which is precisely the <e:LABEL..."
 
 [[dataset]]
 name = "massive-1-1"
@@ -222,12 +222,12 @@ target = "persona_lora"
 priority = 2
 hf_id = "AmazonScience/massive"
 license = "cc-by-4.0"
-flags = ["permissive"]
-access = "direct"
+flags = ["unclear"]
+access = "unavailable"
 size_gb = 0.2
 hours = 0.0
-weights_publishable = "yes"
-note = "16,521 utterances per locale over 60 voice-assistant intents and 55 slot types (alarm_set, iot_hue_lightoff, play_music, calendar_query ...). en-US is the SLURP text itself, so this is the spoken-assistant intent taxonomy for Neiro's tool registry; hi-IN gives human Hindi phrasings of the same co..."
+weights_publishable = "unclear"
+note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, so snapshot_download gets no data. It needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo -- a decision for a person, not a fetch script, in a project whose threat model is about exactly that. Marked unavailable until a parquet mirror is found or the risk is accepted deliberately. 16,521 utterances per locale over 60 voice-assistant intents and 55 slot types (alarm_set, iot_hue_lightoff, play_music, calendar_query ...). en-US is the SLURP text itself, so this is the spoken-assistant intent taxonomy for Neiro's tool registry; hi-IN gives human Hindi phrasings of the same co..."
 
 [[dataset]]
 name = "smoltalk2"
@@ -568,12 +568,12 @@ target = "tts_voice"
 priority = 2
 hf_id = "CSTR-Edinburgh/vctk"
 license = "Creative Commons Attribution 4.0 International (CC-BY-4.0)"
-flags = ["permissive"]
-access = "direct"
+flags = ["unclear"]
+access = "unavailable"
 size_gb = 10.94
 hours = 44.0
-weights_publishable = "yes"
-note = "Permissive multi-speaker studio corpus (48 kHz, ~400 sentences per speaker, age/gender/accent metadata) with many female speakers in their early 20s - the right place to pick a consistent, publishable young female base voice for the Chatterbox/Qwen3-TTS fine-tune; also contains a few South-Asian-..."
+weights_publishable = "unclear"
+note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, so snapshot_download gets no data. It needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo -- a decision for a person, not a fetch script, in a project whose threat model is about exactly that. Marked unavailable until a parquet mirror is found or the risk is accepted deliberately. Permissive multi-speaker studio corpus (48 kHz, ~400 sentences per speaker, age/gender/accent metadata) with many female speakers in their early 20s - the right place to pick a consistent, publishable young female base voice for the Chatterbox/Qwen3-TTS fine-tune; also contains a few South-Asian-..."
 
 [[dataset]]
 name = "jenny-tts-dataset"
