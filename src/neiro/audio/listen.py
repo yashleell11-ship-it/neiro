@@ -194,9 +194,13 @@ class Listener:
         self._since_bargein: int | None = None
 
     @classmethod
-    def with_models(cls, cfg: Neiro | None = None, **kwargs) -> Listener:
+    def with_models(cls, cfg: Neiro | None = None, *, warm: bool = True, **kwargs) -> Listener:
         """The real thing: Silero behind `prob`, smart-turn behind
         `complete`, Silero's `reset` between utterances.
+
+        Warmed by default: measured on this laptop, the first smart-turn
+        call through a cold librosa costs ~2.9 s against ~50 ms after —
+        and it would land on the first pause of his first sentence.
         """
         from neiro.audio.endpoint import SmartTurnEndpointer
         from neiro.audio.vad import SileroVad
@@ -205,6 +209,9 @@ class Listener:
         vad = SileroVad(cfg)
         endpointer = SmartTurnEndpointer(cfg=cfg)
         endpointer.load()
+        if warm:
+            vad.warm()
+            endpointer.warm()
         return cls(
             cfg, prob=vad.probability, complete=endpointer.is_complete, reset=vad.reset, **kwargs
         )
