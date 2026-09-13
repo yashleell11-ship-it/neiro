@@ -297,10 +297,6 @@ def ptt() -> None:
     raise typer.Exit(code=run_ptt(Neiro()))
 
 
-if __name__ == "__main__":
-    app()
-
-
 @app.command(name="fetch-models")
 def fetch_models(
     dry_run: bool = typer.Option(
@@ -610,3 +606,12 @@ def say(
                 break
             except FileNotFoundError:
                 continue
+
+
+# Last line of the module, on purpose. `app()` parses argv and exits the
+# process, so a command defined below this guard is never registered when
+# the module is run directly (`python -m neiro.cli`). It sat mid-file for
+# a while with four commands under it; the console script imports the
+# module and never noticed, and tests/test_cli.py now checks.
+if __name__ == "__main__":
+    app()
