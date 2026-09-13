@@ -295,6 +295,22 @@ def main(argv: list[str] | None = None) -> int:
     processor = AutoFeatureExtractor.from_pretrained(str(args.encoder))
     collate = make_collate(processor)
 
+    # Refuse a CPU build rather than training 40x slower and calling the
+    # result a number. This is not hypothetical: adding CPU torch to the
+    # runtime project silently replaced this venv's CUDA build through
+    # the editable path dependency, and the only symptom was an import
+    # error deep inside transformers hours later.
+    if not torch.cuda.is_available():
+        print(
+            f"torch {torch.__version__} cannot see a GPU. Training on CPU would take "
+            "days and the number would not be comparable. If this says '+cpu', the "
+            "runtime project's CPU torch source has leaked in through the editable "
+            "path dependency — run `uv sync` in training/ to restore the cu130 build.",
+            file=sys.stderr,
+        )
+        if not args.dry_run:
+            return 2
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
     print(

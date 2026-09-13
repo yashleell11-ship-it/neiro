@@ -21,7 +21,14 @@ version = "0.0.1"
 description = "Fine-tuning recipes for Neiro's STT, SER, TTS, LLM persona, wake word, and endpointer"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "neiro-voice",              # the dataset manifest + state contracts, editable from ../
+  # NOT neiro-voice. Depending on the runtime project editably propagated
+  # its `torch = { index = "pytorch-cpu" }` source into this resolution
+  # and silently replaced the CUDA build — training then died on a
+  # torchaudio extension load, hours after it last worked. The shared
+  # pure-python modules (manifest, corpora, labels) are imported by
+  # putting ../src on sys.path, which the recipes already do, and they
+  # need nothing heavier than pydantic.
+  "pydantic>=2",
   "torch>=2.8",
   "torchaudio",
   "transformers>=4.50",
@@ -36,15 +43,16 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-neiro-voice = { path = "..", editable = true }
-# --- Windows (3090 Ti box): PyPI torch is CPU-only there. Uncomment: ---
-# torch = { index = "pytorch-cu130" }
-# torchaudio = { index = "pytorch-cu130" }
-#
-# [[tool.uv.index]]
-# name = "pytorch-cu130"
-# url = "https://download.pytorch.org/whl/cu130"
-# explicit = true
+# Explicit, so this venv's CUDA build cannot be replaced by a resolution
+# happening somewhere else. `ser_train.py` also refuses to start on a CPU
+# build rather than training 40x slower and calling the result a number.
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.uv]
 package = false

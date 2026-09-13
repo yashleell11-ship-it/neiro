@@ -1,0 +1,129 @@
+"""An append-only record of everything Neiro did, or tried to do.
+
+Written **before and after** execution, deliberately. A log written only
+after success cannot answer the one question that matters when something
+went wrong: *did it run?* A tool that crashed the daemon halfway, or hung,
+or changed something and then failed, leaves only the "attempt" line —
+and that gap is the evidence.
+
+Append-only and plain JSONL, so it can be read with `tail` at three in
+the morning without any of this code working.
+
+**Nothing here records what was said.** The transcript is not in the
+audit log: this is a record of *actions*, and conversation content has a
+different retention story (`docs/PRIVACY.md`). Arguments are recorded
+because they are enums and integers by construction — there is no free
+text to leak.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+AUDIT_PATH = Path.home() / ".local/state/neiro/audit.jsonl"
+
+# Outcomes. "attempted" is never rewritten to something else — the pair
+# of lines IS the record, and a lone "attempted" means it did not finish.
+ATTEMPTED = "attempted"
+SUCCEEDED = "succeeded"
+FAILED = "failed"
+DENIED = "denied"
+RATE_LIMITED = "rate-limited"
+
+
+@dataclass
+class AuditLog:
+    path: Path = AUDIT_PATH
+    clock: Any = time.time
+    _entries: list[dict] = field(default_factory=list)
+
+    def _write(self, record: dict) -> dict:
+        record = {"t": round(self.clock(), 3), **record}
+        self._entries.append(record)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # Append mode plus a single write call: two daemons logging
+            # at once interleave whole lines rather than corrupting one.
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except (OSError, ValueError, TypeError):
+            # A failing audit log must never stop a tool from running, or
+            # a full disk becomes an outage. Deliberately broad: a bad
+            # path raises ValueError rather than OSError, and the whole
+            # point is that NO logging problem reaches the caller. The
+            # in-memory copy survives either way.
+            pass
+        return record
+
+    def attempt(self, tool: str, args: dict, tier: str, turn_id: int) -> dict:
+        """Before execution. The existence of this line without a
+        matching outcome is what tells you a tool did not finish.
+        """
+        return self._write(
+            {"event": ATTEMPTED, "tool": tool, "args": args, "tier": tier, "turn": turn_id}
+        )
+
+    def succeeded(self, tool: str, turn_id: int, result: str = "") -> dict:
+        # Truncated: a tool result is spoken aloud, so it is short by
+        # design, but a future one returning a page of text should not
+        # bloat the log.
+        return self._write(
+            {"event": SUCCEEDED, "tool": tool, "turn": turn_id, "result": result[:200]}
+        )
+
+    def failed(self, tool: str, turn_id: int, error: str) -> dict:
+        return self._write({"event": FAILED, "tool": tool, "turn": turn_id, "error": error[:200]})
+
+    def denied(self, tool: str, turn_id: int, reason: str) -> dict:
+        return self._write({"event": DENIED, "tool": tool, "turn": turn_id, "reason": reason[:200]})
+
+    def rate_limited(self, tool: str, turn_id: int) -> dict:
+        return self._write({"event": RATE_LIMITED, "tool": tool, "turn": turn_id})
+
+    # -- reading --------------------------------------------------------
+
+    @property
+    def entries(self) -> list[dict]:
+        return list(self._entries)
+
+    def unfinished(self) -> list[dict]:
+        """Attempts with no matching outcome — the interesting ones.
+
+        Keyed by (tool, turn): a tool called twice in one turn and
+        finishing once would otherwise look complete.
+        """
+        outcomes = {
+            (e["tool"], e["turn"])
+            for e in self._entries
+            if e["event"] in (SUCCEEDED, FAILED, DENIED, RATE_LIMITED)
+        }
+        return [
+            e
+            for e in self._entries
+            if e["event"] == ATTEMPTED and (e["tool"], e["turn"]) not in outcomes
+        ]
+
+    @classmethod
+    def read(cls, path: Path | None = None) -> list[dict]:
+        """Every record on disk. A corrupt line is skipped, not fatal —
+        a truncated final line is what a crash looks like, and that is
+        exactly when the log needs reading.
+        """
+        path = path or AUDIT_PATH
+        records = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            return []
+        return records
