@@ -25,7 +25,7 @@ from functools import lru_cache
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
-PROMPT_VERSION = "neiro.v1"
+PROMPT_VERSION = "neiro.v3"
 
 
 @lru_cache(maxsize=4)

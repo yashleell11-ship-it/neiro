@@ -1,0 +1,25 @@
+{
+ "n": 100,
+ "rate": 0.98,
+ "gate": 0.98,
+ "passed": true,
+ "by_verdict": {
+  "ok": 98,
+  "missing": 1,
+  "malformed": 0,
+  "misplaced": 1
+ },
+ "by_label": {
+  "neutral": 59,
+  "relaxed": 16,
+  "surprised": 14,
+  "sad": 6,
+  "happy": 4
+ },
+ "unused_labels": [
+  "angry"
+ ],
+ "flat": false,
+ "prompt_version": "neiro.v3",
+ "model": "neiro-4b"
+}
