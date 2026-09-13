@@ -15,9 +15,12 @@ from neiro.affect.labels import (
     ACTED_CORPORA,
     ALIASES,
     CIRCUMPLEX,
+    KINDS,
     NATURAL_CORPORA,
+    SYNTHETIC_CORPORA,
     is_acted,
     normalise,
+    speech_kind,
     to_circumplex,
 )
 
@@ -110,3 +113,101 @@ class TestActedVsNatural:
 
     def test_the_two_sets_do_not_overlap(self) -> None:
         assert not (ACTED_CORPORA & NATURAL_CORPORA)
+
+
+class TestEmoNetSpellings:
+    """EmoNet-Voice's 42 categories, as the corpus spells them after
+    URL-decoding, each landing on one circumplex name or on nothing."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("Impatience and Irritability", "frustrated"),
+            ("Jealousy & Envy", "frustrated"),
+            ("Astonishment", "surprise"),
+            ("Fatigue", "tired"),
+            ("Thankfulness", "grateful"),
+            ("Contentment", "content"),
+            ("Distress", "distressed"),
+            ("Pain", "distressed"),
+            ("Teasing", "amused"),
+            ("Sadness", "sad"),
+            ("Helplessness", "sad"),
+            ("Triumph", "excited"),
+            ("Shame", "ashamed"),
+            ("Awe", "awe"),
+        ],
+    )
+    def test_each_category_lands_on_one_name(self, raw: str, expected: str) -> None:
+        assert normalise(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "Authenticity",
+            "Arousal",
+            "Concentration",
+            "Contemplation",
+            "Intoxication",
+            "Emotional Numbness",
+            "Sexual Lust",
+        ],
+    )
+    def test_non_emotions_are_dropped_not_placed(self, raw: str) -> None:
+        # "Arousal" is the axis, not a point on it; "Authenticity" is a
+        # judgement about the clip. Placing either would train a
+        # coordinate nobody chose.
+        assert normalise(raw) == ""
+        assert to_circumplex(raw) is None
+
+    def test_the_new_points_sit_in_their_quadrants(self) -> None:
+        distressed = to_circumplex("Distress")
+        assert distressed is not None and distressed.valence < 0 and distressed.arousal > 0.5
+        content = to_circumplex("Contentment")
+        assert content is not None and content.valence > 0 and content.arousal < 0
+        embarrassed = to_circumplex("Embarrassment")
+        assert embarrassed is not None and embarrassed.valence < 0 and embarrassed.arousal > 0
+        disappointed = to_circumplex("Disappointment")
+        assert disappointed is not None and disappointed.valence < 0 and disappointed.arousal < 0
+        hopeful = to_circumplex("Hope")
+        assert hopeful is not None and hopeful.valence > 0 and hopeful.arousal > 0
+
+    def test_distress_and_contentment_differ_on_both_axes(self) -> None:
+        # The pair the corpus adds that the acted sets never had: one is
+        # negative and activated, the other positive and deactivated. If
+        # they ever collapse toward each other the corpus stops adding
+        # anything the model could learn.
+        a, b = to_circumplex("Distress"), to_circumplex("Contentment")
+        assert a is not None and b is not None
+        assert abs(a.valence - b.valence) > 1.0
+        assert abs(a.arousal - b.arousal) > 0.5
+
+
+class TestSpeechKind:
+    def test_synthetic_is_neither_acted_nor_natural(self) -> None:
+        # A TTS engine's idea of anger must not be averaged into the
+        # acted number, and certainly not into the natural one.
+        assert speech_kind("emonet-voice-bench") == "synthetic"
+        assert is_acted("emonet-voice-bench") is None
+
+    def test_kind_agrees_with_the_two_way_answer(self) -> None:
+        assert speech_kind("crema-d") == "acted" and is_acted("crema-d") is True
+        assert (
+            speech_kind("msp-podcast-v2-0") == "natural" and is_acted("msp-podcast-v2-0") is False
+        )
+        assert speech_kind("some-new-corpus") is None and is_acted("some-new-corpus") is None
+
+    def test_every_kind_is_reachable(self) -> None:
+        # The recipe iterates KINDS to build its per-kind report; a kind
+        # no corpus can ever produce would be an empty column forever.
+        for kind, members in (
+            ("acted", ACTED_CORPORA),
+            ("natural", NATURAL_CORPORA),
+            ("synthetic", SYNTHETIC_CORPORA),
+        ):
+            assert kind in KINDS
+            assert all(speech_kind(name) == kind for name in members)
+
+    def test_the_three_sets_do_not_overlap(self) -> None:
+        assert not (ACTED_CORPORA & SYNTHETIC_CORPORA)
+        assert not (NATURAL_CORPORA & SYNTHETIC_CORPORA)
