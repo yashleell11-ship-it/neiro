@@ -19,6 +19,7 @@ from neiro.server import (
     ProtocolError,
     Session,
     audio_frame,
+    build_app,
     parse_audio_frame,
     parse_client_message,
     server_message,
@@ -142,3 +143,90 @@ class TestSessionState:
         s.expressions = frozenset({"happy", "sad", "neutral"})
         s.ready = True
         assert "surprised" not in s.expressions
+
+
+class TestTheEndpointActuallyAccepts:
+    """A live handshake, because every unit test here passed while the
+    endpoint was unreachable.
+
+    `from __future__ import annotations` (PEP 563) made FastAPI see the
+    `websocket: WebSocket` parameter as the *string* "WebSocket", which
+    it cannot resolve — so it treated it as a query parameter and
+    answered every handshake with 403. Valid token, right Origin, no
+    error anywhere, and `Session.check` was dead code. Nothing that
+    tests `Session.check` in isolation can catch that.
+    """
+
+    def _serve(self, port: int):
+        import threading
+        import time
+
+        import uvicorn
+
+        session = Session()
+        server = uvicorn.Server(
+            uvicorn.Config(build_app(session), host="127.0.0.1", port=port, log_level="error")
+        )
+        threading.Thread(target=server.run, daemon=True).start()
+        for _ in range(40):
+            if getattr(server, "started", False):
+                break
+            time.sleep(0.1)
+        return session, server
+
+    def test_a_valid_handshake_connects_and_gets_hello(self) -> None:
+        import asyncio
+
+        import websockets
+
+        session, server = self._serve(8793)
+
+        async def go() -> str:
+            url = f"ws://127.0.0.1:8793/neiro?token={session.token}"
+            async with websockets.connect(
+                url, additional_headers={"Origin": "http://127.0.0.1:8760"}
+            ) as ws:
+                return await asyncio.wait_for(ws.recv(), 3)
+
+        try:
+            hello = json.loads(asyncio.run(go()))
+            assert hello["t"] == "hello"
+            assert hello["protocol"] == PROTOCOL_VERSION
+        finally:
+            server.should_exit = True
+
+    def test_a_wrong_token_and_a_hostile_origin_are_both_refused(self) -> None:
+        import asyncio
+
+        import websockets
+
+        session, server = self._serve(8794)
+
+        async def attempt(token: str, origin: str) -> bool:
+            try:
+                async with websockets.connect(
+                    f"ws://127.0.0.1:8794/neiro?token={token}",
+                    additional_headers={"Origin": origin},
+                ):
+                    return True
+            except Exception:  # noqa: BLE001 — any refusal is a pass
+                return False
+
+        try:
+            assert not asyncio.run(attempt("guessed", "http://127.0.0.1:8760"))
+            assert not asyncio.run(attempt(session.token, "https://evil.example"))
+        finally:
+            server.should_exit = True
+
+    def test_the_module_does_not_use_pep_563(self) -> None:
+        # The specific thing that broke it. A future refactor adding the
+        # import back would silently kill the endpoint again.
+        from pathlib import Path as P
+
+        # Checked as a STATEMENT, not a substring: the comment in
+        # server.py explaining why it is absent naturally contains the
+        # words, and matching those would make this pass for the wrong
+        # reason -- or fail when someone documents the decision.
+        source = (P(__file__).resolve().parents[1] / "src/neiro/server.py").read_text()
+        statements = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
+        assert not any(line.strip() == "from __future__ import annotations" for line in statements)

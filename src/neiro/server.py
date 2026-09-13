@@ -20,7 +20,13 @@ with `visemes: []` and `neutral` placeholders, is what stops barge-in
 being rewritten in Stage 2.
 """
 
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here, deliberately.
+# FastAPI resolves handler parameter types at decoration time; with
+# PEP 563 the `WebSocket` annotation arrives as the STRING "WebSocket",
+# which FastAPI cannot resolve, so it treats the parameter as a query
+# parameter and rejects every handshake with 403 — with a valid token,
+# from the right Origin, and no error anywhere. Verified: the endpoint
+# was unreachable and `Session.check` was dead code.
 
 import asyncio
 import json
