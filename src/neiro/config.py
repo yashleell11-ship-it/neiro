@@ -171,6 +171,40 @@ class VadConfig(BaseModel):
     bargein_probability: float = 0.85  # stricter than `threshold` on purpose
 
 
+class EndpointConfig(BaseModel):
+    """smart-turn v3.2 — deciding whether he actually finished a TURN.
+
+    VAD says "he stopped making noise". That is not the same question,
+    and conflating them is what cuts people off at "I want to go
+    to... uh...". VAD is the cheap trigger; this is the decision.
+    """
+
+    model_path: str = "models/smart-turn-v3/smart-turn-v3.2-cpu.onnx"
+    # The model takes an 80-bin log-mel over exactly 8 seconds at 16 kHz
+    # (80 x 800 frames). Shorter audio is left-padded; longer is
+    # truncated to the most RECENT 8 s, because the end of an utterance
+    # is what decides whether it ended.
+    context_seconds: float = 8.0
+    n_mels: int = 80
+    n_frames: int = 800
+    # Calibrated on pipecat's own labelled set (smart-turn-human-5, 200
+    # endpoints + 200 non-endpoints), 2026-09-13 — AUC 0.996:
+    #
+    #     threshold   accuracy   endpoints caught   FALSE CUTS
+    #        0.60       0.993         0.995            1.0%
+    #        0.70       0.990         0.985            0.5%
+    #        0.72       0.968         0.940            0.5%
+    #
+    # 0.70, not 0.60: halving false cuts for one point of recall is the
+    # right trade when cutting someone off mid-sentence costs the whole
+    # turn and being a moment slow costs a moment. Same asymmetry as the
+    # speech gate and the expression blender.
+    complete_threshold: float = 0.70
+    # Hard stop, so a model that never fires cannot hang the
+    # conversation. The plan's value.
+    max_wait_s: float = 2.5
+
+
 class ExpressionConfig(BaseModel):
     """How her face moves. Every number here is visible to a human eye —
     these are the difference between "alive" and "a mask that snaps".
@@ -208,6 +242,7 @@ class Neiro(BaseSettings):
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     vad: VadConfig = Field(default_factory=VadConfig)
+    endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
     affect: AffectConfig = Field(default_factory=AffectConfig)
     expression: ExpressionConfig = Field(default_factory=ExpressionConfig)
 
