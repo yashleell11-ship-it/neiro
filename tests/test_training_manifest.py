@@ -240,3 +240,49 @@ class TestAccessGuard:
         known = {"direct", "hf-login", "hf-gated-approval", "request-form", "paid", "unavailable"}
         for d in Manifest.load(path).dataset:
             assert d.access in known, f"{d.name}: {d.access}"
+
+
+class TestSourceUniqueness:
+    """No two entries may point at the same download.
+
+    Independent surveys name the same corpus differently — "svarah",
+    "svarah-indian-accented-english", "svarah-indic-accented-english" —
+    and a name-only check lets all three through, so the same bytes get
+    fetched three times into three directories. Found live: seven
+    duplicated sources, 127.5 GB of pointless download, two of them
+    already on disk twice before this check existed.
+    """
+
+    def test_the_same_hf_id_twice_is_a_load_error(self) -> None:
+        two = _one(name="svarah") + "\n" + _one(name="svarah-indian-accented").split("\n", 2)[2]
+        with pytest.raises(ValidationError, match="same bytes"):
+            Manifest.loads(two)
+
+    def test_the_same_url_twice_is_a_load_error(self) -> None:
+        a = _one(name="a", hf_id="", url="https://openslr.org/104/")
+        b = _one(name="b", hf_id="", url="https://openslr.org/104/").split("\n", 2)[2]
+        with pytest.raises(ValidationError, match="same bytes"):
+            Manifest.loads(a + "\n" + b)
+
+    def test_a_trailing_slash_does_not_hide_a_duplicate(self) -> None:
+        a = _one(name="a", hf_id="", url="https://openslr.org/104")
+        b = _one(name="b", hf_id="", url="https://openslr.org/104/").split("\n", 2)[2]
+        with pytest.raises(ValidationError, match="same bytes"):
+            Manifest.loads(a + "\n" + b)
+
+    def test_different_case_does_not_hide_a_duplicate(self) -> None:
+        a = _one(name="a", hf_id="AI4Bharat/Svarah")
+        b = _one(name="b", hf_id="ai4bharat/svarah").split("\n", 2)[2]
+        with pytest.raises(ValidationError, match="same bytes"):
+            Manifest.loads(a + "\n" + b)
+
+    def test_genuinely_different_sources_are_fine(self) -> None:
+        a = _one(name="a", hf_id="org/one")
+        b = _one(name="b", hf_id="org/two").split("\n", 2)[2]
+        assert len(Manifest.loads(a + "\n" + b).dataset) == 2
+
+    def test_the_committed_manifest_has_no_duplicated_sources(self) -> None:
+        from pathlib import Path as P
+
+        path = P(__file__).resolve().parents[1] / "data" / "datasets.toml"
+        Manifest.load(path)  # the validator is the assertion

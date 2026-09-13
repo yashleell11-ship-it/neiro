@@ -113,34 +113,6 @@ weights_publishable = "yes"
 note = "23.4M one-second single-keyword clips extracted from Common Voice — exactly the shape a wake-word negative needs (short isolated words from thousands of crowd speakers, many accents, phone mics). Lets you mine phonetically close hard negatives ('near', 'narrow', 'zero', 'neuro') by keyword text i..."
 
 [[dataset]]
-name = "indicvoices-hindi-subset"
-target = "wakeword_speaker_noise"
-priority = 3
-hf_id = "ai4bharat/IndicVoices"
-license = "CC BY 4.0"
-flags = ["permissive", "gated"]
-access = "hf-login"
-size_gb = 49.8
-hours = 430.0
-weights_publishable = "yes"
-note = "Only large permissive corpus of natural Indian speech: 23.7K h across 22 languages, 51K speakers, 76% extempore + 15% conversational (real Hinglish-style code-mixing occurs in extempore Hindi). The Hindi split is the negative data that teaches the wake-word model what Yash's actual environment so..."
-
-[[dataset]]
-name = "svarah-indian-accented-english"
-target = "wakeword_speaker_noise"
-priority = 3
-hf_id = "ai4bharat/Svarah"
-license = "CC BY 4.0"
-flags = ["permissive", "gated"]
-access = "hf-login"
-size_gb = 1.09
-hours = 9.6
-weights_publishable = "yes"
-note = "117 speakers, 65 districts, 19 states, 19 native-language accents of Indian English, read + spontaneous speech — small but exactly Yash's accent. Use as the impostor set for speaker-verification EER/threshold calibration (many similar-accent 'not-Yash' voices is what a good threshold needs) and a..."
-
-# ---------- persona_lora ----------
-
-[[dataset]]
 name = "goemotions"
 target = "persona_lora"
 priority = 1
@@ -258,19 +230,6 @@ weights_publishable = "yes"
 note = "16,521 utterances per locale over 60 voice-assistant intents and 55 slot types (alarm_set, iot_hue_lightoff, play_music, calendar_query ...). en-US is the SLURP text itself, so this is the spoken-assistant intent taxonomy for Neiro's tool registry; hi-IN gives human Hindi phrasings of the same co..."
 
 [[dataset]]
-name = "english-hinglish-top"
-target = "persona_lora"
-priority = 3
-hf_id = "rvv-karma/English-Hinglish-TOP"
-license = "apache-2.0"
-flags = ["permissive", "SA", "unclear"]
-access = "direct"
-size_gb = 0.03
-hours = 0.0
-weights_publishable = "unclear"
-note = "184,499 rows (train 176,596 = 6,513 human-annotated + 170,083 CST5-synthetic per the card; val 1,390 human; test 6,513 human) of Roman-script Hinglish voice-assistant requests (alarm, event, messaging, music, navigation, reminder, timer, weather domains from TOPv2) with parallel English and a sem..."
-
-[[dataset]]
 name = "smoltalk2"
 target = "persona_lora"
 priority = 3
@@ -336,19 +295,6 @@ size_gb = 0.47
 hours = 5.3
 weights_publishable = "yes"
 note = "Largest speaker-diverse acted English SER set: 91 actors (48 M / 43 F, ages 20-74, multiple ethnicities), 7,442 clips, 6 classes (anger, disgust, fear, happy, neutral, sad) with 4 intensity levels and 2,443-rater crowd labels; maps directly onto happy/angry/sad/neutral and its rater-agreement vec..."
-
-[[dataset]]
-name = "rasa-hindi-subset"
-target = "ser_lane_b"
-priority = 2
-hf_id = "ai4bharat/Rasa"
-license = "CC-BY-4.0"
-flags = ["permissive", "gated"]
-access = "hf-login"
-size_gb = 17.65
-hours = 52.0
-weights_publishable = "yes"
-note = "The only sizeable, permissive, studio-quality HINDI emotional speech with the six Ekman labels (happy, sad, angry, fear, disgust, surprise) plus neutral, from AI4Bharat/IIT Madras - gives Lane B native Hindi/Indian prosody for Yash's Hinglish, and the same speakers' neutral hours are a free in-do..."
 
 [[dataset]]
 name = "esd"
@@ -550,19 +496,6 @@ weights_publishable = "unclear"
 note = "The exact aggregate smart-turn v3.2 was trained on, already in train.py's schema (audio, endpoint_bool, midfiller, endfiller, synthetic, language, dataset); midfiller/endfiller flags directly encode the 'pause-then-continue' case; Hindi (~4.5% of rows), Marathi and Bengali are present, so an Indi..."
 
 [[dataset]]
-name = "svarah"
-target = "endpointing"
-priority = 2
-hf_id = "ai4bharat/Svarah"
-license = "CC BY 4.0 (dataset card text: 'This dataset is released under the C..."
-flags = ["permissive", "gated"]
-access = "hf-login"
-size_gb = 1.1
-hours = 9.6
-weights_publishable = "yes"
-note = "The only verified downloadable Indian-accented English corpus with spontaneous (extempore) speech: 117 speakers from 65 districts in 19 states, native languages covering 19 of 22 scheduled languages. Extempore answers to prompts carry natural pauses and fillers — this is the evaluation set for 'd..."
-
-[[dataset]]
 name = "podcastfillers"
 target = "endpointing"
 priority = 3
@@ -600,19 +533,6 @@ size_gb = 0.31
 hours = 4.8
 weights_publishable = "yes"
 note = "The only smart-turn component with an explicit permissive licence and the human-recorded (not TTS) core: 3,862 clips, perfectly balanced 1,931 complete / 1,931 incomplete, 4.48 s mean. Use as a clean human evaluation set or as the licence-clean anchor if a fully publishable fine-tune is wanted. —..."
-
-[[dataset]]
-name = "indicvoices-hindi-config"
-target = "endpointing"
-priority = 3
-hf_id = "ai4bharat/IndicVoices"
-license = "CC BY 4.0 (HF card and tag license: cc-by-4.0)"
-flags = ["permissive", "gated"]
-access = "hf-login"
-size_gb = 49.8
-hours = 0.0
-weights_publishable = "yes"
-note = "76% extempore + 15% conversational speech recorded from ordinary Indians on phones — the largest permissive source of the Hinglish-style hesitation, pause and code-switching Yash actually produces. The 'verbatim' transcript field keeps fillers and false starts, so filler-rich Hindi/Hinglish segme..."
 
 [[dataset]]
 name = "dipco-dinner-party-corpus"
@@ -935,19 +855,6 @@ weights_publishable = "unclear"
 note = "The pragmatic first pull: the same Hindi female voice as the official SYSPIN release, ungated and directly downloadable with no login, no form and no approval — 21,893 utterances with transcriptions, one professional female voice. Verification tied it firmly to the upstream: 21,893 rows against I..."
 
 [[dataset]]
-name = "rasa-expressive-multilingual-indian"
-target = "hindi_tts"
-priority = 1
-hf_id = "ai4bharat/Rasa"
-license = "CC-BY-4.0 (API cardData.license 'cc-by-4.0', tag 'license:cc-by-4.0..."
-flags = ["permissive", "gated"]
-access = "hf-gated-approval"
-size_gb = 17.7
-hours = 50.8
-weights_publishable = "yes"
-note = "Still the single most important dataset for this target, and every headline number checked out. It is the only Hindi corpus verified to be simultaneously (a) studio-grade 48 kHz mono, (b) one female AND one male voice, and (c) emotion-labelled via a `style` column. It answers both of Yash's state..."
-
-[[dataset]]
 name = "indicvoices-r-tts-restored"
 target = "hindi_tts"
 priority = 2
@@ -1013,21 +920,6 @@ weights_publishable = "unclear"
 note = "A shortcut, not a training corpus: 48 kHz WAV clips already sorted by emotion and explicitly packaged as reference audio for Qwen3-TTS voice cloning, which is exactly the TTS in Neiro's stack. The hand-curated best_clips/ folders give three good ~5 s prompts per emotion, so you can hear what emot..."
 
 [[dataset]]
-name = "fleurs-hindi"
-target = "hindi_tts"
-priority = 3
-hf_id = "google/fleurs"
-license = "CC-BY-4.0 (tag 'license:cc-by-4.0', cardData.license ['cc-by-4.0'];..."
-flags = ["permissive"]
-access = "direct"
-size_gb = 2.0
-hours = 10.0
-weights_publishable = "yes"
-note = "The standard cross-lingual eval set and the cheapest way to get an honest, comparable Hindi number out of the TTS/STT stack. Split sizes verified exactly as proposed: 2,777 utterances total, 2,120 train / 239 validation / 418 test, parallel across 102 languages and read from FLoRes sentences — so..."
-
-# ---------- hindi_emotion_text ----------
-
-[[dataset]]
 name = "brighter-hindi-emotion-categories"
 target = "hindi_emotion_text"
 priority = 1
@@ -1052,32 +944,6 @@ size_gb = 0.75
 hours = 0.0
 weights_publishable = "yes"
 note = "This is the register fix, and every number checked out. Card table: Hindi Native 101,303 + Romanized 45,014 = 146,317 conversations, and datasets-server reports config `hindi` num_rows 146,317 — exact match. Schema is Persona / Script / Conversation[{speaker,text}] with Speaker_1/Speaker_2 multi-..."
-
-[[dataset]]
-name = "samvaad-hi-v1"
-target = "hindi_emotion_text"
-priority = 1
-hf_id = "sarvamai/samvaad-hi-v1"
-license = "apache-2.0 (card front-matter `license: apache-2.0`; tag license:ap..."
-flags = ["permissive"]
-access = "direct"
-size_gb = 0.2
-hours = 0.0
-weights_publishable = "yes"
-note = "101,476 multi-turn chat conversations in a ChatML `messages` schema (list of {role, content}) under a clean Apache-2.0 licence — the cheapest way to give the Qwen3.5-4B LoRA fluent Hindi assistant behaviour with an Indic frame of reference, and the licence matches the repo exactly. Drop-in SFT fo..."
-
-[[dataset]]
-name = "indicalign-instruct-hindi-portion"
-target = "hindi_emotion_text"
-priority = 1
-hf_id = "ai4bharat/indic-align"
-license = "cc-by-4.0 (card front-matter `license: cc-by-4.0`; tag license:cc-b..."
-flags = ["permissive"]
-access = "direct"
-size_gb = 1.6
-hours = 0.0
-weights_publishable = "yes"
-note = "Anudesh is the rare one: prompts crowd-sourced from native Indic speakers rather than translated from English — that is what stops her replying like a translation layer. Config sizes verified exactly: Anudesh 36,820 rows (42.2 MB), Dolly_T 15,011 (159.4 MB), OpenAssistant_T 19,909 (449.7 MB), Ind..."
 
 [[dataset]]
 name = "sentimix-hinglish-community-mirror"

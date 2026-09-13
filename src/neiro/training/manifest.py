@@ -151,6 +151,27 @@ class Manifest(BaseModel):
             seen.add(d.name)
         return self
 
+    @model_validator(mode="after")
+    def _sources_unique(self) -> Manifest:
+        """No two entries may point at the same download.
+
+        Independent surveys name the same corpus differently — "svarah",
+        "svarah-indian-accented-english", "svarah-indic-accented-english"
+        — and a name-only check lets all three through, so the same
+        bytes get fetched three times into three directories. Observed
+        live: seven duplicated sources, 127.5 GB of pointless download.
+        """
+        seen: dict[str, str] = {}
+        for d in self.dataset:
+            key = (d.hf_id or d.url).lower().rstrip("/")
+            if key in seen:
+                raise ValueError(
+                    f"{d.name!r} and {seen[key]!r} both point at {key} — "
+                    "the same bytes would be downloaded twice. Keep one."
+                )
+            seen[key] = d.name
+        return self
+
     @classmethod
     def load(cls, path: Path) -> Manifest:
         return cls.model_validate(tomllib.loads(path.read_text()))
