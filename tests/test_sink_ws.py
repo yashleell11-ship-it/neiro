@@ -29,6 +29,7 @@ from neiro.server import (
     TOKEN_SUBPROTOCOL_PREFIX,
     Face,
     Session,
+    _pump,
     parse_audio_frame,
 )
 from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState, Turn
@@ -46,13 +47,23 @@ def _pcm(samples: int, level: float = 0.25) -> np.ndarray:
     return np.full(samples, level, dtype=np.float32)
 
 
-def _drain(queue: asyncio.Queue) -> list:
-    items = []
+def _entries(queue: asyncio.Queue) -> list:
+    """The queue as the sink left it: a chunk is one (header, pcm) entry."""
+    entries = []
     while True:
         try:
-            items.append(queue.get_nowait())
+            entries.append(queue.get_nowait())
         except asyncio.QueueEmpty:
-            return items
+            return entries
+
+
+def _drain(queue: asyncio.Queue) -> list:
+    """The queue in wire order — what the pump would send, a chunk entry
+    becoming its header then its PCM."""
+    items = []
+    for entry in _entries(queue):
+        items.extend(entry if isinstance(entry, tuple) else (entry,))
+    return items
 
 
 def _kinds(items: list) -> list[str]:
@@ -277,8 +288,8 @@ class TestNothingWaitsForever:
         # Waited the bound for room, then gave up — did not wait longer.
         assert SEND_TIMEOUT_S * 0.9 <= elapsed < SEND_TIMEOUT_S * 3
         assert sink.dropped >= 1
-        # The header and its PCM go together or not at all; the frame
-        # that did fit is the one before them.
+        # The chunk — header and PCM, one entry — did not fit; the entry
+        # that did is the one before it.
         assert _kinds(_drain(session.outgoing)) == ["utt.begin"]
 
     def test_a_reconnecting_tab_does_not_get_the_old_replys_tail(self, session: Session) -> None:
@@ -288,6 +299,85 @@ class TestNothingWaitsForever:
         session.detach()
         session.attach()  # a fresh tab never saw utt.begin; the rest is garbage
         assert session.outgoing.empty()
+
+
+class TestHeaderAndPcmAreOneEntry:
+    """The browser pairs each binary frame with the header before it, so
+    a header queued without its PCM would pair with the NEXT chunk's
+    audio and every later chunk of the reply would play with the wrong
+    seq, text and visemes. The sink must therefore never leave a header
+    on the queue whose PCM was dropped — and it cannot, because the two
+    are one entry.
+    """
+
+    def test_a_chunk_is_one_entry_so_two_free_slots_are_not_needed(self) -> None:
+        # Room for exactly two entries: utt.begin and one chunk. Queued
+        # as separate frames the header would fit and the PCM would not,
+        # leaving a header with nothing behind it.
+        session = Session(outgoing=asyncio.Queue(maxsize=2))
+        session.attach()
+        sink = WsSink(session)
+        turn = _turn()
+        run(sink.play(turn, _pcm(2400), seq=0, text="Hi."))
+
+        assert sink.dropped == 0
+        entries = _entries(session.outgoing)
+        assert len(entries) == 2
+        header, pcm = entries[1]
+        assert json.loads(header)["seq"] == 0
+        assert parse_audio_frame(pcm)[0] == json.loads(header)["audio_id"]
+
+    def test_a_full_queue_drops_the_whole_chunk_never_a_bare_header(self) -> None:
+        session = Session(outgoing=asyncio.Queue(maxsize=2))
+        session.attach()
+        sink = WsSink(session)
+        turn = _turn()
+
+        async def go() -> float:
+            await sink.play(turn, _pcm(2400), seq=0, text="First.")  # fills both slots
+            started = time.perf_counter()
+            await sink.play(turn, _pcm(2400), seq=1, text="Second.")  # no room: dropped
+            return time.perf_counter() - started
+
+        elapsed = run(go())
+        assert SEND_TIMEOUT_S * 0.9 <= elapsed < SEND_TIMEOUT_S * 3
+        assert sink.dropped == 1
+        entries = _entries(session.outgoing)
+        # Not one bare header anywhere: a text entry is never utt.chunk.
+        assert all(isinstance(e, tuple) or json.loads(e)["t"] != "utt.chunk" for e in entries)
+        wire = _kinds([i for e in entries for i in (e if isinstance(e, tuple) else (e,))])
+        assert wire == ["utt.begin", "utt.chunk", "audio"]
+
+    def test_the_pump_sends_header_then_pcm_with_nothing_between(self) -> None:
+        # A barge-in that lands while the header is on its way out must
+        # still follow the PCM on the wire, not slip between the two.
+        session = Session()
+        session.attach()
+        sink = WsSink(session)
+        turn = _turn()
+        sent: list = []
+
+        class Socket:
+            async def send_text(self, text: str) -> None:
+                sent.append(text)
+                if json.loads(text)["t"] == "utt.chunk":
+                    await sink.cancel(turn)  # queued now, sent after the PCM
+                await asyncio.sleep(0)
+
+            async def send_bytes(self, data: bytes) -> None:
+                sent.append(data)
+                await asyncio.sleep(0)
+
+        async def go() -> None:
+            await sink.play(turn, _pcm(2400), seq=0, text="Hi.")
+            pump = asyncio.create_task(_pump(session, Socket()))
+            while len(sent) < 4:
+                await asyncio.sleep(0.005)
+            pump.cancel()
+            await asyncio.gather(pump, return_exceptions=True)
+
+        run(go())
+        assert _kinds(sent) == ["utt.begin", "utt.chunk", "audio", "cancel"]
 
 
 class TestPlayedEndsTheMetric:

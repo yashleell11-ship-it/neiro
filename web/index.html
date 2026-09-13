@@ -81,8 +81,10 @@ const visemes = new VisemeScheduler();
 // and neither number belongs in this file.
 let sink = null;
 let blender = null;
-// utt.chunk headers waiting for their PCM. The sink sends the pair in
-// order, so the next binary frame belongs to the first header here.
+// utt.chunk headers waiting for their PCM. The daemon queues a chunk's
+// header and PCM as ONE entry and sends them back to back, so the next
+// binary frame always belongs to the first header here — a frame with
+// no header waiting is not the protocol, and is refused below.
 const pending = [];
 let vrmAttempted = false;
 let transport = null;
@@ -182,8 +184,16 @@ function binary(buffer) {
   const audioId = view.getUint32(0, true);
   const pcm = new Float32Array(buffer, 4);
   const header = pending.shift();
-  const startAt = sink.play(audioId, pcm, header?.seq ?? -1);
-  if (startAt !== null && header?.visemes?.length) visemes.schedule(header.visemes, startAt);
+  if (!header || header.audio_id !== audioId) {
+    // Played anyway, this PCM would be reported as the wrong seq (or
+    // none) and its visemes would be some other chunk's. Refuse it and
+    // say so; the daemon logs the error.
+    const why = header ? `header is for reply ${header.audio_id}` : 'no utt.chunk header pending';
+    transport?.send({ t: 'error', message: `audio frame for reply ${audioId} refused: ${why}` });
+    return;
+  }
+  const startAt = sink.play(audioId, pcm, header.seq);
+  if (startAt !== null && header.visemes?.length) visemes.schedule(header.visemes, startAt);
 }
 
 async function hello(msg) {

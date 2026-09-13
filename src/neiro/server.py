@@ -103,11 +103,11 @@ AVATAR_DIR = "public/avatar"
 # token never sits in the browser's disk cache either.
 TOKEN_MARKER = "<!-- neiro:token -->"
 
-# Frames buffered for one tab. Two per chunk (the JSON header and the
-# PCM), so this is ~32 chunks — several sentences of lookahead. A tab
-# further behind than that is not rendering, and the sink drops rather
-# than waits (see audio/sink_ws.py).
-OUTGOING_DEPTH = 64
+# Entries buffered for one tab. A chunk's JSON header and its PCM are
+# ONE entry (see `Outgoing`), so this is 32 chunks — several sentences
+# of lookahead. A tab further behind than that is not rendering, and
+# the sink drops whole chunks rather than waits (see audio/sink_ws.py).
+OUTGOING_DEPTH = 32
 
 # `played` for sequence 0 arrives *after* the sink has finished with a
 # short reply — a one-chunk answer is entirely sent before it is heard —
@@ -151,6 +151,17 @@ def parse_audio_frame(payload: bytes) -> tuple[int, np.ndarray]:
         raise ProtocolError("audio payload is not whole float32 samples")
     (audio_id,) = struct.unpack("<I", payload[:4])
     return audio_id, np.frombuffer(payload[4:], dtype=np.float32)
+
+
+# One entry on a session's outgoing queue: a JSON message, or a chunk —
+# its `utt.chunk` header and its `audio_frame()` together. The pair is
+# one entry so that it is one queue *slot*: the sink queues both or
+# drops both, and the pump sends both back to back with nothing else
+# between them. The browser pairs each binary frame with the header
+# before it, so a header on the wire with no PCM behind it would make
+# every later chunk of the reply play with the wrong seq, text and
+# visemes. That is impossible by construction here, not by care.
+Outgoing = str | bytes | tuple[str, bytes]
 
 
 def server_message(kind: str, **fields: Any) -> str:
@@ -286,8 +297,8 @@ class Session:
         self.ready = False
         self.expressions = frozenset()
 
-    def push(self, item: str | bytes) -> bool:
-        """Queue one frame without waiting. False when the tab is behind
+    def push(self, item: Outgoing) -> bool:
+        """Queue one entry without waiting. False when the tab is behind
         or absent — the caller decides whether that is worth a log line.
         """
         if not self.connected:
@@ -358,16 +369,19 @@ class Session:
 
 
 async def _pump(session: Session, websocket) -> None:
-    """Outgoing frames to the socket, in queue order. Text is protocol
-    JSON, bytes are `audio_frame()`s; the order they were queued in is
-    the order the browser needs them (a chunk's header precedes its PCM).
+    """Outgoing entries to the socket, in queue order. Text is protocol
+    JSON, bytes are `audio_frame()`s, and a chunk entry is its header
+    then its PCM, sent back to back: nothing else can be queued between
+    the two halves of one entry, so the browser's pairing rule — each
+    binary frame belongs to the header before it — always holds.
     """
     while True:
-        item = await session.outgoing.get()
-        if isinstance(item, bytes):
-            await websocket.send_bytes(item)
-        else:
-            await websocket.send_text(item)
+        entry = await session.outgoing.get()
+        for item in entry if isinstance(entry, tuple) else (entry,):
+            if isinstance(item, bytes):
+                await websocket.send_bytes(item)
+            else:
+                await websocket.send_text(item)
 
 
 def build_app(

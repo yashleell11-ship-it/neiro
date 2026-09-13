@@ -22,8 +22,15 @@ laptop lid closing — must not park the orchestrator on a `put()` that
 never returns: the daemon holds its lock across the turn, so that would
 be the whole assistant dead until restart, the exact shape of the deadlock
 in `git log` (2296ba0). So `play()` waits a bounded time for room and
-then *drops the frame and says so*. A dropped chunk is a glitch he hears
+then *drops the chunk and says so*. A dropped chunk is a glitch he hears
 once; a stalled pipeline is a restart.
+
+A chunk is dropped whole. Its header and its PCM are one queue entry
+(`server.Outgoing`), so they are queued together or not at all — the
+browser pairs each binary frame with the header before it, and a header
+whose PCM was dropped would be paired with the *next* chunk's audio,
+after which every chunk of the reply plays with the wrong seq, text and
+visemes. One entry, one slot: there is no half-queued chunk to get wrong.
 
 **`played` is not sent, it is received.** The one metric ends when the
 browser reports sequence 0 actually playing, and that report arrives on
@@ -46,7 +53,7 @@ import numpy as np
 from neiro.config import Neiro
 from neiro.emotion.blend import ExpressionBlender
 from neiro.evals.latency import HEADLINE_END
-from neiro.server import audio_frame, server_message
+from neiro.server import Outgoing, audio_frame, server_message
 from neiro.state import NeiroState, Turn
 
 log = logging.getLogger(__name__)
@@ -77,7 +84,7 @@ class ReplyChannel(Protocol):
 
     def discard_queued(self) -> int: ...
 
-    def push(self, item: str | bytes) -> bool: ...
+    def push(self, item: Outgoing) -> bool: ...
 
     async def wait_played(self, audio_id: int, timeout: float) -> bool: ...
 
@@ -93,8 +100,8 @@ class WsSink:
     session: ReplyChannel
     cfg: Neiro = field(default_factory=Neiro)
     audio_id: int | None = None
-    sent: int = 0  # frames that reached the queue
-    dropped: int = 0  # frames that did not: no tab, or a tab too far behind
+    sent: int = 0  # entries that reached the queue; a chunk (header + PCM) is one
+    dropped: int = 0  # entries that did not: no tab, or a tab too far behind
     cancelled: bool = False
     ended: bool = False
     _turn: Turn | None = field(default=None, repr=False)
@@ -117,14 +124,16 @@ class WsSink:
             self.audio_id = self.session.begin_reply(turn)
             self._state = state
             await self._send(
-                server_message("utt.begin", audio_id=self.audio_id, **self._emotion(state))
+                server_message("utt.begin", audio_id=self.audio_id, **self._emotion(state)),
+                "utt.begin",
             )
         elif state != self._state:
             # Her state moved mid-reply: the face follows, the audio
             # already queued does not change.
             self._state = state
             await self._send(
-                server_message("emotion", audio_id=self.audio_id, **self._emotion(state))
+                server_message("emotion", audio_id=self.audio_id, **self._emotion(state)),
+                "emotion",
             )
 
         samples = np.asarray(pcm, dtype=np.float32).reshape(-1)
@@ -142,11 +151,14 @@ class WsSink:
             text=text,
             visemes=timeline,
         )
-        # The header and the PCM are a pair: the browser matches each
-        # binary frame to the header before it. A frame without its
-        # header would be matched to the NEXT header, and every chunk
-        # after it would carry the wrong text and visemes.
-        if await self._send(header) and await self._send(audio_frame(self.audio_id, samples)):
+        # The header and the PCM are ONE queue entry: the browser matches
+        # each binary frame to the header before it, so the two must be
+        # queued together or dropped together. Queued one after the
+        # other, a header could fit where its PCM then did not, and the
+        # browser would pair that header with the NEXT chunk's audio —
+        # every chunk after it playing with the wrong seq, text and
+        # visemes. One entry takes one slot, so there is no such gap.
+        if await self._send((header, audio_frame(self.audio_id, samples)), f"chunk {seq}"):
             self._seconds_sent += seconds
 
     async def cancel(self, turn: Turn) -> None:
@@ -229,10 +241,11 @@ class WsSink:
         if not self.session.push(server_message("cancel", audio_id=self.audio_id)):
             self.dropped += 1
 
-    async def _send(self, item: str | bytes) -> bool:
-        """Queue one frame, waiting a bounded time for room. False means
-        dropped — and logged, because a silently dropped chunk is the
-        kind of bug that gets blamed on the TTS.
+    async def _send(self, item: Outgoing, what: str) -> bool:
+        """Queue one entry — a message, or a chunk's header and PCM as one
+        — waiting a bounded time for room. False means dropped, and
+        logged with `what` it was, because a silently dropped chunk is
+        the kind of bug that gets blamed on the TTS.
         """
         if not self.session.connected:
             self.dropped += 1
@@ -247,8 +260,9 @@ class WsSink:
             except TimeoutError:
                 self.dropped += 1
                 log.warning(
-                    "browser tab is not draining audio (waited %.1fs); dropped a frame of reply %s",
+                    "browser tab is not draining audio (waited %.1fs); dropped %s of reply %s",
                     SEND_TIMEOUT_S,
+                    what,
                     self.audio_id,
                 )
                 return False

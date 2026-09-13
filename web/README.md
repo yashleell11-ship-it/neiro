@@ -35,6 +35,14 @@ sends it. Per reply:
 | `utt.end` | phase back to idle once the queue has drained |
 | `cancel{audio_id}` | stops every queued source now; late frames with that id are dropped |
 
+A chunk's header and its binary frame are one entry in the daemon's
+outgoing queue, sent back to back. The queue is bounded and a tab that
+stops draining it loses whole chunks (logged on the daemon side), never
+half of one — so the page's rule that each binary frame belongs to the
+header before it always holds, and a frame arriving with no header
+pending is refused and reported as `error` rather than played as the
+wrong chunk.
+
 ## Why there is a drawn face and not only a VRM
 
 `FallbackFace` is not a placeholder to be deleted. Without it, nothing
