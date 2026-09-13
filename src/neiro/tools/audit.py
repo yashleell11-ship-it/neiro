@@ -44,7 +44,11 @@ class AuditLog:
     _entries: list[dict] = field(default_factory=list)
     # How many calls each turn has made so far, so an attempt can be
     # numbered within its turn.
-    _calls_in_turn: dict[int, int] = field(default_factory=dict)
+    # Calls are numbered within the turn. Turns are sequential, so only
+    # the current one needs remembering — a dict keyed by turn id grew by
+    # one entry per turn for the life of the daemon.
+    _numbering_turn: int | None = None
+    _calls_this_turn: int = 0
 
     def _write(self, record: dict) -> dict:
         record = {"t": round(self.clock(), 3), **record}
@@ -75,8 +79,10 @@ class AuditLog:
         call the same tool twice in a turn, and one outcome must not
         close both.
         """
-        call = self._calls_in_turn.get(turn_id, 0) + 1
-        self._calls_in_turn[turn_id] = call
+        if turn_id != self._numbering_turn:
+            self._numbering_turn, self._calls_this_turn = turn_id, 0
+        self._calls_this_turn += 1
+        call = self._calls_this_turn
         return self._write(
             {
                 "event": ATTEMPTED,
