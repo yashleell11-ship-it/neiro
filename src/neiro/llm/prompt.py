@@ -25,7 +25,11 @@ from functools import lru_cache
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
-PROMPT_VERSION = "neiro.v4"
+# v5: tools. When to call one, that a call carries the tag and nothing
+# else, and that the confirmation is the machine's to ask, not hers.
+# Trimmed elsewhere to stay under the 700-word prefill budget; v4 is
+# kept so a behaviour change can be traced to the prompt that made it.
+PROMPT_VERSION = "neiro.v5"
 
 
 @lru_cache(maxsize=4)

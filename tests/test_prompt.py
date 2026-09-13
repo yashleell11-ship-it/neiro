@@ -110,3 +110,23 @@ class TestCharacterRules:
         # context on every turn. Long character prompts are where
         # latency budgets quietly go.
         assert len(load_prompt().split()) < 700
+
+    def test_says_when_to_call_a_tool_and_not_to_narrate_one(self) -> None:
+        # Stage 3: the tools array tells her what she can do; only the
+        # prompt tells her when, and that a call is not something to
+        # announce. "Let me check" spoken before every tool call is the
+        # narration the orchestrator cannot take back once it reached
+        # the voice, so the prompt has to name it as the wrong thing.
+        prompt = load_prompt().lower()
+        assert "tool" in prompt
+        assert "call" in prompt
+        assert "let me check" in prompt
+
+    def test_the_previous_prompt_is_kept_and_differs(self) -> None:
+        # PROMPT_VERSION is logged with every turn so a behaviour change
+        # can be traced to the prompt that produced it — which only
+        # works if the old prompt is still there to compare against.
+        previous = load_prompt("neiro.v4")
+        assert previous.strip()
+        assert previous != load_prompt()
+        assert prompt_fingerprint("neiro.v4") != prompt_fingerprint()
