@@ -23,7 +23,10 @@ confidently mistranscribes.
 2. Neiro resolves that index to a concrete value from its own table, so
    the value's provenance is Neiro, not the model. (hyprland.py)
 3. This filter validates the complete, final payload before it touches
-   the socket — a backstop for a bug in 1 or 2, not a substitute.
+   the socket: the dispatcher name against an allowlist of what Neiro's
+   tools actually generate, the argument table against a shape grammar,
+   and the whole string against a denylist of Lua escape hatches. A
+   backstop for a bug in 1 or 2, not a substitute.
 
 A payload reaching wall 3 and failing means something upstream is
 broken, so rejection is loud: it raises rather than sanitising. Silently
@@ -36,15 +39,17 @@ import re
 
 # Substrings that must never appear in a payload bound for the socket.
 # These are the Lua escape hatches plus the obvious shell routes. Matched
-# case-insensitively against the whole payload.
+# case-insensitively against the whole payload, values included, so the
+# error names the route that was attempted rather than just "bad name".
 FORBIDDEN = (
     "os.",  # os.execute, os.exit, os.remove...
     "io.",  # io.popen, io.open
     "eval",  # hyprctl eval — arbitrary Lua
     "repl",  # hyprctl repl — arbitrary Lua
     "plugin",  # hyprctl plugin load — loads native code into the compositor
-    "exec_cmd",  # runs sh -c
-    "exec_raw",
+    "exec",  # exec / exec_cmd / exec_raw — all spawn through sh -c
+    "spawn",  # a process by any other name
+    "exit",  # hl.dsp.exit ends the session; os.exit ends the compositor
     "load",  # load / loadstring / dofile
     "dofile",
     "require",
@@ -56,14 +61,29 @@ FORBIDDEN = (
     "metatable",
 )
 
+# The dispatchers Neiro's tools actually build. Exact, case-sensitive
+# names (Lua is case-sensitive, and the tools emit lowercase).
+#
+# Why a denylist is not enough on its own: the denylist above knows the
+# shell routes someone thought of. `killactive`, `forcekillactive` and
+# whatever the next Hyprland release adds are RED-tier actions (tiers.py)
+# that look exactly like legitimate traffic — `hl.dsp.killactive({})` is
+# a perfectly well-formed payload. Shape cannot tell them apart; only the
+# name can. So the name is pinned to what the code generates, and adding
+# one is a code change that arrives with a test, never a setting.
+# Deliberately NOT in config.py for that reason: a tunable allowlist is
+# a widenable one.
+ALLOWED_DISPATCHERS = frozenset({"focus"})
+
 # What a legitimate payload is allowed to look like. Deliberately an
 # allowlist: enumerating what's safe is tractable, enumerating every way
 # to smuggle Lua is not.
 #
 # Permits: hl.dsp.<name>({key=value, ...}) with values that are integers,
-# simple quoted strings of safe characters, or booleans.
+# simple quoted strings of safe characters, or booleans. The grammar only
+# captures <name>; check() judges it against ALLOWED_DISPATCHERS.
 _SAFE_PAYLOAD = re.compile(
-    r"""^hl\.dsp\.[a-z_.]+\(          # hl.dsp.focus(  /  hl.dsp.window.move(
+    r"""^hl\.dsp\.(?P<dispatcher>[a-z_.]+)\(   # hl.dsp.focus(
         \{                             # opening brace
         \s*
         (?:[a-z_]+\s*=\s*              # key =
@@ -104,11 +124,21 @@ def check(payload: str) -> str:
                 f"Payload: {payload!r}"
             )
 
-    if not _SAFE_PAYLOAD.match(payload.strip()):
+    match = _SAFE_PAYLOAD.match(payload.strip())
+    if not match:
         raise EgressRejected(
             f"payload does not match the allowed shape "
             f"hl.dsp.<name>({{key=value, ...}}) with integer, boolean, or "
             f"simple-quoted-string values. Payload: {payload!r}"
+        )
+
+    dispatcher = match.group("dispatcher")
+    if dispatcher not in ALLOWED_DISPATCHERS:
+        raise EgressRejected(
+            f"dispatcher {dispatcher!r} is not one Neiro's tools generate "
+            f"(allowed: {sorted(ALLOWED_DISPATCHERS)}). A well-formed payload "
+            f"naming an unlisted dispatcher is what a RED-tier action looks "
+            f"like from here. Payload: {payload!r}"
         )
 
     return payload

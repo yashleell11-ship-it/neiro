@@ -6,33 +6,92 @@ execute arbitrary Lua inside the Hyprland compositor on this machine,
 with `os.execute` in scope. They exist as tests so that if anyone ever
 "simplifies" the filter, the failure is a red test rather than a
 compositor-level code-execution hole.
+
+The dispatcher-name cases are the other half. `hl.dsp.exec({cmd="x"})`
+is a perfectly well-formed payload by shape, and `exec` runs through
+`sh -c`; the filter used to let it through. The name is now pinned to
+what Neiro's tools generate, so these pin that pin.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from neiro.tools.egress import EgressRejected, check
+from neiro.tools.egress import ALLOWED_DISPATCHERS, EgressRejected, check
 
 
 class TestAcceptsLegitimatePayloads:
+    """The value grammar. Every case uses `focus` because it is the only
+    dispatcher the tools build — these test the argument shapes, not the
+    semantics of a particular key on a particular dispatcher.
+    """
+
     def test_focus_workspace_by_number(self) -> None:
         assert check("hl.dsp.focus({workspace=2})")
 
     def test_focus_window_by_address(self) -> None:
         assert check('hl.dsp.focus({window="address:0x55d1a2b3c4"})')
 
-    def test_nested_dispatcher_name(self) -> None:
-        assert check("hl.dsp.window.move({workspace=3})")
-
     def test_multiple_keys(self) -> None:
         assert check('hl.dsp.focus({workspace=1, window="address:0xabc"})')
 
     def test_boolean_value(self) -> None:
-        assert check("hl.dsp.fullscreen({enable=true})")
+        assert check("hl.dsp.focus({floating=true})")
 
     def test_empty_table(self) -> None:
-        assert check("hl.dsp.killactive({})")
+        assert check("hl.dsp.focus({})")
+
+
+class TestRejectsUnlistedDispatchers:
+    """A well-formed payload naming a dispatcher the tools never build.
+
+    The shape grammar cannot tell `killactive({})` from `focus({})`, and
+    the substring denylist only knows the routes someone thought of. So
+    the name itself is checked against ALLOWED_DISPATCHERS, and a RED
+    action that arrives looking legitimate is still refused.
+    """
+
+    def test_allowlist_is_exactly_what_the_tools_generate(self) -> None:
+        # Growing this set is a code change with a test, not a setting.
+        # If a new tool legitimately needs another dispatcher, add it
+        # here AND in TestGeneratedPayloadsSurviveEgress (test_hyprland).
+        assert ALLOWED_DISPATCHERS == frozenset({"focus"})
+
+    @pytest.mark.parametrize(
+        ("payload", "route"),
+        [
+            ('hl.dsp.exec({cmd="poweroff"})', "exec"),
+            ('hl.dsp.exec({a="systemctl poweroff"})', "exec"),
+            ('hl.dsp.exec({a="sh -c curl"})', "exec"),
+            ('hl.dsp.spawn({cmd="xterm"})', "spawn"),
+            ("hl.dsp.exit({})", "exit"),
+        ],
+    )
+    def test_shell_and_session_dispatchers_are_named_in_the_rejection(
+        self, payload: str, route: str
+    ) -> None:
+        # These three are the most direct route from a dispatch to a
+        # shell (or to a dead session). They are on the denylist as well
+        # as off the allowlist, so the error names the route.
+        with pytest.raises(EgressRejected, match=route):
+            check(payload)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "hl.dsp.killactive({})",  # RED in tiers.py; used to be accepted
+            "hl.dsp.forcekillactive({})",
+            "hl.dsp.window.move({workspace=3})",  # nested names are not a bypass
+            "hl.dsp.fullscreen({enable=true})",
+            "hl.dsp.focus_({workspace=1})",  # a near-miss is still a miss
+            "hl.dsp.Focus({workspace=1})",  # Lua is case-sensitive; so is this
+        ],
+    )
+    def test_well_formed_but_unlisted_is_rejected_by_name(self, payload: str) -> None:
+        # Nothing here is on the denylist, so only the allowlist can be
+        # what refuses it — `match` pins that it was.
+        with pytest.raises(EgressRejected, match="dispatcher"):
+            check(payload)
 
 
 class TestProvenInjectionPayloads:
