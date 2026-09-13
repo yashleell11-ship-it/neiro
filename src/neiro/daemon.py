@@ -69,6 +69,14 @@ class Daemon:
         self.orchestrator: Orchestrator | None = None
         self.affect = None
         self._lock = asyncio.Lock()
+        # Two turns can exist at once, and they are never the same
+        # variable: `_pending` is the utterance HE is making (speech-start
+        # to endpoint, while affect watches), `_live` is the turn SHE is
+        # answering (inside `run()`). Barge-in cancels `_live` and nothing
+        # else. One field for both made `handle()` cancel the very turn
+        # it was about to run — every turn with a speaking phase came
+        # back empty and `cancelled`, and no test noticed.
+        self._pending: Turn | None = None
         self._live: Turn | None = None
         self.errors = ErrorSpeech()
 
@@ -133,17 +141,15 @@ class Daemon:
 
     def begin_utterance(self) -> Turn:
         """He has started speaking. Creates the Turn that `observe()`
-        will fill and `handle()` will run.
+        fills and `handle()` runs at the endpoint.
 
-        This exists because `_live` used to be assigned `None` and
-        nothing else, which made `interrupt()` and `observe()` both
-        permanently dead branches — barge-in could not reach a turn and
-        the prosody annotation never left the provider. Found by review;
-        every test passed throughout, because they set `_live` by hand.
+        Separate from `handle()` because affect observes a rolling
+        window *while he is still speaking*; the Turn has to exist then
+        or the reading has nowhere to go.
         """
         assert self.orchestrator is not None, "call build() first"
-        self._live = self.orchestrator.begin_turn()
-        return self._live
+        self._pending = self.orchestrator.begin_turn()
+        return self._pending
 
     async def observe(self, window: np.ndarray) -> str | None:
         """Feed the affect provider a rolling window while he speaks.
@@ -153,37 +159,42 @@ class Daemon:
         """
         if self.orchestrator is None:
             return None
-        turn = self._live or self.begin_utterance()
+        turn = self._pending or self.begin_utterance()
         affect = await self.orchestrator.observe_while_speaking(turn, window)
         return describe(affect, self.cfg)
 
     async def handle(self, audio: np.ndarray, annotation: str | None = None) -> TurnResult:
         """One utterance. Barge-in cancels the turn in flight first."""
         assert self.orchestrator is not None, "call build() first"
+        # Claim his turn before waiting for the lock: windows keep
+        # arriving while the cancelled turn gets out of the way, and the
+        # utterance AFTER this one must not be what runs on this audio.
+        turn = self._pending or self.orchestrator.begin_turn()
+        self._pending = None
         await self.interrupt()
         async with self._lock:
-            turn = self._live or self.orchestrator.begin_turn()
             self._live = turn
             try:
                 result = await self.orchestrator.run(audio, annotation, turn=turn)
             finally:
-                # Cleared in a `finally` so a failed turn cannot leave a
-                # stale Turn that the next barge-in would cancel instead
-                # of the real one.
+                # Cleared in a `finally` so a turn torn down mid-flight
+                # cannot leave a stale Turn that the next barge-in would
+                # cancel instead of the real one.
                 self._live = None
         return result
 
     async def interrupt(self) -> bool:
         """Barge-in. Returns True if a turn was actually cancelled.
 
-        Reads the turn the daemon published at speech-start, or the one
-        the orchestrator has in flight — whichever exists.
+        Only the turn in flight — the one she is answering. The
+        utterance he is in the middle of is not something to interrupt;
+        nothing is playing.
 
         Setting the event is enough: every stage checks it at its awaits,
         which is why it had to exist from the first line rather than be
         added when barge-in landed.
         """
-        turn = self._live or (self.orchestrator.live if self.orchestrator else None)
+        turn = self._live
         if turn is None or turn.cancel.is_set():
             return False
         turn.cancel.set()
