@@ -19,6 +19,9 @@ dependencies = [
     "soundfile>=0.14.0",
     "onnxruntime>=1.30.0",
     "librosa>=1.0.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.4",
+    "websockets>=17.1",
 ]
 
 [project.scripts]
