@@ -21,6 +21,11 @@ affect WAV:
 say TEXT:
     uv run neiro say "{{TEXT}}"
 
+# The whole loop: SPACE, speak, SPACE, hear her. SPACE while she speaks interrupts.
+talk:
+    #!/usr/bin/env bash
+    source env.sh && uv run neiro talk
+
 # --- data -------------------------------------------------------------
 
 fetch-models:
