@@ -162,6 +162,15 @@ class TestLlm:
         assert not row.ok
         assert "think: false" in row.remedy and "--reasoning-budget 0" in row.remedy
 
+    def test_a_reasoning_field_fails_even_with_content_present(self) -> None:
+        # The same signature with words alongside it. Empty content is
+        # caught by the no-content branch anyway; this is the probe that
+        # only the reasoning field can fail.
+        row = check_llm(LlmProbe("llama-server", "m", content="Hello", reasoning="Okay"), self.BASE)
+        assert not row.ok
+        assert "reasoning" in row.detail
+        assert "think: false" in row.remedy and "--reasoning-budget 0" in row.remedy
+
     def test_an_inline_think_opener_fails(self) -> None:
         row = check_llm(LlmProbe("llama-server", "m", content="<think>\nhmm"), self.BASE)
         assert not row.ok
