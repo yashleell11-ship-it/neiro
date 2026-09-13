@@ -14,18 +14,19 @@ import pytest
 from neiro.state import EmotionLabel, Locality, NeiroState, Tier
 from neiro.tts.chatterbox import ChatterboxTts, ChatterboxUnavailable
 from neiro.tts.kokoro import KokoroTts
+from neiro.tts.qwen3tts import Qwen3Tts, Qwen3TtsUnavailable
 
 HAPPY = NeiroState.from_label(EmotionLabel.HAPPY, 0.8)
 
 
 class TestInterchangeable:
-    @pytest.mark.parametrize("cls", [KokoroTts, ChatterboxTts])
+    @pytest.mark.parametrize("cls", [KokoroTts, ChatterboxTts, Qwen3Tts])
     def test_both_present_the_same_surface(self, cls) -> None:
         # G5 swaps the voice by changing one line, or the Protocol failed.
         for name in ("synth", "warm", "locality"):
             assert hasattr(cls, name), f"{cls.__name__}.{name}"
 
-    @pytest.mark.parametrize("cls", [KokoroTts, ChatterboxTts])
+    @pytest.mark.parametrize("cls", [KokoroTts, ChatterboxTts, Qwen3Tts])
     def test_both_are_local_pinned(self, cls) -> None:
         # Audio bytes are the one thing not worth sending over a link.
         assert cls.locality is Locality.LOCAL_PINNED
@@ -97,3 +98,38 @@ class TestNoAccidentalDownload:
         # to pay the loading cost, in warm-up order.
         assert KokoroTts()._pipeline is None
         assert ChatterboxTts()._model is None
+
+
+class TestQwen3Tts:
+    """Gate G5's primary candidate — the reason G5 exists at all."""
+
+    def test_missing_weights_say_how_to_fetch_them(self, tmp_path: Path) -> None:
+        with pytest.raises(Qwen3TtsUnavailable, match="fetch-models"):
+            Qwen3Tts(model_dir=tmp_path / "nope").load()
+
+    def test_the_missing_package_explains_the_venv_rule(self, tmp_path: Path) -> None:
+        weights = tmp_path / "qwen3"
+        weights.mkdir()
+        with pytest.raises(Qwen3TtsUnavailable, match="CUDA runtime"):
+            Qwen3Tts(model_dir=weights).load()
+
+    def test_the_instruction_is_separate_from_the_text(self) -> None:
+        # A TTS reading its own stage direction aloud is a specific,
+        # embarrassing failure. They are distinct arguments, never
+        # concatenated.
+        import inspect
+
+        source = inspect.getsource(Qwen3Tts.synth)
+        assert "instruct=instruct" in source
+        assert "text=text" in source
+        assert "text + instruct" not in source
+
+    def test_the_voice_identity_is_a_named_constant(self) -> None:
+        # A one-way door: once she has a voice, changing it makes her a
+        # different character. G5 freezes it as a versioned asset.
+        from neiro.tts.qwen3tts import DEFAULT_SPEAKER
+
+        assert DEFAULT_SPEAKER
+
+    def test_it_is_not_loaded_at_construction(self) -> None:
+        assert Qwen3Tts()._model is None
