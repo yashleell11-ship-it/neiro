@@ -31,8 +31,8 @@ class Tier(StrEnum):
     RED = "red"
     """Never reachable by voice at any confidence. Not merely gated —
     these are not registered as tools at all, so the model cannot even
-    express them, and the egress filter rejects their substrings as a
-    second wall.
+    express them, and the egress filter refuses any dispatcher name
+    outside the few the tools generate, as a second wall.
 
     Deleting or overwriting anything, sudo, `hyprctl eval/repl/plugin`,
     any shell, killing windows or processes, clipboard reads (a one-call

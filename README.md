@@ -88,6 +88,7 @@ uv sync
 source env.sh                     # ctranslate2 needs cuBLAS on the path BEFORE python starts
 uv run neiro doctor               # checks every assumption, names the fix for each failure
 uv run neiro fetch-models --runs local --dry-run
+uv run neiro talk                 # SPACE, speak, SPACE, hear her; SPACE while she speaks interrupts her
 ```
 
 `neiro affect <wav>` shows the whole emotional loop for one recording without a mic, a
