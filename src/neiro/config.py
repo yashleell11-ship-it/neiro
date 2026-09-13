@@ -120,6 +120,32 @@ class AffectConfig(BaseModel):
     max_abs_z: float = 6.0  # clamp; beyond this the feature is broken, not expressive
 
 
+class ExpressionConfig(BaseModel):
+    """How her face moves. Every number here is visible to a human eye —
+    these are the difference between "alive" and "a mask that snaps".
+    """
+
+    # Asymmetric on purpose: expressions arrive faster than they leave.
+    # A face that fades in and out at the same rate reads as mechanical;
+    # real faces light up quickly and settle slowly.
+    tau_rise_s: float = 0.12
+    tau_fall_s: float = 0.30
+
+    # Surprise is physiologically brief. Held much past a second it stops
+    # reading as surprise and starts reading as a stare.
+    surprised_hold_s: float = 0.9
+    surprised_decay_s: float = 0.6
+
+    # VRM expression weights are additive on the same mesh; letting them
+    # sum past 1 produces geometry that looks broken rather than
+    # expressive. Scaled down together, so the mix is preserved.
+    max_total_weight: float = 1.0
+
+    # Below this a weight is treated as zero — stops a long exponential
+    # tail leaving 0.003 of "angry" on her face all evening.
+    epsilon: float = 0.01
+
+
 class Neiro(BaseSettings):
     model_config = SettingsConfigDict(
         toml_file="~/.config/neiro/config.toml",
@@ -131,6 +157,7 @@ class Neiro(BaseSettings):
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     affect: AffectConfig = Field(default_factory=AffectConfig)
+    expression: ExpressionConfig = Field(default_factory=ExpressionConfig)
 
     @classmethod
     def settings_customise_sources(
