@@ -1,0 +1,24 @@
+{
+ "corpora": [
+  "crema-d",
+  "ravdess",
+  "rasa"
+ ],
+ "speakers_scored": 115,
+ "arousal_auc_per_speaker_mean": 0.8423,
+ "arousal_auc_per_speaker_median": 0.8559,
+ "arousal_auc_worst_speaker": 0.6203,
+ "arousal_auc_best_speaker": 0.9974,
+ "valence_auc_per_speaker_mean": 0.5465,
+ "arousal_auc_pooled": 0.8179,
+ "mean_arousal_z_by_label": {
+  "anger": 3.41,
+  "surprise": 3.289,
+  "happy": 2.466,
+  "fear": 1.464,
+  "disgust": 0.572,
+  "sad": -0.493,
+  "calm": -0.669
+ },
+ "note": "Acted speech. This rehearses gate G3b's method; G3b itself is measured on Yash's own voice and device, where the GO threshold (>0.80) applies."
+}

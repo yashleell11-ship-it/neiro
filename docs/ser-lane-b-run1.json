@@ -1,0 +1,75 @@
+{
+ "test": {
+  "n": 2876,
+  "ccc_valence": 0.2884,
+  "ccc_arousal": 0.4612,
+  "arousal_auc": 0.8461,
+  "valence_auc": 0.6165,
+  "pred_std_arousal": 0.3937
+ },
+ "by_corpus": {
+  "crema-d": {
+   "n": 814,
+   "ccc_valence": 0.5881,
+   "ccc_arousal": 0.6397,
+   "arousal_auc": 0.8529,
+   "valence_auc": 0.8717,
+   "pred_std_arousal": 0.4247
+  },
+  "rasa": {
+   "n": 1942,
+   "ccc_valence": 0.147,
+   "ccc_arousal": 0.3516,
+   "arousal_auc": 0.8307,
+   "valence_auc": 0.5838,
+   "pred_std_arousal": 0.3706
+  },
+  "ravdess": {
+   "n": 120,
+   "ccc_valence": 0.3402,
+   "ccc_arousal": 0.7133,
+   "arousal_auc": 0.9047,
+   "valence_auc": 0.7277,
+   "pred_std_arousal": 0.4883
+  }
+ },
+ "split_speakers": {
+  "train": 87,
+  "val": 17,
+  "test": 13
+ },
+ "by_speech_kind": {
+  "acted": {
+   "n": 2876,
+   "ccc_valence": 0.2884,
+   "ccc_arousal": 0.4612,
+   "arousal_auc": 0.8461,
+   "valence_auc": 0.6165,
+   "pred_std_arousal": 0.3937
+  }
+ },
+ "corpora": {
+  "crema-d": 7441,
+  "rasa": 4541,
+  "ravdess": 1440
+ },
+ "best_val_ccc_arousal": 0.6298,
+ "config": {
+  "corpora": [
+   "crema-d",
+   "ravdess",
+   "rasa"
+  ],
+  "epochs": 3,
+  "batch": 8,
+  "lr": 0.0001,
+  "seconds": 4.0,
+  "unfreeze": 4,
+  "arousal_boundary": 0.0,
+  "valence_boundary": 0.0,
+  "encoder": "/home/yash/code/neiro/models/w2v-bert-2.0",
+  "out": "../models/ser-lane-b/run1",
+  "dry_run": false,
+  "workers": 4
+ }
+}
