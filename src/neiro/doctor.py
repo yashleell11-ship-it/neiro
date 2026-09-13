@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -107,6 +108,146 @@ def audio_inventory() -> int:
     return 0
 
 
+def _check_cublas() -> Check:
+    """ctranslate2 finds cuBLAS only if LD_LIBRARY_PATH was set BEFORE
+    the process started. Setting it from inside Python does not work —
+    tested directly, see docs/DECISIONS.md 2026-09-11. This check exists
+    because the failure otherwise surfaces as a bare RuntimeError at the
+    first transcription, minutes into a session.
+    """
+    import os
+
+    path = os.environ.get("LD_LIBRARY_PATH", "")
+    ok = "cublas" in path.lower() or "nvidia" in path.lower()
+    return Check(
+        "cuBLAS on LD_LIBRARY_PATH",
+        ok,
+        "set" if ok else "not set",
+        remedy=None
+        if ok
+        else "source env.sh  (must be BEFORE python starts; setting it inside python does not work)",
+    )
+
+
+def _check_no_cuda_torch() -> Check:
+    """The runtime venv must have CPU torch or none at all.
+
+    A CUDA torch here means two CUDA runtimes in one process alongside
+    ctranslate2's cuBLAS 12, which is the Gate G1 failure returning.
+    Training has its own venv for exactly this reason.
+    """
+    try:
+        import torch
+
+        version = torch.__version__
+        ok = "+cpu" in version
+        detail = version
+    except ImportError:
+        return Check("runtime torch is CPU-only", True, "torch not installed (fine)")
+    return Check(
+        "runtime torch is CPU-only",
+        ok,
+        detail,
+        remedy=None
+        if ok
+        else "uv sync — the runtime must not hold a CUDA torch; training/ has its own",
+    )
+
+
+def _check_models() -> Check:
+    """Are the local-tier models actually on disk?"""
+    from neiro.modelspec import select
+
+    root = Path(__file__).resolve().parents[2] / "models"
+    wanted = select(purpose="runtime", runs="local")
+    missing = [m.name for m in wanted if not (root / m.name / ".neiro-complete").exists()]
+    return Check(
+        "local-tier models present",
+        not missing,
+        f"{len(wanted) - len(missing)}/{len(wanted)}"
+        + (f" missing: {', '.join(missing)}" if missing else ""),
+        remedy=None if not missing else "uv run neiro fetch-models --runs local --purpose runtime",
+    )
+
+
+def _check_vad_frame_size() -> Check:
+    """Silero v5 accepts ONLY 512 samples at 16 kHz and returns
+    plausible nonsense for anything else, silently.
+    """
+    from neiro.config import Neiro
+
+    try:
+        size = Neiro().vad.frame_samples
+    except Exception:  # noqa: BLE001
+        return Check(
+            "VAD frame size is 512",
+            False,
+            "config unreadable",
+            remedy="check ~/.config/neiro/config.toml",
+        )
+    ok = size == 512
+    return Check(
+        "VAD frame size is 512",
+        ok,
+        f"{size} samples",
+        remedy=None
+        if ok
+        else "Silero v5 returns plausible nonsense at any other size — set vad.frame_samples = 512",
+    )
+
+
+def _check_prompt() -> Check:
+    """A missing character prompt makes her a chatbot with a face."""
+    try:
+        from neiro.llm.prompt import PROMPT_VERSION, load_prompt, prompt_fingerprint
+
+        words = len(load_prompt().split())
+        ok = 0 < words < 700
+        return Check(
+            "character prompt loads",
+            ok,
+            f"{PROMPT_VERSION} ({words} words, {prompt_fingerprint()})",
+            remedy=None
+            if ok
+            else "the prompt is over its prefill budget — every word is paid on each cache miss",
+        )
+    except FileNotFoundError as exc:
+        return Check("character prompt loads", False, str(exc)[:60], remedy="prompts/ is missing")
+
+
+# Audio may be committed ONLY from these paths, and only when it is
+# synthetic or CC0 — a generated tone for a JIT benchmark, a licensed
+# clip pinned to a regression. Everything else is somebody's voice.
+AUDIO_FIXTURE_ROOTS = ("tests/audio/fixtures/", "scripts/fixtures/")
+
+
+def _check_no_voice_in_git() -> Check:
+    """CLAUDE.md rule 7: no raw voice audio in git, ever. It is
+    biometric, and a public repo is forever.
+
+    Not "no .wav files" — the first version of this check said that and
+    flagged `scripts/fixtures/tone_3s.wav`, a synthetic sine used to
+    measure ctranslate2's JIT stall in Gate G1. A check that cries wolf
+    over a generated tone is a check people learn to ignore, which is
+    worse than not having it. So: anything under `data/voice/` is always
+    a violation, and audio elsewhere is a violation unless it sits in an
+    allowlisted fixture directory.
+    """
+    tracked = _run(["git", "ls-files", "*.wav", "*.flac", "*.mp3", "*.ogg"])
+    files = [line.strip() for line in tracked.splitlines() if line.strip()]
+    offenders = [
+        f for f in files if f.startswith("data/voice/") or not f.startswith(AUDIO_FIXTURE_ROOTS)
+    ]
+    return Check(
+        "no voice audio tracked by git",
+        not offenders,
+        "clean" if not offenders else f"{len(offenders)} tracked: {offenders[0]}",
+        remedy=None
+        if not offenders
+        else "git rm --cached those files — voice is biometric and a public repo is forever",
+    )
+
+
 def run_doctor(audio_inventory_only: bool = False) -> int:
     if audio_inventory_only:
         return audio_inventory()
@@ -168,6 +309,18 @@ def run_doctor(audio_inventory_only: bool = False) -> int:
             remedy=None if not source_muted else "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0",
         )
     )
+
+    # --- everything the day's measurements established ------------------
+    # Each of these corresponds to a failure that actually happened here,
+    # and each names the fix rather than the symptom. "It doesn't work"
+    # is the least useful sentence in software.
+
+    checks.append(_check_cublas())
+    checks.append(_check_no_cuda_torch())
+    checks.append(_check_models())
+    checks.append(_check_vad_frame_size())
+    checks.append(_check_prompt())
+    checks.append(_check_no_voice_in_git())
 
     table = Table(title="neiro doctor")
     table.add_column("check")
