@@ -17,16 +17,27 @@ rather than hidden in someone else's defaults.
 from __future__ import annotations
 
 import json
-import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-# Strip anything that isn't a letter, digit, or apostrophe. Apostrophes
-# stay because "don't" vs "dont" is a real difference in a transcript,
-# and collapsing it would flatter the model.
-_PUNCT = re.compile(r"[^\w'\s]", flags=re.UNICODE)
-_WS = re.compile(r"\s+")
+# What survives normalisation, by Unicode general category: letters,
+# combining marks, numbers — plus the apostrophe, because "don't" vs
+# "dont" is a real difference in a transcript and collapsing it would
+# flatter the model. Everything else is a word boundary.
+#
+# Categories rather than `\w`, and this is the whole reason: `\w` is
+# `str.isalnum()`, and a Devanagari vowel sign is not alphanumeric. Under
+# the old regex "मेरे" came out as "म र" and "क़िला" as "क ल" — every
+# matra and every nukta stripped, every Hindi word broken into consonant
+# fragments, and a perfect Hindi transcript did not score zero. Nothing
+# in English ever exercised that path, so nothing noticed.
+_KEEP = frozenset("LMN")  # first letter of the general category
+# ZWJ / ZWNJ shape how a conjunct renders; they are not sounds. Removed
+# rather than spaced, so "रेल‌वे" stays one word instead of becoming two
+# errors.
+_DROP = "Cf"
+_APOSTROPHE = "'"
 
 
 def normalize(text: str) -> list[str]:
@@ -34,14 +45,37 @@ def normalize(text: str) -> list[str]:
 
     Deliberately simple and deliberately visible. Two things it does NOT
     do, both of which would quietly lower the reported WER: expand
-    numerals ("20" vs "twenty" stays an error) and expand contractions.
-    A number that flatters the model is worse than no number.
+    numerals ("20" vs "twenty" stays an error, and so does "२०" vs "बीस")
+    and expand contractions. A number that flatters the model is worse
+    than no number.
+
+    A third thing it does not do, for Hindi: **transliterate**. A
+    reference in Devanagari against a hypothesis in Latin script scores
+    as every word wrong, and that is the correct score — the recogniser
+    was asked what was said and answered in the wrong script, which is
+    precisely the failure a Hindi speaker hits. Mapping "मैं" onto "main"
+    to forgive it would report a Hindi WER that nobody experiences.
+    Hinglish written in Latin script is scored as the Latin words it is.
+
+    NFC, not NFKC: canonical composition makes the two spellings of a
+    nukta letter (precomposed U+0958, or क followed by U+093C) compare
+    equal, and puts a nukta and a virama into canonical order when an
+    input method stacked them the other way round — encoding, not an
+    error. Compatibility folding buys nothing for a transcript.
+    Punctuation goes by category, so the danda (।), the double danda
+    (॥) and the abbreviation sign (॰) are stripped exactly as ASCII
+    punctuation is, while every matra, nukta, anusvara and candrabindu
+    stays attached to its word.
     """
-    text = unicodedata.normalize("NFKC", text)
-    text = text.lower()
-    text = _PUNCT.sub(" ", text)
-    text = _WS.sub(" ", text).strip()
-    return text.split() if text else []
+    text = unicodedata.normalize("NFC", text).lower()
+    kept: list[str] = []
+    for ch in text:
+        category = unicodedata.category(ch)
+        if category[0] in _KEEP or ch == _APOSTROPHE:
+            kept.append(ch)
+        elif category != _DROP:
+            kept.append(" ")
+    return "".join(kept).split()
 
 
 def edit_distance(ref: list[str], hyp: list[str]) -> int:

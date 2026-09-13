@@ -41,6 +41,74 @@ class TestNormalize:
         assert normalize("set it to 20") == ["set", "it", "to", "20"]
 
 
+class TestDevanagari:
+    """Hindi is scored on the same terms as English, and this is where
+    that claim is checked. Until 2026-09-14 the normaliser stripped
+    every matra and nukta (see the comment above `_KEEP` in wer.py), so
+    any Hindi WER it produced was a number about consonant fragments.
+    """
+
+    def test_matras_and_conjuncts_stay_attached_to_their_word(self) -> None:
+        assert normalize("मेरे नाम यश है।") == ["मेरे", "नाम", "यश", "है"]
+
+    def test_a_perfect_hindi_transcript_scores_zero(self) -> None:
+        assert wer("मेरे नाम यश है।", "मेरे नाम यश है") == 0.0
+
+    def test_danda_double_danda_and_abbreviation_sign_are_punctuation(self) -> None:
+        assert normalize("राम॥ श्री॰ राम। ठीक है?") == ["राम", "श्री", "राम", "ठीक", "है"]
+
+    def test_nukta_is_a_real_difference(self) -> None:
+        # क़िला (qila) against किला (kila): the nukta changes the consonant,
+        # and a normaliser that dropped it would call the two equal.
+        assert wer("क़िला", "किला") == pytest.approx(1.0)
+
+    def test_precomposed_and_decomposed_nukta_are_one_spelling(self) -> None:
+        # U+0958 versus U+0915 U+093C — two encodings of the same word.
+        assert wer("क़िला", "क़िला") == 0.0
+
+    def test_candrabindu_and_anusvara_stay_on_the_word(self) -> None:
+        assert normalize("हूँ हूं") == ["हूँ", "हूं"]
+
+    def test_zero_width_joiners_do_not_split_a_word(self) -> None:
+        assert normalize("रेल‌वे") == ["रेलवे"]
+        assert wer("रेलवे", "रेल‌वे") == 0.0
+
+    def test_devanagari_digits_are_not_expanded(self) -> None:
+        # Same policy as "20" vs "twenty": a number that flatters the
+        # model is worse than no number.
+        assert normalize("२० मिनट") == ["२०", "मिनट"]
+        assert wer("२० मिनट", "बीस मिनट") == pytest.approx(0.5)
+
+    def test_code_switching_keeps_both_scripts(self) -> None:
+        assert normalize("Neiro, गाना play करो!") == ["neiro", "गाना", "play", "करो"]
+
+    def test_reference_word_count_is_words_not_fragments(self) -> None:
+        # The denominator of a corpus WER. Fragmenting the reference
+        # inflated it, which made every error look smaller than it was.
+        result = score([("a", "मेरे नाम यश है", "मेरे नाम यश है")])
+        assert result.total_ref_words == 4
+        assert result.total_errors == 0
+
+
+class TestNoTransliteration:
+    def test_latin_script_hindi_against_devanagari_is_every_word_wrong(self) -> None:
+        # The recogniser answered in the wrong script. That is the
+        # failure a Hindi speaker actually hits, and it scores as one.
+        assert wer("मैं ठीक हूँ", "main theek hoon") == pytest.approx(1.0)
+
+    def test_hinglish_is_scored_as_the_latin_words_it_is(self) -> None:
+        assert normalize("Yaar, kal ka plan kya hai?") == [
+            "yaar",
+            "kal",
+            "ka",
+            "plan",
+            "kya",
+            "hai",
+        ]
+        assert wer("yaar kal ka plan kya hai", "Yaar, kal ka plan kya hai?") == 0.0
+        assert wer("yaar kal ka plan kya hai", "yaar kal ka plan kya tha") == pytest.approx(1 / 6)
+
+
 class TestEditDistance:
     def test_identical_is_zero(self) -> None:
         assert edit_distance(["a", "b", "c"], ["a", "b", "c"]) == 0
