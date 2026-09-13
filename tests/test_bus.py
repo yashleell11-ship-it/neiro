@@ -120,3 +120,49 @@ class TestBargeIn:
             return bus.depth_now, bus.full
 
         assert asyncio.run(go()) == (2, True)
+
+
+class TestCloseNeverBlocks:
+    def test_close_on_a_full_bus_returns_immediately(self) -> None:
+        # The orchestrator's producer had exactly this shape — a `finally`
+        # parking on `put(None)` into a full queue nobody would drain —
+        # and it held the daemon's turn lock for the life of the process.
+        async def go() -> list[int]:
+            bus: Bus[int] = Bus(depth=1)
+            await bus.put(1)
+            await asyncio.wait_for(bus.close(), timeout=0.2)
+            return [item async for item in bus]
+
+        assert asyncio.run(go()) == [1]
+
+    def test_a_consumer_parked_on_an_empty_bus_wakes_on_close(self) -> None:
+        async def go() -> list[int]:
+            bus: Bus[int] = Bus(depth=1)
+
+            async def consume() -> list[int]:
+                return [item async for item in bus]
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0)  # let it park on get()
+            await bus.close()
+            return await asyncio.wait_for(task, timeout=0.2)
+
+        assert asyncio.run(go()) == []
+
+    def test_clear_after_close_still_ends_the_stream(self) -> None:
+        # Barge-in drops the queued reply; if that also dropped the
+        # end-of-stream mark, the consumer would wait forever.
+        async def go() -> list[int]:
+            bus: Bus[int] = Bus(depth=2)
+            await bus.put(1)
+            await bus.close()
+
+            async def consume() -> list[int]:
+                return [item async for item in bus]
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0)
+            bus.clear()
+            return await asyncio.wait_for(task, timeout=0.2)
+
+        assert asyncio.run(go()) in ([], [1])

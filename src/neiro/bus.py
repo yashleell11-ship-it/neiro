@@ -55,10 +55,22 @@ class Bus[T]:
     async def close(self) -> None:
         """Signal end-of-stream. Idempotent, so a `finally` can call it
         without checking — which is exactly where it belongs.
+
+        Never blocks. The orchestrator's producer once had exactly the
+        blocking shape (`await queue.put(None)` in a `finally`, into a
+        full queue whose consumer had been cancelled) and it held the
+        daemon's turn lock for the life of the process. If the queue is
+        full the sentinel is simply not queued: `put` refuses new items
+        after close, so the consumer can treat "closed and empty" as
+        end-of-stream once it has drained what is there.
         """
-        if not self._closed:
-            self._closed = True
-            await self._queue.put(_DONE)
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._queue.put_nowait(_DONE)
+        except asyncio.QueueFull:
+            pass
 
     def clear(self) -> int:
         """Drop everything queued. Returns how many were dropped.
@@ -70,15 +82,22 @@ class Bus[T]:
         dropped = 0
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                if self._queue.get_nowait() is _DONE:
+                    continue  # the sentinel is not part of the reply
                 dropped += 1
             except asyncio.QueueEmpty:  # pragma: no cover
                 break
+        if self._closed:
+            # A consumer parked on `get()` must still be woken; the
+            # queue is empty now, so this cannot raise.
+            self._queue.put_nowait(_DONE)
         return dropped
 
     async def __aiter__(self):
         """Consume until the producer closes."""
         while True:
+            if self._closed and self._queue.empty():
+                return
             item = await self._queue.get()
             if item is _DONE:
                 return
