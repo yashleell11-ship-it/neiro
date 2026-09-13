@@ -684,13 +684,22 @@ class TestGoEmotions:
                     "labels": [names.index("joy"), names.index("sadness")],
                     "id": "d",
                 },
+                # The raters said something (desire, or the far more common
+                # approval) and it has no home on the tag: that is not
+                # neutral, it is a row without a label. `Ok.` above is
+                # neutral only because the raters also said `neutral`.
+                {"text": "I wish.", "labels": [names.index("desire")], "id": "e"},
+                {"text": "Sure, go ahead.", "labels": [names.index("approval")], "id": "f"},
             ],
         )
         recs = list(read_goemotions(tmp_path))
         assert [(r.messages[0]["content"], r.messages[1]["content"]) for r in recs] == [
             ("That worked!", "happy"),
             ("Ok.", "neutral"),
-        ], "fear has no home on the tag and joy+sadness is ambiguous: both dropped"
+        ], (
+            "fear has no home on the tag, joy+sadness is ambiguous, and desire or approval "
+            "alone is no label at all: all four dropped; `neutral` only ever comes from the raters"
+        )
         assert all(r.kind == "emotion_text" and r.lang == "en" for r in recs)
         assert all(r.messages[1]["content"] in TAG_LABELS for r in recs)
 

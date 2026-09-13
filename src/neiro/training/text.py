@@ -877,17 +877,23 @@ def _tag_label(
     names: Iterable[str], mapping: dict[str, str], ignored: frozenset[str]
 ) -> str | None:
     """One of TAG_LABELS, or None when the row is ambiguous or homeless.
-    No labels at all is `neutral` — BRIGHTER's convention, and the only
-    honest reading of "the raters marked nothing".
+
+    An *empty* label list is `neutral` — BRIGHTER's convention, and the
+    only honest reading of "the raters marked nothing". A list that is
+    all ignored labels is not that: the raters marked `desire` or
+    `confusion`, which is a feeling with no home on her tag, and filing
+    it as neutral would be a label nobody gave. 9,707 GoEmotions rows
+    are dropped here for exactly that reason.
     """
+    names = list(names)
+    if not names:
+        return "neutral"
     homes: set[str] = set()
     for n in names:
         if n in mapping:
             homes.add(mapping[n])
         elif n not in ignored:
             return None
-    if not homes:
-        return "neutral"
     return homes.pop() if len(homes) == 1 else None
 
 
