@@ -579,19 +579,6 @@ weights_publishable = "unclear"
 note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, so snapshot_download gets no data. It needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo -- a decision for a person, not a fetch script, in a project whose threat model is about exactly that. Marked unavailable until a parquet mirror is found or the risk is accepted deliberately. Permissive multi-speaker studio corpus (48 kHz, ~400 sentences per speaker, age/gender/accent metadata) with many female speakers in their early 20s - the right place to pick a consistent, publishable young female base voice for the Chatterbox/Qwen3-TTS fine-tune; also contains a few South-Asian-..."
 
 [[dataset]]
-name = "jenny-tts-dataset"
-target = "tts_voice"
-priority = 1
-hf_id = "reach-vb/jenny_tts_dataset"
-license = "Custom attribution licence stated in the card: 'Attribution is requ..."
-flags = ["permissive"]
-access = "direct"
-size_gb = 3.74
-hours = 30.0
-weights_publishable = "yes"
-note = "30 h / 20,978 clips of ONE young-adult female voice (Irish English) at 48 kHz with commercial use allowed - the largest single-speaker permissive corpus for building a consistent assistant voice, and the text mix (headlines, Wikipedia, recipes, social comments, TV transcripts) is close to what Ne..."
-
-[[dataset]]
 name = "esd-emotional-speech-database"
 target = "tts_voice"
 priority = 2
@@ -607,7 +594,7 @@ note = "The cleanest emotion-labelled English TTS corpus: 10 native English spea
 [[dataset]]
 name = "expresso"
 target = "tts_voice"
-priority = 3
+priority = 2
 hf_id = "ylacombe/expresso"
 license = "CC BY-NC 4.0"
 flags = ["NC"]
@@ -997,3 +984,16 @@ size_gb = 0.14
 hours = 0.0
 weights_publishable = "yes"
 note = "181,463 instances across six configs, verified to the row: LID 35,487, MLI 31,225, MT 29,692, POS 30,599, NER 24,913, TN 29,547 — every count in the proposal is exact. The MT config gives Hinglish <-> Hindi/English pairs, and TN (transliteration/normalisation) directly helps her cope with the spe..."
+
+[[dataset]]
+name = "ljspeech"
+target = "tts_voice"
+priority = 1
+hf_id = "keithito/lj_speech"
+license = "public domain (keithito.com: 'no restrictions on its use'); HF tag: unlicense"
+flags = ["permissive"]
+access = "direct"
+size_gb = 2.6
+hours = 23.9
+weights_publishable = "yes"
+note = "HER VOICE BASE. The only corpus that is single-speaker AND verified American AND 20+ h AND public domain at once -- 13,100 clips from one woman (Linda Johnson), 22.05 kHz. Flat, no emotion labels: expression comes from Qwen3-TTS's instruct string, which is what it exists for. Accent is established by arXiv 2209.08000, not by the dataset page. NOTE the HF repo is a loader script holding no audio; the tarball comes from keithito.com."
