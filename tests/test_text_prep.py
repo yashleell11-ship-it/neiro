@@ -302,6 +302,10 @@ def _tool_names(rec: Record) -> list[str]:
     return [t["function"]["name"] for t in rec.tools or []]
 
 
+def _first_user(rec: Record) -> str:
+    return next(m["content"] for m in rec.messages if m["role"] == "user")
+
+
 class TestXlam:
     def test_calls_and_schema_arrive_in_the_openai_shape(self, tmp_path: Path) -> None:
         tools = [
@@ -406,6 +410,42 @@ class TestHermes:
             {"from": "human", "value": "Book me a flight."},
             {"from": "gpt", "value": "I can't book flights."},
         ]
+        # 793 real single-turn rows: the tag padding is a literal
+        # backslash-n, the list is Python-quoted and `name` sits inside
+        # `arguments`. Nothing in it is a call; nothing in it may become
+        # her text either.
+        literal = [
+            {"from": "system", "value": _hermes_system(tools)},
+            {"from": "human", "value": "Extract questions from this document."},
+            {
+                "from": "gpt",
+                "value": "<tool_call>\\n{\"arguments\": {\"queries\": ['Why?', 'How?'], "
+                '"name": "feed"}}\\n</tool_call>',
+            },
+        ]
+        # 61 real rows offer `[]` under a <tools></tools> system turn and
+        # then call something anyway: a call with nothing to call.
+        no_tools_but_calls = [
+            {"from": "system", "value": _hermes_system([])},
+            {"from": "human", "value": "Show the front door."},
+            {
+                "from": "gpt",
+                "value": '<tool_call>\n{"name": "feed", "arguments": {"camera_id": "front"}}\n'
+                "</tool_call>",
+            },
+        ]
+        # The Glaive subset sometimes writes the result object bare, with
+        # no `content` key; the reply that follows quotes it.
+        bare_result = [
+            {"from": "system", "value": _hermes_system(tools)},
+            {"from": "human", "value": "A random name, please."},
+            {
+                "from": "gpt",
+                "value": '<tool_call>\n{"name": "feed", "arguments": {}}\n</tool_call>',
+            },
+            {"from": "tool", "value": '<tool_response>\n{"name": "James"}\n</tool_response>'},
+            {"from": "gpt", "value": "How about James?"},
+        ]
         _json(
             tmp_path / "func-calling.json",
             [
@@ -414,11 +454,23 @@ class TestHermes:
                 {"id": "c", "conversations": orphan, "tools": json.dumps(tools)},
                 # The Glaive subset writes the *string* "null" for no tools.
                 {"id": "d", "conversations": no_access, "tools": "null"},
+                {"id": "e", "conversations": literal, "tools": json.dumps(tools)},
+                {"id": "f", "conversations": no_tools_but_calls, "tools": "[]"},
+                {"id": "g", "conversations": bare_result, "tools": json.dumps(tools)},
             ],
         )
         recs = list(read_hermes(tmp_path))
-        assert len(recs) == 3, "a tool result with no call to answer is malformed and dropped"
-        agentic, plain, negative = recs
+        assert [_first_user(r) for r in recs] == [
+            "Show the front door and record it.",
+            "Give me a patent record.",
+            "Book me a flight.",
+            "A random name, please.",
+        ], "an orphan result, an unparsable call and a call with no tools are dropped"
+        agentic, plain, negative, bare = recs
+        for rec in recs:
+            for m in rec.messages:
+                assert "<tool_call>" not in (m["content"] or "")
+                assert "<tools>" not in (m["content"] or "")
         assert negative.tools is None and negative.kind == "chat"
         assert _roles(negative) == ["system", "user", "assistant"]
         assert _roles(agentic) == ["user", "assistant", "tool", "tool", "assistant"]
@@ -433,6 +485,11 @@ class TestHermes:
 
         assert plain.kind == "chat" and plain.tools is None
         assert _roles(plain) == ["system", "user", "assistant"], "JSON-mode keeps its system turn"
+
+        assert _roles(bare) == ["user", "assistant", "tool", "assistant"]
+        assert json.loads(bare.messages[2]["content"]) == {"name": "James"}, (
+            "a result with no `content` key is the object itself, not an empty turn"
+        )
 
 
 class TestGlaive:

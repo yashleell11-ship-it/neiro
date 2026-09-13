@@ -541,8 +541,15 @@ def read_xlam(root: Path) -> Iterator[Record]:
 
 
 _HERMES_ROLES = {"system": "system", "human": "user", "gpt": "assistant", "tool": "tool"}
-_TOOL_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# 793 single-turn rows write the tag padding as a *literal* backslash-n
+# (`<tool_call>\n{...}\n</tool_call>`); the pattern accepts it so the
+# body is at least looked at. Every one of those bodies then fails —
+# Python-quoted strings, and `name` nested inside `arguments` — and the
+# row is dropped. What must never happen is the tag surviving into her
+# text: `_hermes_messages` checks for it after the substitution.
+_TOOL_CALL = re.compile(r"<tool_call>(?:\s|\\n)*(\{.*?\})(?:\s|\\n)*</tool_call>", re.DOTALL)
 _TOOL_RESPONSE = re.compile(r"<tool_response>\s*(\{.*?\})\s*</tool_response>", re.DOTALL)
+_TOOLS_TAG = "<tools>"
 
 
 def _hermes_messages(conv: list[dict[str, Any]], has_tools: bool) -> list[dict] | None:
@@ -554,11 +561,13 @@ def _hermes_messages(conv: list[dict[str, Any]], has_tools: bool) -> list[dict] 
         if role is None:
             return None
         if role == "system":
-            # With tools the Hermes system turn is boilerplate about
-            # <tools> XML tags that our format does not have; the chat
-            # template renders `tools` itself. Without tools (JSON-mode
-            # rows) the system turn *is* the task: keep it.
-            if not has_tools and _clean(value):
+            # A system turn carrying a <tools> block is Hermes' own
+            # boilerplate about XML tags our format does not have — the
+            # chat template renders `tools` itself — so it goes, with or
+            # without a tool list beside it. Any other system turn (the
+            # JSON-mode rows' schema, the Glaive negatives' "no access to
+            # functions") *is* the task and stays.
+            if _TOOLS_TAG not in value and _clean(value):
                 out.append({"role": "system", "content": _clean(value)})
             continue
         if role == "assistant":
@@ -569,8 +578,10 @@ def _hermes_messages(conv: list[dict[str, Any]], has_tools: bool) -> list[dict] 
                     tool_calls.append(calls.call(call["name"], call.get("arguments", {})))
                 except (KeyError, TypeError, ValueError):
                     return None
+            if tool_calls and not has_tools:
+                return None  # a call with nothing offered to call
             text = _clean(_TOOL_CALL.sub("", value))
-            if not text and not tool_calls:
+            if "<tool_call>" in text or (not text and not tool_calls):
                 return None
             out.append(_assistant(text, tool_calls))
             continue
@@ -580,9 +591,17 @@ def _hermes_messages(conv: list[dict[str, Any]], has_tools: bool) -> list[dict] 
                 return None
             for body in bodies:
                 try:
-                    msg = calls.result(json.loads(body).get("content", ""))
-                except (AttributeError, ValueError):
+                    payload = json.loads(body)
+                except ValueError:
                     return None
+                if not isinstance(payload, dict):
+                    return None
+                # Usually `{"name": ..., "content": <result>}`; the Glaive
+                # subset sometimes writes the result object bare
+                # (`{"name": "James"}` from generate_random_name). Then
+                # the object *is* the result — the reply that follows
+                # quotes it — and an empty tool turn would be the guess.
+                msg = calls.result(payload.get("content", payload))
                 if msg is None:
                     return None
                 out.append(msg)
@@ -610,7 +629,9 @@ def read_hermes(root: Path) -> Iterator[Record]:
                     continue
                 # 865 rows of the Glaive subset carry the string "null":
                 # the "no access to external functions" negatives. Plain
-                # chat, with that sentence kept as the system turn.
+                # chat, with that sentence kept as the system turn. 61
+                # rows carry "[]" and then call a function anyway; those
+                # fall in _hermes_messages.
                 if isinstance(parsed, list):
                     tools = [t for t in parsed if isinstance(t, dict) and "function" in t] or None
             messages = _hermes_messages(row.get("conversations") or [], tools is not None)
