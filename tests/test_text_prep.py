@@ -436,6 +436,26 @@ class TestHermes:
 
 
 class TestGlaive:
+    def test_an_escaped_apostrophe_inside_the_quoted_arguments(self, tmp_path: Path) -> None:
+        # Glaive writes the inner apostrophe Python-style: 'It\'s raining'.
+        # 124 real rows; JSON has no such escape and a naive parse loses them.
+        fn = json.dumps({"name": "analyze", "description": "Mood", "parameters": {}})
+        chat = (
+            "USER: How do I sound?\n\n\n"
+            'ASSISTANT: <functioncall> {"name": "analyze", "arguments": '
+            "'{\"text\": \"It\\'s raining and I\\'m down.\"}'} <|endoftext|>\n\n\n"
+            'FUNCTION RESPONSE: {"mood": "low"}\n\n\n'
+            "ASSISTANT: You sound low. <|endoftext|>\n\n\n"
+        )
+        _json(
+            tmp_path / "glaive.json",
+            [{"system": f"SYSTEM: functions -\n{fn}\n", "chat": chat}],
+        )
+        recs = list(read_glaive(tmp_path))
+        assert len(recs) == 1
+        call = recs[0].messages[1]["tool_calls"][0]["function"]
+        assert json.loads(call["arguments"]) == {"text": "It's raining and I'm down."}
+
     def test_python_quoted_arguments_and_concatenated_functions(self, tmp_path: Path) -> None:
         fn1 = json.dumps(
             {
@@ -488,6 +508,26 @@ class TestGlaive:
 
 
 class TestWhen2Call:
+    def test_a_row_offering_no_tools_is_plain_chat(self, tmp_path: Path) -> None:
+        # 3,084 training rows have `tools: []` — the "nothing fits, answer
+        # in words" negatives. Dropping them would lose exactly the lesson.
+        _jsonl(
+            tmp_path / "train" / "when2call_train_sft.jsonl",
+            [
+                {
+                    "tools": [],
+                    "messages": [
+                        {"role": "user", "content": "What's the weather?"},
+                        {"role": "assistant", "content": "I have no way to check the weather."},
+                    ],
+                }
+            ],
+        )
+        recs = list(read_when2call(tmp_path))
+        assert len(recs) == 1
+        assert recs[0].tools is None and recs[0].kind == "chat"
+        assert _roles(recs[0]) == ["user", "assistant"]
+
     def test_sft_and_the_chosen_side_of_pref(self, tmp_path: Path) -> None:
         tool = json.dumps(
             {

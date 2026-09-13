@@ -640,7 +640,9 @@ def _glaive_call(body: str) -> tuple[str, Any] | None:
     if not m:
         return None
     try:
-        return m["name"], json.loads(m["args"])
+        # Inside the Python-quoted string an apostrophe is written `\'`
+        # (124 rows: "It\'s raining"); JSON has no such escape.
+        return m["name"], json.loads(m["args"].replace("\\'", "'"))
     except ValueError:
         return None
 
@@ -784,15 +786,17 @@ def read_when2call(root: Path) -> Iterator[Record]:
                 else:
                     messages = []
                     break
-            if len(messages) < 2 or messages[-1]["role"] != "assistant" or not tools:
+            if len(messages) < 2 or messages[-1]["role"] != "assistant":
                 continue
+            # 3,084 of the 24,000 training rows offer no tools at all: the
+            # "nothing fits, answer in words" negatives. Plain chat.
             yield Record(
                 messages=messages,
-                tools=tools,
+                tools=tools or None,
                 source="when2call",
                 licence="",
                 lang="en",
-                kind="tool_call",
+                kind="tool_call" if tools else "chat",
             )
 
 
