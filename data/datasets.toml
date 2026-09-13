@@ -2,16 +2,15 @@
 # validated by src/neiro/training/manifest.py -- a licence flag that
 # contradicts weights_publishable is a load error, on purpose.
 #
-# Every entry below was proposed by a researcher and then checked by a
-# separate verifier against the Hugging Face API or the source page:
-# does the id exist, is the licence string what the page actually says,
-# is the access path right. Entries that failed were dropped, not
-# downgraded.
+# Every entry was proposed by a researcher and then checked by a separate
+# verifier against the Hugging Face API or the source page: does the id
+# exist, is the licence string what the page actually says, is the access
+# path right. Entries that failed were dropped, not downgraded.
 #
-# priority reflects Yash's stated order (2026-09-13): emotion first
+# priority follows Yash's stated order (2026-09-13): emotion first
 # ("i want the emotional feel mainly"), Hindi second ("u have to add
-# hindi"). So --tier 1 is emotion + Hindi; --tier 2 widens to the rest
-# of the pipeline; --tier 3 is everything.
+# hindi"). Corpora over 150 GB are forced to tier 3 whatever their
+# research value -- one of them would eat the whole disk budget alone.
 #
 # flags: permissive | NC | ND | SA | research-only | request-required | gated | unclear
 # weights_publishable: can a model trained on this be released under Apache-2.0
@@ -746,3 +745,375 @@ size_gb = 4.0
 hours = 20.0
 weights_publishable = "unclear"
 note = "~20 h of two-person (1 female, 1 male) acted conversational speech - 2,541 dialogues re-recorded from DailyDialog with every utterance carrying DailyDialog's emotion label (no-emotion, anger, disgust, fear, happiness, sadness, surprise) and dialogue-act tags - the only permissive-ish corpus of em..."
+
+# ---------- hindi_stt ----------
+
+[[dataset]]
+name = "indicvoices"
+target = "hindi_stt"
+priority = 1
+hf_id = "ai4bharat/IndicVoices"
+license = "cc-by-4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 36.3
+hours = 370.0
+weights_publishable = "yes"
+note = "Still the single most important Hindi ASR corpus for this project. 445,160 transcribed Hindi train utterances of natural, spontaneous speech — the card's corpus-wide split is 8% read / 76% extempore / 15% conversational, exactly the register Neiro will hear from a person talking to their desktop ..."
+
+[[dataset]]
+name = "kathbath"
+target = "hindi_stt"
+priority = 1
+hf_id = "ai4bharat/Kathbath"
+license = "cc-by-4.0 (HF metadata license field + license:cc-by-4.0 tag); the ..."
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 16.6
+hours = 150.0
+weights_publishable = "yes"
+note = "Clean, human-labelled, human-verified Hindi read speech — 91,752 train utterances plus a 3,151-utterance valid split. This is the stabiliser in the mix: IndicVoices teaches Neiro spontaneous Hindi but is acoustically messy, and Kathbath supplies well-recorded, correctly-transcribed Devanagari tha..."
+
+[[dataset]]
+name = "svarah-indic-accented-english"
+target = "hindi_stt"
+priority = 1
+hf_id = "ai4bharat/Svarah"
+license = "CC BY 4.0 — stated verbatim in the card's License section ('This da..."
+flags = ["permissive", "gated", "unclear"]
+access = "hf-login"
+size_gb = 1.1
+hours = 9.6
+weights_publishable = "no"
+note = "Directly targets the 'English spoken by Indians' half of the brief. 9.6 h of transcribed English from 117 Indian speakers across 65 districts in 19 states — built precisely because Indian speakers are underrepresented in LibriSpeech, Switchboard and the Speech Accent Archive. This is Yash's own a..."
+
+[[dataset]]
+name = "shrutilipi"
+target = "hindi_stt"
+priority = 2
+hf_id = "ai4bharat/Shrutilipi"
+license = "cc-by-4.0 (HF metadata + tag); card body: 'This dataset is released..."
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 94.8
+hours = 890.0
+weights_publishable = "yes"
+note = "The largest permissively-licensed Hindi ASR config available — 734,675 Hindi utterances in one train split. Where IndicVoices gives spontaneous speech and Kathbath gives clean read speech, Shrutilipi gives volume plus broadcast-quality studio Hindi with formal vocabulary and correct Devanagari or..."
+
+[[dataset]]
+name = "common-voice-17-0"
+target = "hindi_stt"
+priority = 2
+hf_id = "fsicoli/common_voice_17_0"
+license = "cc0-1.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.46
+hours = 13.2
+weights_publishable = "yes"
+note = "Crowd-recorded Hindi on consumer microphones in real rooms — the closest acoustic match in this list to what Neiro's own laptop mic will capture, unlike studio corpora. CC0-1.0 is the most permissive licence here (no attribution obligation), it is ungated and directly downloadable, and at 0.46 GB..."
+
+[[dataset]]
+name = "lahaja-multi-accent-hindi"
+target = "hindi_stt"
+priority = 2
+hf_id = "ai4bharat/Lahaja"
+license = "mit (HF metadata license field + license:mit tag); the card body in..."
+flags = ["permissive", "gated", "unclear"]
+access = "hf-login"
+size_gb = 1.4
+hours = 12.5
+weights_publishable = "no"
+note = "The right held-out evaluation for Hindi. 12.5 h from 132 speakers across 83 districts, deliberately built to expose how badly Hindi ASR degrades across accents — and it carries BOTH read and extempore speech plus a `native_language` field per speaker, so you can measure the read-vs-spontaneous ga..."
+
+[[dataset]]
+name = "fleurs"
+target = "hindi_stt"
+priority = 2
+hf_id = "google/fleurs"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 1.64
+hours = 12.0
+weights_publishable = "yes"
+note = "The standard cross-model comparison point — every published multilingual ASR result quotes FLEURS WER, so this is how you prove the fine-tune actually beat baseline distil-whisper on Hindi rather than just feeling better. Confirmed UNGATED (gated=false) and directly downloadable with no login at ..."
+
+[[dataset]]
+name = "vaani"
+target = "hindi_stt"
+priority = 3
+hf_id = "ARTPARK-IISc/Vaani"
+license = "cc-by-4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 1705.0
+hours = 963.0
+weights_publishable = "yes"
+note = "The most dialect-diverse Indian speech collection in existence: spontaneous IMAGE-PROMPTED speech, people describing pictures in their own words rather than reading sentences — natural phrasing, hesitation and self-correction, the register a voice assistant actually receives. Corpus-wide ~31,255 ..."
+
+# ---------- emotion_deep ----------
+
+[[dataset]]
+name = "emolia"
+target = "emotion_deep"
+priority = 3
+hf_id = "laion/Emolia"
+license = "cc-by-4.0 (dataset card YAML: 'license: cc-by-4.0')"
+flags = ["permissive", "NC", "unclear"]
+access = "direct"
+size_gb = 4423.4
+hours = 215600.0
+weights_publishable = "unclear"
+note = "The single biggest upgrade available for a natural-speech emotion model and the direct answer to 'emotion is the top priority'. The 40 EmoNet categories collapse cleanly onto the six VRM presets with room to spare, and valence/arousal/dominance give a continuous regression target for fine-tuning ..."
+
+[[dataset]]
+name = "rasa"
+target = "emotion_deep"
+priority = 1
+hf_id = "ai4bharat/Rasa"
+license = "cc-by-4.0"
+flags = ["permissive", "gated"]
+access = "hf-login"
+size_gb = 17.65
+hours = 50.8
+weights_publishable = "yes"
+note = "Solves both explicit user demands at once - Hindi AND emotion - under a permissive licence, which almost nothing else does. Hindi verified by listing the repo tree: 22 language directories with 'Hindi' among them, 28 parquet files totalling 17.65 GB. happy/sad/angry/surprise/neutral map 1:1 onto ..."
+
+[[dataset]]
+name = "ears"
+target = "emotion_deep"
+priority = 2
+hf_id = "zhu-han/EARS"
+license = "CC BY-NC 4.0 (upstream LICENSE file at facebookresearch/ears_datase..."
+flags = ["NC"]
+access = "direct"
+size_gb = 69.17
+hours = 100.0
+weights_publishable = "no"
+note = "The best emotional-TTS training data reachable without a request form: 48 kHz anechoic fullband, 107 speakers, full dynamic range from whispering to yelling, with the SAME speaker covering 22 emotions - exactly the paired data a voice model needs to learn emotion as a controllable axis rather tha..."
+
+[[dataset]]
+name = "emonet-voice-bench"
+target = "emotion_deep"
+priority = 2
+hf_id = "t1a5anu-anon/emonet-voice-bench"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 1.08
+hours = 35.8
+weights_publishable = "yes"
+note = "A cheap, permissive, human-verified test set in the SAME 40-label taxonomy as Emolia's pseudo-labels and LAION's Got Talent - the missing piece if he trains on machine-labelled natural speech. Held out, it gives an honest number for the emotion encoder, and because the taxonomy is shared, the col..."
+
+[[dataset]]
+name = "indian-emotional-speech-corpus"
+target = "emotion_deep"
+priority = 3
+hf_id = "humyn-labs/Indian-Emotional-Speech-Corpus"
+license = "cc-by-4.0 (card: 'CC BY 4.0 - You can use, modify, and share the da..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.06
+hours = 0.1
+weights_publishable = "yes"
+note = "The only openly-licensed emotional speech I could verify that is specifically Indian-accented English - the voice this system will actually hear every day. Four of its labels are VRM presets. Its real job is smoke-test/eval: run the emotion encoder on it before and after Indic fine-tuning to chec..."
+
+# ---------- hindi_tts ----------
+
+[[dataset]]
+name = "syspin-hindi-female-tts"
+target = "hindi_tts"
+priority = 1
+hf_id = "SayantanJoker/SYSPIN_Hindi_Female_TTS"
+license = "Mirror states NO licence: API cardData.license is null and the repo..."
+flags = ["permissive", "unclear"]
+access = "direct"
+size_gb = 14.1
+hours = 54.9
+weights_publishable = "unclear"
+note = "The pragmatic first pull: the same Hindi female voice as the official SYSPIN release, ungated and directly downloadable with no login, no form and no approval — 21,893 utterances with transcriptions, one professional female voice. Verification tied it firmly to the upstream: 21,893 rows against I..."
+
+[[dataset]]
+name = "rasa-expressive-multilingual-indian"
+target = "hindi_tts"
+priority = 1
+hf_id = "ai4bharat/Rasa"
+license = "CC-BY-4.0 (API cardData.license 'cc-by-4.0', tag 'license:cc-by-4.0..."
+flags = ["permissive", "gated"]
+access = "hf-gated-approval"
+size_gb = 17.7
+hours = 50.8
+weights_publishable = "yes"
+note = "Still the single most important dataset for this target, and every headline number checked out. It is the only Hindi corpus verified to be simultaneously (a) studio-grade 48 kHz mono, (b) one female AND one male voice, and (c) emotion-labelled via a `style` column. It answers both of Yash's state..."
+
+[[dataset]]
+name = "indicvoices-r-tts-restored"
+target = "hindi_tts"
+priority = 2
+hf_id = "ai4bharat/indicvoices_r"
+license = "CC-BY-4.0 (tag 'license:cc-by-4.0', cardData.license 'cc-by-4.0'; '..."
+flags = ["permissive", "gated"]
+access = "hf-gated-approval"
+size_gb = 47.2
+hours = 70.4
+weights_publishable = "yes"
+note = "The multi-speaker half of the plan, and the hour count survived a hard check: mean utterance duration is 9.62892 s over a 5,264-row statistics scan, which against 26,318 train rows gives 70.4 h almost exactly as proposed. Rows really are tagged with gender (Female 2,680 / Male 2,584 in the scan),..."
+
+[[dataset]]
+name = "common-voice-22-0"
+target = "hindi_tts"
+priority = 2
+hf_id = "fsicoli/common_voice_22_0"
+license = "CC0-1.0 (cardData.license 'cc0-1.0', tag 'license:cc0-1.0')"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.48
+hours = 15.3
+weights_publishable = "yes"
+note = "The cleanest licence on this entire list — CC0-1.0 is public domain, zero attribution obligation, zero risk to an Apache-2.0 release. Crowd-sourced Indian speakers reading Devanagari prompts through consumer microphones: exactly the accent and channel diversity a studio corpus lacks. Tiny downloa..."
+
+[[dataset]]
+name = "indic-tts-hindi"
+target = "hindi_tts"
+priority = 2
+hf_id = "SPRINGLab/IndicTTS-Hindi"
+license = "No licence tag and cardData.license is null. Card text verbatim: 'T..."
+flags = ["unclear", "request-required"]
+access = "direct"
+size_gb = 8.2
+hours = 10.3
+weights_publishable = "unclear"
+note = "Reference-grade Hindi studio TTS: 48 kHz WAV, two native Hindi speakers, monolingual Hindi utterances, full transcriptions, with a `gender` class label so the female half isolates in one filter. Small but extremely clean — good supplementary data for the female voice fine-tune, and the corpus mos..."
+
+[[dataset]]
+name = "snow-mountain-hindi-single"
+target = "hindi_tts"
+priority = 3
+hf_id = "bridgeconn/snow-mountain"
+license = "CC-BY-SA-4.0 (tag 'license:cc-by-sa-4.0', cardData.license 'cc-by-s..."
+flags = ["permissive", "SA"]
+access = "direct"
+size_gb = 17.6
+hours = 71.4
+weights_publishable = "unclear"
+note = "One of the very few single-speaker, studio-recorded Hindi corpora that is both large and directly downloadable with no gate and no form. The card is explicit: 'The recordings were done in a studio setting by native speakers. Each language has a single speaker in the dataset.' Devanagari transcrip..."
+
+[[dataset]]
+name = "hindi-emotion-voice-references"
+target = "hindi_tts"
+priority = 3
+hf_id = "sumedhu/hindi-emotion-voice-references"
+license = "No licence in the repo metadata (cardData.license null, no license ..."
+flags = ["NC", "unclear"]
+access = "direct"
+size_gb = 6.7
+hours = 12.0
+weights_publishable = "unclear"
+note = "A shortcut, not a training corpus: 48 kHz WAV clips already sorted by emotion and explicitly packaged as reference audio for Qwen3-TTS voice cloning, which is exactly the TTS in Neiro's stack. The hand-curated best_clips/ folders give three good ~5 s prompts per emotion, so you can hear what emot..."
+
+[[dataset]]
+name = "fleurs-hindi"
+target = "hindi_tts"
+priority = 3
+hf_id = "google/fleurs"
+license = "CC-BY-4.0 (tag 'license:cc-by-4.0', cardData.license ['cc-by-4.0'];..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 2.0
+hours = 10.0
+weights_publishable = "yes"
+note = "The standard cross-lingual eval set and the cheapest way to get an honest, comparable Hindi number out of the TTS/STT stack. Split sizes verified exactly as proposed: 2,777 utterances total, 2,120 train / 239 validation / 418 test, parallel across 102 languages and read from FLoRes sentences — so..."
+
+# ---------- hindi_emotion_text ----------
+
+[[dataset]]
+name = "brighter-hindi-emotion-categories"
+target = "hindi_emotion_text"
+priority = 1
+hf_id = "brighter-dataset/BRIGHTER-emotion-categories"
+license = "cc-by-4.0 (card front-matter `license: cc-by-4.0`; API cardData.lic..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.0
+hours = 0.0
+weights_publishable = "yes"
+note = "The single best licensed source of Hindi text tied to the exact label set Neiro needs: joy->happy, anger->angry, sadness->sad, surprise->surprised, empty->neutral. Verified: config `hin` exists with 2,556 train / 200 dev / 2,020 test = 4,776 rows of real Devanagari text, and gold labels are prese..."
+
+[[dataset]]
+name = "indictalk-hindi-config"
+target = "hindi_emotion_text"
+priority = 1
+hf_id = "LingoIITGN/IndicTalk"
+license = "cc-by-4.0 (card front-matter `license: cc-by-4.0`; tag license:cc-b..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.75
+hours = 0.0
+weights_publishable = "yes"
+note = "This is the register fix, and every number checked out. Card table: Hindi Native 101,303 + Romanized 45,014 = 146,317 conversations, and datasets-server reports config `hindi` num_rows 146,317 — exact match. Schema is Persona / Script / Conversation[{speaker,text}] with Speaker_1/Speaker_2 multi-..."
+
+[[dataset]]
+name = "samvaad-hi-v1"
+target = "hindi_emotion_text"
+priority = 1
+hf_id = "sarvamai/samvaad-hi-v1"
+license = "apache-2.0 (card front-matter `license: apache-2.0`; tag license:ap..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.2
+hours = 0.0
+weights_publishable = "yes"
+note = "101,476 multi-turn chat conversations in a ChatML `messages` schema (list of {role, content}) under a clean Apache-2.0 licence — the cheapest way to give the Qwen3.5-4B LoRA fluent Hindi assistant behaviour with an Indic frame of reference, and the licence matches the repo exactly. Drop-in SFT fo..."
+
+[[dataset]]
+name = "indicalign-instruct-hindi-portion"
+target = "hindi_emotion_text"
+priority = 1
+hf_id = "ai4bharat/indic-align"
+license = "cc-by-4.0 (card front-matter `license: cc-by-4.0`; tag license:cc-b..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 1.6
+hours = 0.0
+weights_publishable = "yes"
+note = "Anudesh is the rare one: prompts crowd-sourced from native Indic speakers rather than translated from English — that is what stops her replying like a translation layer. Config sizes verified exactly: Anudesh 36,820 rows (42.2 MB), Dolly_T 15,011 (159.4 MB), OpenAssistant_T 19,909 (449.7 MB), Ind..."
+
+[[dataset]]
+name = "sentimix-hinglish-community-mirror"
+target = "hindi_emotion_text"
+priority = 3
+hf_id = "RTT1/SentiMix"
+license = "Mirror is tagged `openrail` by the uploader — the entire README.md ..."
+flags = ["unclear", "research-only"]
+access = "direct"
+size_gb = 0.01
+hours = 0.0
+weights_publishable = "no"
+note = "The canonical labelled romanised-Hinglish affect set, and the label distribution the proposal claimed is exact to the tweet. Files present in the repo: train_14k_split_conll.txt (3.44 MB), dev_3k_split_conll.txt (0.74 MB), Hindi_test_unalbelled_conll_updated.txt (0.73 MB), test_labels_hinglish.tx..."
+
+[[dataset]]
+name = "aya-dataset-hindi-split"
+target = "hindi_emotion_text"
+priority = 3
+hf_id = "CohereLabs/aya_dataset"
+license = "apache-2.0 (cardData.license 'apache-2.0'; tag license:apache-2.0)"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.14
+hours = 0.0
+weights_publishable = "yes"
+note = "Fully human-written, human-curated prompt/completion pairs by native speakers — no machine translation in the pipeline — under Apache-2.0, the cleanest licence in this list and an exact match for the repo. Small but high-signal: mix at low weight against the larger machine-translated Hindi data a..."
+
+[[dataset]]
+name = "comi-lingua"
+target = "hindi_emotion_text"
+priority = 3
+hf_id = "LingoIITGN/COMI-LINGUA"
+license = "cc-by-4.0 (card front-matter `license: cc-by-4.0`; tag license:cc-b..."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.14
+hours = 0.0
+weights_publishable = "yes"
+note = "181,463 instances across six configs, verified to the row: LID 35,487, MLI 31,225, MT 29,692, POS 30,599, NER 24,913, TN 29,547 — every count in the proposal is exact. The MT config gives Hinglish <-> Hindi/English pairs, and TN (transliteration/normalisation) directly helps her cope with the spe..."
