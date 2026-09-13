@@ -348,6 +348,80 @@ class TestBargeInOnAFullQueue:
         assert asyncio.run(go())._history == []
 
 
+class TestBargeInBeforeTheFirstToken:
+    """A barge-in while she is still thinking.
+
+    Between the STT result and the LLM's first token the consumer is
+    parked on the sentence queue with nothing coming. A cancel check
+    placed after `queue.get()` only runs once an item arrives, so an
+    interruption in that window waited for the model he had just
+    interrupted to start talking — bounded by the provider's HTTP
+    timeout, 120 s for Ollama — with `Daemon.handle()`'s lock held the
+    whole time, so his new utterance could not start either.
+
+    The older cancellation tests all fire barge-in from `sink.play()`,
+    i.e. only once tokens are already flowing.
+    """
+
+    class StalledLlm:
+        """Never produces a token: a wedged llama-server, or a cold
+        prefill that is still going when he interrupts.
+        """
+
+        def __init__(self) -> None:
+            self.asked = asyncio.Event()
+            self.torn_down = False
+
+        async def stream(self, messages, tools=None):
+            self.asked.set()
+            try:
+                await asyncio.Event().wait()  # nobody will ever set it
+                yield {"text": ""}  # pragma: no cover
+            finally:
+                self.torn_down = True
+
+    def test_cancel_wakes_a_consumer_parked_on_an_empty_queue(self) -> None:
+        llm = self.StalledLlm()
+        orch, parts = build(llm=llm)
+
+        async def go() -> TurnResult:
+            turn = orch.begin_turn()
+            task = asyncio.create_task(orch.run(AUDIO, turn=turn))
+            # Once the LLM has been asked, the consumer is already parked
+            # on `get()` — it got there before the producer even ran.
+            await llm.asked.wait()
+            assert not task.done()
+            turn.cancel.set()
+            # Without a cancel-aware wait this is where it sat until the
+            # model spoke, which this model never does.
+            return await asyncio.wait_for(task, timeout=1)
+
+        result = asyncio.run(go())
+        assert result.cancelled
+        assert result.reply == ""
+        assert parts["sink"].cancelled == 1
+        assert orch._history == []
+        # The producer was awaited, not abandoned with its HTTP
+        # connection open.
+        assert llm.torn_down
+
+    def test_a_barge_in_during_stt_never_asks_the_llm(self) -> None:
+        # The stage checks before its await; it has to check after it
+        # too, or the request goes out and is cancelled a token later.
+        orch, parts = build()
+        turn = orch.begin_turn()
+
+        class InterruptedStt(FakeStt):
+            async def transcribe(self, pcm):
+                turn.cancel.set()
+                return await super().transcribe(pcm)
+
+        orch.stt = InterruptedStt()
+        result = asyncio.run(orch.run(AUDIO, turn=turn))
+        assert result.cancelled
+        assert parts["llm"].seen_messages == []
+
+
 class TestBackpressure:
     def test_the_queue_actually_blocks_the_producer(self) -> None:
         # Asserting CHUNK_QUEUE_DEPTH <= 4 tested a constant, not the

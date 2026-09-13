@@ -118,6 +118,39 @@ class Orchestrator:
         if turn.cancel.is_set():
             raise Cancelled
 
+    @staticmethod
+    async def _next_or_cancelled(turn: Turn, queue: asyncio.Queue[str | None]) -> str | None:
+        """`queue.get()` that a barge-in can wake.
+
+        Between the STT result and the LLM's first token this is the
+        only await in the turn, and a plain `get()` cannot notice
+        `turn.cancel`: a check placed after it only runs once an item
+        arrives, and the first check that could fire otherwise lives
+        inside `produce()`'s stream loop, which needs an LLM event to
+        run at all. So a barge-in during a cold prefill waited for the
+        model he had just interrupted to start talking — measured with
+        a 2 s time-to-first-token fake, cancel at 0.1 s was acted on at
+        2.0 s — and the bound is the provider's HTTP timeout, 120 s for
+        Ollama. `Daemon.handle()` holds its lock across `run()`, so his
+        new utterance could not start for that whole interval.
+
+        Racing the get against the event makes the wait itself the
+        cancel point. Both tasks are cancelled on every exit; a get
+        cancelled after a `put()` landed leaves the item on the queue,
+        where `run()`'s drain throws it away with the rest of the reply
+        that is no longer being given.
+        """
+        getter = asyncio.ensure_future(queue.get())
+        interrupted = asyncio.ensure_future(turn.cancel.wait())
+        try:
+            done, _ = await asyncio.wait({getter, interrupted}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            interrupted.cancel()
+            getter.cancel()  # a no-op once it holds the item
+        if interrupted in done:
+            raise Cancelled
+        return getter.result()
+
     async def observe_while_speaking(self, turn: Turn, window: np.ndarray) -> UserAffect:
         """Called repeatedly WHILE he is still talking, so this costs the
         turn budget nothing. Never after the endpoint.
@@ -133,6 +166,10 @@ class Orchestrator:
         transcript = await self.stt.transcribe(turn.audio)
         turn.transcript = transcript
         turn.stamp("stt_done")
+        # After the await as well as before it: a barge-in that landed
+        # while STT was running means the LLM is never asked. Without
+        # this the request went out and was cancelled a token later.
+        self._check(turn)
         return transcript
 
     async def speak(
@@ -234,14 +271,13 @@ class Orchestrator:
 
             async def consume() -> AsyncIterator[str]:
                 while True:
-                    item = await queue.get()
+                    # Between sentences is a legitimate cancel point —
+                    # and so is the wait for the next one, which is where
+                    # the consumer sits for the whole of the LLM's
+                    # time-to-first-token. See `_next_or_cancelled`.
+                    item = await self._next_or_cancelled(turn, queue)
                     if item is None:
                         return
-                    # Between sentences is a legitimate cancel point, and
-                    # without this check a barge-in that lands while the
-                    # consumer is parked on `get()` is only noticed after
-                    # the next whole sentence has been synthesised.
-                    self._check(turn)
                     yield item
 
             producer = asyncio.create_task(produce())
