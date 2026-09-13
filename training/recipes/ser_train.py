@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from dataclasses import dataclass
@@ -43,6 +44,8 @@ from torch.utils.data import DataLoader, Dataset
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
+from neiro.affect.labels import CIRCUMPLEX
+from neiro.evals.arousal_auc import auc
 from neiro.training.corpora import (
     READERS,
     Utterance,
@@ -94,27 +97,29 @@ def ccc_loss(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
     return torch.stack(losses).mean()
 
 
-def arousal_auc(pred: np.ndarray, true: np.ndarray) -> float:
-    """Gate G3b's number: can high arousal be told from low at all?
+def auc_above(pred: np.ndarray, true: np.ndarray, boundary: float) -> float | None:
+    """Gate G3b's number: can the labels above `boundary` be told from
+    the rest?
 
-    Rank-based AUC computed directly — no sklearn, so this stays honest
-    about ties and needs no extra dependency. Binarised at the label
-    median so the classes are balanced by construction.
+    The boundary is the caller's and is fixed for a whole run — by
+    default the circumplex origin, so "high arousal" means above
+    neutral, the same definition `scripts/spike_arousal.py` and
+    `evals/arousal_auc.py` already score against. An earlier version
+    binarised at the median of whatever subset it was handed, on the
+    theory that this balances the classes. It does not: every label is
+    one of a dozen discrete circumplex values, so the median snaps to a
+    class boundary that moves with the subset's mix. Measured on the
+    real split, the crema-d subset's median put `fear` (0.7) on the HIGH
+    side while the rasa subset's median put the same label on the LOW
+    side — `by_corpus` was publishing answers to different questions
+    under one key, beside a comment that compares them across runs.
+
+    Delegates to the repo's one AUC, which averages ties so a constant
+    predictor scores 0.5. `None` when the subset holds a single class:
+    undefined, not chance.
     """
-    positive = true > np.median(true)
-    n_pos, n_neg = int(positive.sum()), int((~positive).sum())
-    if n_pos == 0 or n_neg == 0:
-        return 0.5
-    order = np.argsort(pred)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(pred) + 1)
-    # Average ranks within ties, or a model that outputs one constant
-    # scores 1.0 instead of the 0.5 it deserves.
-    for value in np.unique(pred):
-        tied = pred == value
-        if tied.sum() > 1:
-            ranks[tied] = ranks[tied].mean()
-    return float((ranks[positive].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+    value = auc(pred, true > boundary)
+    return None if math.isnan(value) else value
 
 
 # --------------------------------------------------------------------------
@@ -234,8 +239,19 @@ def make_collate(processor):
 # loops
 
 
+def _round4(value: float | None) -> float | None:
+    return None if value is None else round(value, 4)
+
+
 @torch.no_grad()
-def evaluate(model, loader, device, dtype) -> dict:
+def evaluate(
+    model, loader, device, dtype, arousal_boundary: float, valence_boundary: float
+) -> dict:
+    """Score one loader. The two boundaries are the run's, not the
+    loader's — every subset `main()` reports is scored against the same
+    class definition, which is the only way `by_corpus` rows can be
+    read side by side.
+    """
     model.eval()
     preds, trues = [], []
     for feats, targets in loader:
@@ -249,13 +265,16 @@ def evaluate(model, loader, device, dtype) -> dict:
         "n": len(pred),
         "ccc_valence": round(ccc(pred[:, 0], true[:, 0]), 4),
         "ccc_arousal": round(ccc(pred[:, 1], true[:, 1]), 4),
-        "arousal_auc": round(arousal_auc(pred[:, 1], true[:, 1]), 4),
-        "valence_auc": round(arousal_auc(pred[:, 0], true[:, 0]), 4),
+        "arousal_auc": _round4(auc_above(pred[:, 1], true[:, 1], arousal_boundary)),
+        "valence_auc": _round4(auc_above(pred[:, 0], true[:, 0], valence_boundary)),
         "pred_std_arousal": round(float(pred[:, 1].std()), 4),
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Every argument is saved into the checkpoint and the report, so a
+    number in either can always be traced to the run that produced it.
+    """
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -265,11 +284,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--seconds", type=float, default=4.0)
     ap.add_argument("--unfreeze", type=int, default=4, help="top encoder blocks to train")
+    # "High" means above neutral, the circumplex origin — one definition
+    # for the whole run and for every subset in the report. See
+    # `auc_above` for what happened when each subset chose its own.
+    ap.add_argument(
+        "--arousal-boundary",
+        type=float,
+        default=CIRCUMPLEX["neutral"].arousal,
+        help="arousal_auc's positive class is label arousal strictly above this",
+    )
+    ap.add_argument(
+        "--valence-boundary",
+        type=float,
+        default=CIRCUMPLEX["neutral"].valence,
+        help="valence_auc's positive class is label valence strictly above this",
+    )
     ap.add_argument("--encoder", type=Path, default=ENCODER)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--dry-run", action="store_true", help="index, build, one forward pass, stop")
     ap.add_argument("--workers", type=int, default=4)
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    boundaries = {
+        "arousal_boundary": args.arousal_boundary,
+        "valence_boundary": args.valence_boundary,
+    }
 
     for name in args.corpora or list(READERS):
         if (REPO / "data" / "datasets" / name).is_dir():
@@ -386,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"  epoch {epoch} step {step}/{len(loaders['train'])} loss {running / seen:.4f}"
                 )
 
-        scores = evaluate(model, loaders["val"], device, dtype)
+        scores = evaluate(model, loaders["val"], device, dtype, **boundaries)
         print(f"epoch {epoch}: train_loss {running / max(seen, 1):.4f}  val {json.dumps(scores)}")
         if scores.get("ccc_arousal", -1) > best:
             best = scores["ccc_arousal"]
@@ -415,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("WARNING: no best.pt was saved; reporting the last-epoch model instead")
 
-    final = evaluate(model, loaders["test"], device, dtype)
+    final = evaluate(model, loaders["test"], device, dtype, **boundaries)
     by_kind: dict[str, dict] = {}
     for kind, wanted in (("acted", True), ("natural", False)):
         subset = [r for r in test_rows if r.acted is wanted]
@@ -426,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                 num_workers=args.workers,
                 collate_fn=collate,
             )
-            by_kind[kind] = evaluate(model, loader, device, dtype)
+            by_kind[kind] = evaluate(model, loader, device, dtype, **boundaries)
 
     # Per corpus, because one corpus can dominate a split and make the
     # headline describe something else entirely. Rasa ships exactly TWO
@@ -447,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
             num_workers=args.workers,
             collate_fn=collate,
         )
-        by_corpus[corpus] = evaluate(model, loader, device, dtype)
+        by_corpus[corpus] = evaluate(model, loader, device, dtype, **boundaries)
 
     report = {
         "test": final,

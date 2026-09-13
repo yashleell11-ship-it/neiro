@@ -13,12 +13,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from neiro.affect import features as feat
 from neiro.affect.baseline import BASELINE_SCHEMA, BaselineStore, SpeakerBaseline
+from neiro.affect.labels import CIRCUMPLEX
 from neiro.affect.null import NullAffectProvider
 from neiro.affect.prosody import (
     AROUSAL_WEIGHTS,
@@ -538,3 +541,111 @@ class TestLaneBProvider:
         p = SerAffectProvider()
         assert p.calibration.n == 0
         assert asyncio.run(p.observe(np.zeros(100, dtype=np.float32))) == UserAffect.NONE
+
+
+# --------------------------------------------------------------------------
+# Lane B and its recipe: what must mean the same at both ends.
+#
+# `training/recipes/ser_train.py` and `affect/ser.py` are two ends of one
+# model. Pinned here are the things that have to agree across them — the
+# definition of "high arousal" the reported AUC is scored against, and the
+# clip length a waveform is fitted to before the feature extractor sees
+# it. Each once had a private version on one end, and the numbers in
+# report.json quietly stopped describing the model that runs.
+
+NEUTRAL = CIRCUMPLEX["neutral"]
+
+
+@pytest.fixture(scope="module")
+def recipe():
+    """`ser_train`, imported the way `affect/ser.py` imports it.
+
+    Skipped, not failed, where torch is absent: the recipe needs it at
+    import time, and nothing above this line does.
+    """
+    pytest.importorskip("torch")
+    recipes = str(Path(__file__).resolve().parents[1] / "training" / "recipes")
+    if recipes not in sys.path:
+        sys.path.insert(0, recipes)
+    import ser_train
+
+    return ser_train
+
+
+class TestAucAbove:
+    """Gate G3b's number, scored against ONE class definition."""
+
+    # A crema-d-like subset: anger, fear, three happy, one neutral. The
+    # predictions rank the happy clips below the neutral one.
+    TRUE = np.array([0.8, 0.7, 0.5, 0.5, 0.5, 0.0])
+    PRED = np.array([0.9, 0.8, 0.1, 0.1, 0.1, 0.5])
+
+    def test_the_class_is_the_boundary_not_the_subsets_median(self, recipe) -> None:
+        # Above neutral: five positives against one negative, and three
+        # of the five rank below it — 2 of 5 pairs ordered correctly.
+        assert recipe.auc_above(self.PRED, self.TRUE, NEUTRAL.arousal) == pytest.approx(0.4)
+        # The old rule split this subset at its own median, 0.5, which
+        # put every `happy` on the LOW side and scored the very same
+        # predictions a perfect 1.0. Same model, same clips, and the
+        # number depended on what else happened to be in the subset.
+        assert recipe.auc_above(self.PRED, self.TRUE, float(np.median(self.TRUE))) == 1.0
+
+    def test_the_same_label_is_the_same_class_in_every_subset(self, recipe) -> None:
+        # The real failure: `fear` (0.7) was a positive in the crema-d
+        # row of report.json and a negative in the rasa row, because
+        # each row was split at its own median. A model that ranks one
+        # fear clip above everything else, and is otherwise at chance,
+        # must read as better than chance on BOTH subsets.
+        fear = 0.7
+        crema_like = np.array([fear, 0.8, 0.5, 0.5, 0.0, -0.4])  # median 0.5
+        rasa_like = np.array([fear, 0.8, 0.8, 0.7, 0.7, 0.0, -0.4])  # median 0.7
+        for subset in (crema_like, rasa_like):
+            pred = np.zeros_like(subset)
+            pred[0] = 1.0
+            assert recipe.auc_above(pred, subset, NEUTRAL.arousal) > 0.5
+        # Split at each subset's own median, that identical behaviour
+        # scored 0.75 on one corpus and 0.4 — worse than chance — on the
+        # other, because the rasa median made `fear` a negative there.
+        pred = np.zeros_like(rasa_like)
+        pred[0] = 1.0
+        assert recipe.auc_above(pred, rasa_like, float(np.median(rasa_like))) == pytest.approx(0.4)
+
+    def test_one_class_is_undefined_not_chance(self, recipe) -> None:
+        # The old copy returned 0.5 here, indistinguishable from a model
+        # that genuinely cannot tell the classes apart.
+        assert recipe.auc_above(np.array([0.1, 0.9]), np.array([0.8, 0.7]), NEUTRAL.arousal) is None
+
+    def test_a_constant_predictor_scores_chance(self, recipe) -> None:
+        assert recipe.auc_above(np.full(6, 0.3), self.TRUE, NEUTRAL.arousal) == 0.5
+
+
+class TestEvaluate:
+    def test_every_subset_is_scored_against_the_run_boundary(self, recipe) -> None:
+        import torch
+
+        # An identity "model": the features handed in ARE its predictions,
+        # so the one-batch loader below fixes both sides exactly.
+        true = torch.tensor([[0.0, a] for a in TestAucAbove.TRUE], dtype=torch.float32)
+        pred = torch.tensor([[0.0, a] for a in TestAucAbove.PRED], dtype=torch.float32)
+        scores = recipe.evaluate(
+            torch.nn.Identity(),
+            [(pred, true)],
+            "cpu",
+            torch.float32,
+            arousal_boundary=NEUTRAL.arousal,
+            valence_boundary=NEUTRAL.valence,
+        )
+        assert scores["n"] == 6
+        assert scores["arousal_auc"] == 0.4
+        # Every valence label sits AT the boundary: one class, so the
+        # number is absent from the report rather than a fake 0.5.
+        assert scores["valence_auc"] is None
+
+    def test_the_boundaries_are_explicit_and_land_in_the_checkpoint(self, recipe) -> None:
+        args = recipe.build_parser().parse_args([])
+        assert args.arousal_boundary == NEUTRAL.arousal
+        assert args.valence_boundary == NEUTRAL.valence
+        # `vars(args)` is what main() writes into best.pt and into
+        # report.json's `config`, so a reported AUC can always be traced
+        # to the class definition it was scored against.
+        assert {"arousal_boundary", "valence_boundary", "seconds"} <= set(vars(args))
