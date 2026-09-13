@@ -54,6 +54,7 @@ from neiro.training.corpora import (
     split,
     summarise,
 )
+from neiro.training.licences import licences_for
 
 ENCODER = REPO / "models" / "w2v-bert-2.0"
 OUT_DIR = REPO / "models" / "ser-lane-b"
@@ -339,6 +340,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--dry-run", action="store_true", help="index, build, one forward pass, stop")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument(
+        "--publishable-only",
+        action="store_true",
+        help="refuse to train on any corpus whose weights_publishable is not yes",
+    )
     return ap
 
 
@@ -358,6 +364,30 @@ def main(argv: list[str] | None = None) -> int:
         print("No labelled utterances found. Run `neiro fetch-datasets --target ser_lane_b` first.")
         return 2
     print(json.dumps(summarise(rows), indent=1))
+
+    # What may be done with the weights this run is about to produce.
+    # Decided from the corpora actually indexed, not from what was asked
+    # for: a corpus that was requested but found nothing on disk must not
+    # restrict a checkpoint it did not contribute to.
+    licences = licences_for(sorted({r.corpus for r in rows}))
+    restricted = [
+        name
+        for name, info in licences["per_corpus"].items()
+        if info["weights_publishable"] != "yes"
+    ]
+    if restricted and args.publishable_only:
+        print(
+            "Refusing to train: --publishable-only, and these corpora do not "
+            f"permit publishable weights: {', '.join(restricted)}.\n"
+            "Drop them with --corpora, or drop the flag and keep the checkpoint private."
+        )
+        return 2
+    if restricted:
+        print(
+            f"NOTE: weights from this run are {licences['weights_publishable']} "
+            f"for publication ({', '.join(restricted)}). models/ is gitignored; "
+            "this is recorded in the checkpoint and in report.json."
+        )
 
     train_rows, val_rows, test_rows = split(rows)
     print(f"split by speaker: train={len(train_rows)} val={len(val_rows)} test={len(test_rows)}")
@@ -472,6 +502,9 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "model": model.state_dict(),
                     "args": vars(args) | {"encoder": str(args.encoder), "out": str(args.out)},
+                    # Travels with the weights, so a checkpoint found on
+                    # disk a month later still says what it may be used for.
+                    "licences": licences,
                 },
                 args.out / "best.pt",
             )
@@ -540,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
         # of them is the commonest way SER results mislead.
         "by_speech_kind": by_kind,
         "corpora": summarise(rows)["by_corpus"],
+        "licences": licences,
         "best_val_ccc_arousal": round(best, 4),
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
     }
@@ -548,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"\nGate G3b reads `arousal_auc`: {final.get('arousal_auc')} (GO is > 0.80, on HIS voice, not this)"
     )
+    print(f"weights publishable: {licences['weights_publishable']}")
     return 0
 
 
