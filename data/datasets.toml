@@ -109,8 +109,9 @@ flags = ["permissive"]
 access = "direct"
 size_gb = 35.0
 hours = 1957.0
+allow = ["*/en/*", "*.md"]
 weights_publishable = "yes"
-note = "23.4M one-second single-keyword clips extracted from Common Voice — exactly the shape a wake-word negative needs (short isolated words from thousands of crowd speakers, many accents, phone mics). Lets you mine phonetically close hard negatives ('near', 'narrow', 'zero', 'neuro') by keyword text i..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. 23.4M one-second single-keyword clips extracted from Common Voice — exactly the shape a wake-word negative needs (short isolated words from thousands of crowd speakers, many accents, phone mics). Lets you mine phonetically close hard negatives ('near', 'narrow', 'zero', 'neuro') by keyword text i..."
 
 [[dataset]]
 name = "goemotions"
@@ -239,8 +240,9 @@ flags = ["permissive", "unclear"]
 access = "direct"
 size_gb = 0.15
 hours = 0.0
+allow = ["data/*", "*.md"]
 weights_publishable = "no"
-note = "SFT split smoltalk_systemchats_Qwen3_32B_think (64.9 MB): conversations where a system prompt fixes a persona/format and the assistant must hold it across turns, the closest public analogue to 'system card says you are Neiro, stay Neiro'. smolagents_toolcalling_traces_think (81.8 MB): multi-step ..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. SFT split smoltalk_systemchats_Qwen3_32B_think (64.9 MB): conversations where a system prompt fixes a persona/format and the assistant must hold it across turns, the closest public analogue to 'system card says you are Neiro, stay Neiro'. smolagents_toolcalling_traces_think (81.8 MB): multi-step ..."
 
 [[dataset]]
 name = "empatheticdialogues"
@@ -678,8 +680,9 @@ flags = ["permissive", "gated"]
 access = "hf-login"
 size_gb = 36.3
 hours = 370.0
+allow = ["hindi/*"]
 weights_publishable = "yes"
-note = "Still the single most important Hindi ASR corpus for this project. 445,160 transcribed Hindi train utterances of natural, spontaneous speech — the card's corpus-wide split is 8% read / 76% extempore / 15% conversational, exactly the register Neiro will hear from a person talking to their desktop ..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. Still the single most important Hindi ASR corpus for this project. 445,160 transcribed Hindi train utterances of natural, spontaneous speech — the card's corpus-wide split is 8% read / 76% extempore / 15% conversational, exactly the register Neiro will hear from a person talking to their desktop ..."
 
 [[dataset]]
 name = "kathbath"
@@ -691,8 +694,9 @@ flags = ["permissive", "gated"]
 access = "hf-login"
 size_gb = 16.6
 hours = 150.0
+allow = ["hindi/*"]
 weights_publishable = "yes"
-note = "Clean, human-labelled, human-verified Hindi read speech — 91,752 train utterances plus a 3,151-utterance valid split. This is the stabiliser in the mix: IndicVoices teaches Neiro spontaneous Hindi but is acoustically messy, and Kathbath supplies well-recorded, correctly-transcribed Devanagari tha..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. Clean, human-labelled, human-verified Hindi read speech — 91,752 train utterances plus a 3,151-utterance valid split. This is the stabiliser in the mix: IndicVoices teaches Neiro spontaneous Hindi but is acoustically messy, and Kathbath supplies well-recorded, correctly-transcribed Devanagari tha..."
 
 [[dataset]]
 name = "svarah-indic-accented-english"
@@ -717,8 +721,9 @@ flags = ["permissive", "gated"]
 access = "hf-login"
 size_gb = 94.8
 hours = 890.0
+allow = ["hindi/*"]
 weights_publishable = "yes"
-note = "The largest permissively-licensed Hindi ASR config available — 734,675 Hindi utterances in one train split. Where IndicVoices gives spontaneous speech and Kathbath gives clean read speech, Shrutilipi gives volume plus broadcast-quality studio Hindi with formal vocabulary and correct Devanagari or..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. The largest permissively-licensed Hindi ASR config available — 734,675 Hindi utterances in one train split. Where IndicVoices gives spontaneous speech and Kathbath gives clean read speech, Shrutilipi gives volume plus broadcast-quality studio Hindi with formal vocabulary and correct Devanagari or..."
 
 [[dataset]]
 name = "common-voice-17-0"
@@ -730,8 +735,9 @@ flags = ["permissive"]
 access = "direct"
 size_gb = 0.46
 hours = 13.2
+allow = ["audio/hi/*", "transcript/hi/*", "*.json", "*.md"]
 weights_publishable = "yes"
-note = "Crowd-recorded Hindi on consumer microphones in real rooms — the closest acoustic match in this list to what Neiro's own laptop mic will capture, unlike studio corpora. CC0-1.0 is the most permissive licence here (no attribution obligation), it is ungated and directly downloadable, and at 0.46 GB..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. Crowd-recorded Hindi on consumer microphones in real rooms — the closest acoustic match in this list to what Neiro's own laptop mic will capture, unlike studio corpora. CC0-1.0 is the most permissive licence here (no attribution obligation), it is ungated and directly downloadable, and at 0.46 GB..."
 
 [[dataset]]
 name = "lahaja-multi-accent-hindi"
@@ -756,8 +762,9 @@ flags = ["permissive"]
 access = "direct"
 size_gb = 1.64
 hours = 12.0
+allow = ["data/hi_in/*", "*.md"]
 weights_publishable = "yes"
-note = "The standard cross-model comparison point — every published multilingual ASR result quotes FLEURS WER, so this is how you prove the fine-tune actually beat baseline distil-whisper on Hindi rather than just feeling better. Confirmed UNGATED (gated=false) and directly downloadable with no login at ..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. The standard cross-model comparison point — every published multilingual ASR result quotes FLEURS WER, so this is how you prove the fine-tune actually beat baseline distil-whisper on Hindi rather than just feeling better. Confirmed UNGATED (gated=false) and directly downloadable with no login at ..."
 
 [[dataset]]
 name = "vaani"
@@ -769,8 +776,9 @@ flags = ["permissive", "gated"]
 access = "hf-login"
 size_gb = 1705.0
 hours = 963.0
+allow = ["*Hindi*", "*hindi*"]
 weights_publishable = "yes"
-note = "The most dialect-diverse Indian speech collection in existence: spontaneous IMAGE-PROMPTED speech, people describing pictures in their own words rather than reading sentences — natural phrasing, hesitation and self-correction, the register a voice assistant actually receives. Corpus-wide ~31,255 ..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. The most dialect-diverse Indian speech collection in existence: spontaneous IMAGE-PROMPTED speech, people describing pictures in their own words rather than reading sentences — natural phrasing, hesitation and self-correction, the register a voice assistant actually receives. Corpus-wide ~31,255 ..."
 
 # ---------- emotion_deep ----------
 
@@ -797,8 +805,9 @@ flags = ["permissive", "gated"]
 access = "hf-login"
 size_gb = 17.65
 hours = 50.8
+allow = ["Hindi/*"]
 weights_publishable = "yes"
-note = "Solves both explicit user demands at once - Hindi AND emotion - under a permissive licence, which almost nothing else does. Hindi verified by listing the repo tree: 22 language directories with 'Hindi' among them, 28 parquet files totalling 17.65 GB. happy/sad/angry/surprise/neutral map 1:1 onto ..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. Solves both explicit user demands at once - Hindi AND emotion - under a permissive licence, which almost nothing else does. Hindi verified by listing the repo tree: 22 language directories with 'Hindi' among them, 28 parquet files totalling 17.65 GB. happy/sad/angry/surprise/neutral map 1:1 onto ..."
 
 [[dataset]]
 name = "ears"
@@ -864,8 +873,9 @@ flags = ["permissive", "gated"]
 access = "hf-gated-approval"
 size_gb = 47.2
 hours = 70.4
+allow = ["Hindi/*"]
 weights_publishable = "yes"
-note = "The multi-speaker half of the plan, and the hour count survived a hard check: mean utterance duration is 9.62892 s over a 5,264-row statistics scan, which against 26,318 train rows gives 70.4 h almost exactly as proposed. Rows really are tagged with gender (Female 2,680 / Male 2,584 in the scan),..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. The multi-speaker half of the plan, and the hour count survived a hard check: mean utterance duration is 9.62892 s over a 5,264-row statistics scan, which against 26,318 train rows gives 70.4 h almost exactly as proposed. Rows really are tagged with gender (Female 2,680 / Male 2,584 in the scan),..."
 
 [[dataset]]
 name = "common-voice-22-0"
@@ -877,8 +887,9 @@ flags = ["permissive"]
 access = "direct"
 size_gb = 0.48
 hours = 15.3
+allow = ["audio/hi/*", "transcript/hi/*", "*.json", "*.md"]
 weights_publishable = "yes"
-note = "The cleanest licence on this entire list — CC0-1.0 is public domain, zero attribution obligation, zero risk to an Apache-2.0 release. Crowd-sourced Indian speakers reading Devanagari prompts through consumer microphones: exactly the accent and channel diversity a studio corpus lacks. Tiny downloa..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. The cleanest licence on this entire list — CC0-1.0 is public domain, zero attribution obligation, zero risk to an Apache-2.0 release. Crowd-sourced Indian speakers reading Devanagari prompts through consumer microphones: exactly the accent and channel diversity a studio corpus lacks. Tiny downloa..."
 
 [[dataset]]
 name = "indic-tts-hindi"
@@ -903,8 +914,9 @@ flags = ["permissive", "SA"]
 access = "direct"
 size_gb = 17.6
 hours = 71.4
+allow = ["data/hindi*", "*.md"]
 weights_publishable = "unclear"
-note = "One of the very few single-speaker, studio-recorded Hindi corpora that is both large and directly downloadable with no gate and no form. The card is explicit: 'The recordings were done in a studio setting by native speakers. Each language has a single speaker in the dataset.' Devanagari transcrip..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. One of the very few single-speaker, studio-recorded Hindi corpora that is both large and directly downloadable with no gate and no form. The card is explicit: 'The recordings were done in a studio setting by native speakers. Each language has a single speaker in the dataset.' Devanagari transcrip..."
 
 [[dataset]]
 name = "hindi-emotion-voice-references"
@@ -942,8 +954,9 @@ flags = ["permissive"]
 access = "direct"
 size_gb = 0.75
 hours = 0.0
+allow = ["hindi/*"]
 weights_publishable = "yes"
-note = "This is the register fix, and every number checked out. Card table: Hindi Native 101,303 + Romanized 45,014 = 146,317 conversations, and datasets-server reports config `hindi` num_rows 146,317 — exact match. Schema is Persona / Script / Conversation[{speaker,text}] with Speaker_1/Speaker_2 multi-..."
+note = "MULTILINGUAL REPO: snapshot_download would take every language. `allow` restricts it to the split size_gb actually describes. This is the register fix, and every number checked out. Card table: Hindi Native 101,303 + Romanized 45,014 = 146,317 conversations, and datasets-server reports config `hindi` num_rows 146,317 — exact match. Schema is Persona / Script / Conversation[{speaker,text}] with Speaker_1/Speaker_2 multi-..."
 
 [[dataset]]
 name = "sentimix-hinglish-community-mirror"

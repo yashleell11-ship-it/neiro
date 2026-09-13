@@ -45,6 +45,39 @@ def _hf_token() -> str | None:
     return get_token()
 
 
+# A repo this many times larger than the manifest records is not the
+# thing the manifest describes. Generous — sizes are approximate — but
+# finite, because the alternative is discovering it at 90% disk.
+MAX_SIZE_FACTOR = 4.0
+
+
+def _repo_size_gb(ds: Dataset, token: str | None) -> float | None:
+    """Bytes the repo would actually deliver, honouring `allow`.
+
+    Asked BEFORE downloading, because an over-large repo is only cheap
+    to catch in advance. `fsicoli/common_voice_17_0` is recorded at
+    0.5 GB for its Hindi split and is a multilingual mirror; it reached
+    278 GB before anything noticed.
+    """
+    import fnmatch
+
+    from huggingface_hub import list_repo_tree
+
+    try:
+        total = 0
+        for entry in list_repo_tree(ds.hf_id, repo_type="dataset", recursive=True, token=token):
+            path = getattr(entry, "path", "")
+            size = (
+                getattr(entry, "size", None) or getattr(getattr(entry, "lfs", None), "size", 0) or 0
+            )
+            if ds.allow and not any(fnmatch.fnmatch(path, pat) for pat in ds.allow):
+                continue
+            total += size
+        return total / 1e9
+    except Exception:  # noqa: BLE001 — an unknown size is not a reason to refuse
+        return None
+
+
 def fetch_hf(ds: Dataset, dest: Path, token: str | None) -> str:
     from huggingface_hub import dataset_info, snapshot_download
     from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
@@ -55,12 +88,17 @@ def fetch_hf(ds: Dataset, dest: Path, token: str | None) -> str:
         return "not-found"
     if info.gated and not token:
         return "needs-login"
+
+    actual = _repo_size_gb(ds, token)
+    if actual is not None and ds.size_gb > 0 and actual > ds.size_gb * MAX_SIZE_FACTOR:
+        return f"too-big ({actual:.0f} GB vs {ds.size_gb:.1f} recorded)"
     try:
         snapshot_download(
             repo_id=ds.hf_id,
             repo_type="dataset",
             local_dir=dest,
             token=token,
+            allow_patterns=ds.allow or None,
             max_workers=8,
         )
     except GatedRepoError:
@@ -189,6 +227,8 @@ def fetch(ds: Dataset, dest: Path, token: str | None, force: bool) -> str:
 
 
 REMEDY = {
+    "too-big": "the repo is far larger than the manifest records — it is probably a "
+    "multilingual mirror. Add `allow` patterns for the split you want.",
     "no-data": "only a loader script or an HTML page arrived — this dataset needs "
     "`datasets.load_dataset()`, or the url points at an index page rather than a file",
     "needs-request-form": "apply on the dataset's own site, then download by hand into data/datasets/<name>/",
@@ -285,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
         if status.startswith("needs-") and ds.access not in AUTOMATABLE:
             # Expected, not a failure: the manifest said so up front.
             remedy = f"{remedy} — {ds.source}"
+        elif status.startswith("too-big"):
+            bad += 1
+            remedy = REMEDY["too-big"]
         elif status.startswith("too-small"):
             bad += 1
             remedy = "far less arrived than the manifest expects — check the source"

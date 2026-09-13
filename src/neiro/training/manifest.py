@@ -68,6 +68,14 @@ class Dataset(BaseModel):
     weights_publishable: Publishable
     note: str = ""
     sha256: str = ""  # optional, for url downloads only
+    # Glob patterns limiting WHAT is fetched from an HF repo. Without
+    # this, `snapshot_download` takes the whole repository — and several
+    # of these repos are multilingual mirrors where the manifest's
+    # `size_gb` describes only the one language wanted. Measured the
+    # expensive way on 2026-09-13: `fsicoli/common_voice_17_0` is
+    # recorded at 0.5 GB for its Hindi split and reached **278 GB** of
+    # every other language before it was stopped.
+    allow: list[str] = []
 
     @field_validator("name")
     @classmethod
@@ -96,6 +104,12 @@ class Dataset(BaseModel):
         if v < 0:
             raise ValueError("must be >= 0")
         return v
+
+    @model_validator(mode="after")
+    def _allow_patterns_are_for_hf_only(self) -> Dataset:
+        if self.allow and not self.hf_id:
+            raise ValueError(f"{self.name}: `allow` patterns only apply to HF repos")
+        return self
 
     @model_validator(mode="after")
     def _exactly_one_source(self) -> Dataset:

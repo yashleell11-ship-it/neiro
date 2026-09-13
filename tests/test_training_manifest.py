@@ -354,3 +354,75 @@ class TestDownloadVerification:
         (tmp_path / fd.MARKER).write_text("x" * 1000)
         (tmp_path / "data.parquet").write_bytes(b"\x00" * 50)
         assert fd._bytes_in(tmp_path) == 50
+
+
+class TestOverDownloadGuard:
+    """A repo far larger than the manifest records is not what the
+    manifest describes.
+
+    Found the expensive way on 2026-09-13: `fsicoli/common_voice_17_0`
+    is recorded at 0.5 GB, which is the size of its Hindi split and
+    exactly right — but the repo is a multilingual mirror totalling
+    558 GB, and `snapshot_download` takes the whole repository. It
+    reached **278 GB** and filled the disk to 90% before anything
+    noticed. Fifteen entries in the manifest had the same shape, several
+    at 500-1200x.
+
+    Two fixes, both here: `allow` patterns so a fetch can say which
+    split it wants, and a size check asked BEFORE downloading, since an
+    over-large repo is only cheap to catch in advance.
+    """
+
+    def _fetch_module(self):
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        import fetch_datasets
+
+        return fetch_datasets
+
+    def test_allow_patterns_are_accepted(self) -> None:
+        d = Manifest.loads(_one(allow=["Hindi/*"])).dataset[0]
+        assert d.allow == ["Hindi/*"]
+
+    def test_allow_defaults_to_the_whole_repo(self) -> None:
+        assert Manifest.loads(_one()).dataset[0].allow == []
+
+    def test_allow_is_meaningless_for_a_url_download(self) -> None:
+        with pytest.raises(ValidationError, match="HF repos"):
+            Manifest.loads(_one(hf_id="", url="https://x/y.tar.gz", allow=["a/*"]))
+
+    def test_the_size_factor_is_generous_but_finite(self) -> None:
+        # Sizes are approximate, so this must not be tight. It exists to
+        # stop 500x, not to police 30%.
+        fd = self._fetch_module()
+        assert 2.0 <= fd.MAX_SIZE_FACTOR <= 10.0
+
+    def test_every_multilingual_repo_in_the_manifest_is_restricted(self) -> None:
+        # The specific corpora that caused this. If one loses its allow
+        # patterns, the next full fetch fills the disk again.
+        from pathlib import Path as P
+
+        path = P(__file__).resolve().parents[1] / "data" / "datasets.toml"
+        by_name = {d.name: d for d in Manifest.load(path).dataset}
+        for name in (
+            "rasa",
+            "indicvoices",
+            "kathbath",
+            "shrutilipi",
+            "common-voice-17-0",
+            "common-voice-22-0",
+            "fleurs",
+            "indicvoices-r-tts-restored",
+        ):
+            assert by_name[name].allow, f"{name} would pull every language"
+
+    def test_a_restricted_entry_still_names_one_source(self) -> None:
+        # allow narrows what is fetched; it does not change where from.
+        from pathlib import Path as P
+
+        path = P(__file__).resolve().parents[1] / "data" / "datasets.toml"
+        for d in Manifest.load(path).dataset:
+            if d.allow:
+                assert d.is_hf and d.hf_id
