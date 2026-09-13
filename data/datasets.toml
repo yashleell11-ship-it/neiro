@@ -328,12 +328,12 @@ target = "ser_lane_b"
 priority = 2
 hf_id = "sustcsenlp/bn_emotion_speech_corpus"
 license = "Creative Commons Attribution 4.0 International"
-flags = ["permissive"]
-access = "direct"
+flags = ["unclear"]
+access = "unavailable"
 size_gb = 1.66
 hours = 7.7
-weights_publishable = "yes"
-note = "Permissive, 20 professional actors (10 M / 10 F), 7,000 utterances, 7 classes (anger, disgust, fear, happiness, neutral, sadness, surprise), human-validated by 50 raters (71% raw accuracy). Bangla is the closest permissive source of South-Asian prosody and intonation for a model that must work on..."
+weights_publishable = "unclear"
+note = "SCRIPT-BASED HF dataset like vctk/dailydialog/massive: the repo holds only bn_emotion_speech_corpus.py and a README, so snapshot_download returns no audio. Needs load_dataset(trust_remote_code=True). Permissive, 20 professional actors (10 M / 10 F), 7,000 utterances, 7 classes (anger, disgust, fear, happiness, neutral, sadness, surprise), human-validated by 50 raters (71% raw accuracy). Bangla is the closest permissive source of South-Asian prosody and intonation for a model that must work on..."
 
 [[dataset]]
 name = "ravdess"
