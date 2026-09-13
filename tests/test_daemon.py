@@ -209,14 +209,23 @@ class TestTurns:
 
     def test_only_one_turn_runs_at_a_time(self) -> None:
         # A lock, not a queue: if he speaks while she is answering, that
-        # is barge-in, not a second turn to run afterwards.
-        d = build_daemon()
+        # is barge-in, not a second turn to run afterwards. Observed as
+        # an overlap count — two TurnResults come back whether the turns
+        # were serialised or interleaved, so their type proves nothing.
+        gate = Gate()
+        d = gated_daemon(gate)
 
-        async def go():
-            return await asyncio.gather(d.handle(AUDIO), d.handle(AUDIO))
+        async def go() -> list[TurnResult]:
+            hers = asyncio.create_task(d.handle(AUDIO))
+            await gate.wait_entered(hers)
+            his = asyncio.create_task(d.handle(AUDIO))
+            await gate.wait_entered(his)
+            gate.release.set()
+            return await asyncio.gather(hers, his)
 
-        results = asyncio.run(go())
-        assert all(isinstance(r, TurnResult) for r in results)
+        first, second = run(go())
+        assert gate.peak == 1
+        assert first.cancelled and not second.cancelled
 
     def test_the_endpoint_runs_the_turn_speech_start_created(self) -> None:
         # handle() interrupts whatever is in flight before it runs. The
