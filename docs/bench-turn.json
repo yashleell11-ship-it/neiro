@@ -1,0 +1,18 @@
+{
+ "turns": 12,
+ "failed": 0,
+ "p50_ms": 690.1,
+ "p95_ms": 703.3,
+ "fake_provider_floor_ms": 645.0,
+ "pipeline_overhead_ms": 45.1,
+ "max_overhead_ms": 60.0,
+ "stages_p50": {
+  "sink_first_sent->sink_played": -0.0,
+  "endpoint->stt_start": 0.0,
+  "stt_done->emotion_resolved": 141.4,
+  "stt_start->stt_done": 141.1,
+  "tts_first_chunk->sink_first_sent": 0.0,
+  "sink_played->turn_done": 120.2,
+  "emotion_resolved->tts_first_chunk": 406.4
+ }
+}

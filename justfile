@@ -58,6 +58,19 @@ wer:
     #!/usr/bin/env bash
     source env.sh && uv run neiro wer
 
+# Replay fixture turns through fakes: measures the PIPELINE, not the GPU.
+bench:
+    uv run scripts/bench_turn.py
+
+# The same, failing if the pipeline itself has gained overhead.
+bench-assert:
+    uv run scripts/bench_turn.py --assert
+
+# WER against a public corpus — an honest prior before recording his own.
+bench-stt CORPUS="svarah":
+    #!/usr/bin/env bash
+    source env.sh && uv run scripts/bench_stt.py --corpus {{CORPUS}}
+
 # --- training (separate venv, CUDA torch) ------------------------------
 
 train-ser CORPORA="crema-d ravdess rasa":
@@ -80,4 +93,4 @@ fix:
     uv run ruff format src tests scripts training/recipes
 
 # Everything that must be green before a commit.
-check: lint test doctor
+check: lint test bench-assert doctor

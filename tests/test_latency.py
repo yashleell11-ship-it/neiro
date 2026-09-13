@@ -120,3 +120,52 @@ class TestReadTurns:
 
     def test_a_missing_file_reads_as_empty(self, tmp_path) -> None:
         assert read_turns(tmp_path / "nope.jsonl") == []
+
+
+class TestPipelineRegressionBench:
+    """`scripts/bench_turn.py` replays fixture turns through fakes.
+
+    The point is that it measures the PIPELINE — queueing, backpressure,
+    stamp order — and not how fast anyone's GPU is today. That is the
+    only way a latency regression test can run without hardware and
+    still mean something.
+    """
+
+    def _bench(self):
+        import sys
+        from pathlib import Path as P
+
+        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
+        import bench_turn
+
+        return bench_turn
+
+    def test_the_overhead_bar_is_about_the_code_not_the_models(self) -> None:
+        # The provider delays are measured constants the pipeline has to
+        # absorb; the bar is only on what the code adds on top.
+        b = self._bench()
+        assert b.MAX_OVERHEAD_MS <= 100
+        assert b.STT_MS > 0 and b.TTS_FIRST_MS > 0
+
+    def test_the_fake_sink_stamps_the_same_name_as_the_browser(self) -> None:
+        # A fake standing in for the browser must use `sink_played`, or
+        # the headline metric is silently uncomputable. The FILE sink
+        # deliberately uses a different name, because it is not the same
+        # measurement.
+        import inspect
+
+        b = self._bench()
+        assert 'turn.stamp("sink_played")' in inspect.getsource(b.FakeSink.play)
+
+        from neiro.audio.sink_local import LocalWavSink
+
+        assert "sink_played" not in inspect.getsource(LocalWavSink.play)
+
+    def test_a_turn_completes_and_produces_a_headline(self) -> None:
+        import asyncio
+
+        b = self._bench()
+        result = asyncio.run(b.one_turn("<e:happy:7> Yeah, it worked."))
+        assert result["error"] is None
+        assert result["headline_ms"] == result["headline_ms"]  # not NaN
+        assert result["headline_ms"] > 0
