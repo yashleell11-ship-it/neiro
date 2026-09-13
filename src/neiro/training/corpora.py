@@ -181,11 +181,37 @@ def read_savee(root: Path) -> list[Utterance]:
     return rows
 
 
+# Rasa, after scripts/extract_rasa.py: <speaker>_<STYLE>_<n>.wav
+_RASA = re.compile(r"^(?P<speaker>male|female)_(?P<emo>[A-Z]+)_\d+\.wav$")
+
+
+def read_rasa(root: Path) -> list[Utterance]:
+    """AI4Bharat Rasa — Hindi expressive speech, extracted to wavs.
+
+    The only corpus here that is INDIAN, emotional, and CC-BY (so weights
+    trained on it can ship). Its audio lives inside parquet shards, which
+    this module cannot walk, so `scripts/extract_rasa.py` writes the six
+    emotion styles out first; the other ten styles are reading registers
+    (WIKI, BOOK, NEWS...) and are skipped rather than called neutral.
+
+    Rasa ships one male and one female voice per language and no speaker
+    ids, so gender stands in for speaker — which is exactly what the
+    speaker-independent split needs from it.
+    """
+    rows = []
+    for path, name in _names_in(root):
+        m = _RASA.match(name)
+        if m and (u := _emit(path, m["emo"], "rasa", m["speaker"])):
+            rows.append(u)
+    return rows
+
+
 READERS = {
     "crema-d": read_crema_d,
     "ravdess": read_ravdess,
     "tess": read_tess,
     "savee": read_savee,
+    "rasa": read_rasa,
 }
 
 

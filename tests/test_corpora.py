@@ -19,6 +19,7 @@ from neiro.training.corpora import (
     _bucket,
     load,
     read_crema_d,
+    read_rasa,
     read_ravdess,
     read_savee,
     read_tess,
@@ -86,7 +87,7 @@ class TestOtherReaders:
         assert next(r for r in rows if r.label == "surprise").arousal > 0
 
     def test_every_reader_is_registered(self) -> None:
-        assert set(READERS) == {"crema-d", "ravdess", "tess", "savee"}
+        assert set(READERS) == {"crema-d", "ravdess", "tess", "savee", "rasa"}
 
 
 class TestSplit:
@@ -181,3 +182,32 @@ class TestRealDownload:
         assert s["speakers"] == 91
         assert s["n"] > 7000
         assert len(s["by_label"]) == 6
+
+
+class TestRasa:
+    """AI4Bharat Rasa — the only Indian, emotional, CC-BY corpus here."""
+
+    def test_it_parses_the_extracted_filenames(self, tmp_path: Path) -> None:
+        root = _touch(tmp_path / "rasa", ["female_ANGER_00001.wav", "male_SAD_00002.wav"])
+        rows = read_rasa(root)
+        assert len(rows) == 2
+        anger = next(r for r in rows if r.label == "anger")
+        assert anger.speaker == "rasa:female"
+        assert anger.arousal > 0.5
+
+    def test_gender_stands_in_for_speaker(self, tmp_path: Path) -> None:
+        # Rasa ships one male and one female voice per language and no
+        # speaker ids, so gender is the only speaker axis there is — and
+        # it is what the speaker-independent split actually needs.
+        root = _touch(tmp_path / "rasa", ["male_HAPPY_00001.wav", "female_HAPPY_00002.wav"])
+        assert len({r.speaker for r in read_rasa(root)}) == 2
+
+    def test_reading_styles_are_not_in_the_extracted_set(self, tmp_path: Path) -> None:
+        # WIKI, BOOK, NEWS and the rest are reading registers, not
+        # emotions. A Wikipedia read is a different task, not a neutral
+        # emotional state, so the extractor skips them entirely.
+        root = _touch(tmp_path / "rasa", ["female_WIKI_00001.wav", "male_CONV_00002.wav"])
+        assert read_rasa(root) == []
+
+    def test_it_is_registered(self) -> None:
+        assert "rasa" in READERS
