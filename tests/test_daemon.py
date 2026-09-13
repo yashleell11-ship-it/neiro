@@ -14,13 +14,16 @@ every test green.
 from __future__ import annotations
 
 import asyncio
+import json
 
+import httpx
 import numpy as np
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from neiro.config import Neiro
 from neiro.daemon import Daemon
+from neiro.llm.ollama_native import OllamaNativeLlm
 from neiro.llm.openai_compat import StreamAccumulator
 from neiro.orchestrator import TurnResult
 from neiro.speech.errors import ErrorSpeech, Failure
@@ -532,6 +535,52 @@ class TestTools:
         assert llm.requests[1][0][-1]["role"] == "tool"
         assert [e["event"] for e in audit.entries] == [ATTEMPTED, SUCCEEDED]
         assert audit.entries[0]["turn"] == result.turn.id
+
+    def test_a_tool_turn_completes_on_the_shipped_backend(self, tmp_path) -> None:
+        # `build()`'s default LLM is the ollama-native client, and ollama
+        # 0.33.2 answers HTTP 400 to the OpenAI-shaped assistant message
+        # the orchestrator remembers — arguments as a JSON string. With
+        # fakes on both sides every test above passed while every real
+        # tool turn ended in error after the tool had already run. This
+        # transport plays ollama, including that rejection.
+        r, _, ran = fake_registry(tmp_path)
+        bodies: list[dict] = []
+
+        def ollama(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            bodies.append(body)
+            for message in body["messages"]:
+                for call in message.get("tool_calls") or []:
+                    if not isinstance(call["function"]["arguments"], dict):
+                        error = "Value looks like object, but can't find closing '}' symbol"
+                        return httpx.Response(400, json={"error": error})
+            if len(bodies) == 1:
+                calls = [{"function": {"name": "battery", "arguments": {}}}]
+                message = {"role": "assistant", "content": "", "tool_calls": calls}
+            else:
+                message = {"role": "assistant", "content": "<e:happy:7> Ninety six percent."}
+            lines = [
+                {"message": message, "done": False},
+                {"message": {"role": "assistant", "content": ""}, "done": True},
+            ]
+            return httpx.Response(200, content="".join(json.dumps(l) + "\n" for l in lines))
+
+        d = Daemon(cfg=Neiro())
+        order: list[str] = []
+        d.build(
+            stt=Recorder(order, "stt"),
+            llm=OllamaNativeLlm(
+                base_url="http://ollama.test", transport=httpx.MockTransport(ollama)
+            ),
+            tts=Recorder(order, "tts"),
+            sink=Recorder(order, "sink"),
+            tools=r,
+        )
+        result = run(d.handle(AUDIO))
+        assert result.error is None, result.error
+        assert ran == [1] and result.reply == "Ninety six percent."
+        assert len(bodies) == 2
+        assert [m["role"] for m in bodies[1]["messages"]] == ["system", "user", "assistant", "tool"]
 
     def test_the_gate_and_log_handed_in_reach_the_real_registry(self, tmp_path) -> None:
         # `confirm` and `audit` replace just those two parts of the

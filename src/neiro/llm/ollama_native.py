@@ -29,6 +29,11 @@ The shapes differ in ways that matter:
     out-of-band-reasoning guard applies and is reused rather than
     reimplemented.
   - **`options.num_predict`, not `max_tokens`.**
+  - **Tool-call arguments are an object in both directions.** The
+    stream's whole calls are reshaped into the accumulator's string
+    form on the way out, and an assistant message remembered in the
+    OpenAI shape is reshaped back on the way in — `/api/chat` answers
+    HTTP 400 to the string form (see `ollama_message`).
 """
 
 from __future__ import annotations
@@ -78,6 +83,34 @@ def check_chunk_not_thinking(chunk: dict) -> None:
         )
 
 
+def ollama_message(message: dict) -> dict:
+    """One message of history, in the shape `/api/chat` accepts.
+
+    The orchestrator remembers a tool exchange in the OpenAI shape,
+    where the assistant's `tool_calls[i].function.arguments` is a JSON
+    *string* — what llama-server's `/v1` takes as it is. ollama wants
+    that one field as an object: the string form gets HTTP 400 ("Value
+    looks like object, but can't find closing '}' symbol", 0.33.2,
+    measured 2026-09-14), so every tool turn on this backend ended in
+    error after the tool had already run. The extras it does not know —
+    `id`, `type`, `tool_call_id` — it tolerates (measured), so only the
+    arguments move and nothing else about the message changes.
+
+    Always a copy. The caller's list is the conversation history, and
+    those bytes are the KV prefix.
+    """
+    calls = message.get("tool_calls")
+    if message.get("role") != "assistant" or not calls:
+        return message
+    shaped = []
+    for call in calls:
+        function = dict(call.get("function") or {})
+        if isinstance(function.get("arguments"), str):
+            function["arguments"] = json.loads(function["arguments"])
+        shaped.append({**call, "function": function})
+    return {**message, "tool_calls": shaped}
+
+
 class OllamaNativeLlm:
     """protocols.LLM over ollama's `/api/chat`. TIERABLE like the other."""
 
@@ -99,7 +132,7 @@ class OllamaNativeLlm:
     def build_request(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         body: dict = {
             "model": self._cfg.llm.model,
-            "messages": messages,
+            "messages": [ollama_message(message) for message in messages],
             "stream": True,
             # The one that actually works. Not belt-and-braces here: the
             # other spellings were measured to be ignored, and listing

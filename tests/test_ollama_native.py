@@ -10,6 +10,7 @@ apart.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 import httpx
@@ -19,6 +20,7 @@ from neiro.llm.ollama_native import (
     THINKING_FIELD,
     OllamaNativeLlm,
     check_chunk_not_thinking,
+    ollama_message,
     parse_ndjson_line,
 )
 from neiro.llm.openai_compat import OpenAiCompatLlm, StreamAccumulator, ThinkingModeError
@@ -174,3 +176,95 @@ class TestToolCalls:
     def test_the_request_carries_the_tools(self) -> None:
         body = OllamaNativeLlm().build_request([], TOOLS)
         assert body["tools"] == TOOLS
+
+
+# The assistant message the orchestrator remembers for a tool round — the
+# OpenAI shape, arguments as a JSON string — and the tool's reply to it.
+ASKED = {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+        {
+            "id": "call_1_0_0",
+            "type": "function",
+            "function": {"name": "set_volume", "arguments": '{"percent":30}'},
+        }
+    ],
+}
+ANSWERED = {"role": "tool", "tool_call_id": "call_1_0_0", "content": "Volume 30 percent."}
+TOOL_TURN = [
+    {"role": "system", "content": "You are Neiro."},
+    {"role": "user", "content": "volume thirty"},
+    ASKED,
+    ANSWERED,
+]
+REPLY = {
+    "model": "neiro-4b",
+    "message": {"role": "assistant", "content": "<e:happy:6> Done."},
+    "done": False,
+}
+
+
+class TestToolResultRequest:
+    """The second request of a tool turn carries the call the model made
+    and its result. ollama 0.33.2 answers HTTP 400 to the OpenAI shape's
+    string arguments and 200 to an object — measured, and the reason
+    every real tool turn used to end in error after the tool had run.
+    """
+
+    def test_the_arguments_reach_ollama_as_an_object(self) -> None:
+        bodies: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            bodies.append(json.loads(request.content))
+            lines = json.dumps(REPLY) + "\n" + json.dumps(END) + "\n"
+            return httpx.Response(200, content=lines.encode())
+
+        llm = OllamaNativeLlm(base_url="http://ollama.test", transport=httpx.MockTransport(handler))
+
+        async def go() -> None:
+            async for _ in llm.stream(copy.deepcopy(TOOL_TURN), TOOLS):
+                pass
+
+        asyncio.run(go())
+        (body,) = bodies
+        call = body["messages"][2]["tool_calls"][0]
+        assert call["function"] == {"name": "set_volume", "arguments": {"percent": 30}}
+        # The extras ollama tolerates stay: the id is what binds the
+        # result to the call, and the tool message is sent as it is.
+        assert call["id"] == "call_1_0_0" and call["type"] == "function"
+        assert body["messages"][3] == ANSWERED
+        assert [m["role"] for m in body["messages"]] == ["system", "user", "assistant", "tool"]
+
+    def test_history_keeps_the_openai_shape(self) -> None:
+        # Shaped from a copy: the caller's list is the conversation
+        # history, and its bytes are the KV prefix. A request that
+        # rewrote it in place would send an object the first time and
+        # find one already there the next — the same bytes by luck, and
+        # a history no OpenAI-shaped backend could be handed afterwards.
+        history = copy.deepcopy(TOOL_TURN)
+        OllamaNativeLlm().build_request(history)
+        assert history == TOOL_TURN
+        assert isinstance(history[2]["tool_calls"][0]["function"]["arguments"], str)
+
+    def test_arguments_already_an_object_are_left_alone(self) -> None:
+        native = {
+            **ASKED,
+            "tool_calls": [{"function": {"name": "set_volume", "arguments": {"percent": 30}}}],
+        }
+        assert ollama_message(native) == native
+
+    def test_messages_without_calls_pass_through_untouched(self) -> None:
+        for message in [*TOOL_TURN[:2], ANSWERED]:
+            assert ollama_message(message) is message
+
+    def test_arguments_that_are_not_json_fail_before_the_request(self) -> None:
+        # A string that will not parse cannot become an object and would
+        # be a certain 400 with a message about closing braces; failing
+        # here names the actual cause.
+        broken = {
+            **ASKED,
+            "tool_calls": [{"function": {"name": "set_volume", "arguments": "{oops"}}],
+        }
+        with pytest.raises(json.JSONDecodeError):
+            OllamaNativeLlm().build_request([broken])
