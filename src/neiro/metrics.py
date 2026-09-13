@@ -26,6 +26,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from neiro.evals.latency import HEADLINE_END, STAGES
 from neiro.state import Turn
 
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "neiro"
@@ -34,15 +35,18 @@ TURNS_PATH = STATE_DIR / "turns.jsonl"
 # The stage boundaries a turn passes through, in order. Used to render
 # the waterfall — the point of which is that the next bottleneck names
 # itself instead of being guessed at.
-STAGE_ORDER = [
-    "speech_start",
-    "endpoint",
-    "stt_done",
-    "llm_first_token",
-    "llm_first_sentence",
-    "tts_first_chunk",
-    "sink_played",
-]
+#
+# Imported, never copied. This module used to carry its own list, written
+# before the orchestrator existed, and the two drifted without a single
+# error: three of its names were stamped by nothing, four boundaries the
+# pipeline does stamp were missing, and because each bar is keyed by its
+# END stage the bar labelled `tts_first_chunk` silently contained the
+# emotion resolve and the entire LLM stream — the opposite of the
+# bottleneck naming itself. evals/latency.py owns the vocabulary;
+# tests/test_metrics.py checks it against the `turn.stamp(...)` literals
+# in the source tree, so the next drift fails a test instead of
+# mislabelling a waterfall.
+STAGE_ORDER = STAGES
 
 
 def percentile(values: list[float], p: float) -> float:
@@ -95,7 +99,7 @@ def headline_latency_ms(turn: Turn) -> float | None:
     improve every average it appears in.
     """
     start = turn.timeline.get("endpoint")
-    end = turn.timeline.get("sink_played")
+    end = turn.timeline.get(HEADLINE_END)
     if start is None or end is None:
         return None
     return (end - start) * 1000.0

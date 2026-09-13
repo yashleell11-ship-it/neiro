@@ -7,11 +7,14 @@ separate from any notion of an average.
 
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
 from neiro.metrics import (
+    STAGE_ORDER,
     TurnRecord,
     append_turn,
     format_hud,
@@ -22,6 +25,21 @@ from neiro.metrics import (
     summarise,
 )
 from neiro.state import Turn
+
+REPO = Path(__file__).resolve().parents[1]
+
+# Names the pipeline stamps that are deliberately NOT waterfall stages.
+# Each one is here because it is a real `turn.stamp(...)` in the tree and
+# the cross-check below would otherwise flag it as drift.
+STAMPED_BUT_NOT_A_STAGE = {
+    # Terminal outcomes of a turn that produced no audio. A bar for them
+    # would put a duration on a turn that has none.
+    "cancelled",
+    "failed",
+    # The file sink's stand-in for `sink_played`, named differently on
+    # purpose so a file-sink number is never averaged with a browser one.
+    "sink_written_seq0",
+}
 
 
 def _turn_with(timeline: dict[str, float], turn_id: int = 1) -> Turn:
@@ -56,13 +74,13 @@ class TestStageDurations:
             {
                 "endpoint": 1.0,
                 "stt_done": 1.2,
-                "llm_first_token": 1.35,
+                "tts_first_chunk": 1.35,
                 "sink_played": 1.6,
             }
         )
         stages = stage_durations_ms(turn)
         assert stages["stt_done"] == pytest.approx(200.0)
-        assert stages["llm_first_token"] == pytest.approx(150.0)
+        assert stages["tts_first_chunk"] == pytest.approx(150.0)
         assert stages["sink_played"] == pytest.approx(250.0)
 
     def test_missing_stages_are_skipped_not_faked(self) -> None:
@@ -73,6 +91,65 @@ class TestStageDurations:
 
     def test_single_stage_has_no_deltas(self) -> None:
         assert stage_durations_ms(_turn_with({"endpoint": 1.0})) == {}
+
+
+def _names_stamped_in_the_tree() -> set[str]:
+    """Every name passed to a `.stamp(...)` call under src/ and scripts/.
+
+    Read from the AST, not with a regex: a comment that mentions
+    `turn.stamp(...)` is prose, not a call site, and a regex cannot tell
+    the two apart.
+
+    scripts/ is included because the bench's fake browser sink is, today,
+    the only thing that stamps `sink_played` — the browser sink that
+    will stamp it for real is not built yet.
+    """
+    names: set[str] = set()
+    for folder in ("src", "scripts"):
+        for path in sorted((REPO / folder).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr != "stamp":
+                    continue
+                arg = node.args[0] if node.args else None
+                # A stamp whose name is a variable would slip past this
+                # scan unseen, and the scan is the whole guarantee. Refuse.
+                assert isinstance(arg, ast.Constant) and isinstance(arg.value, str), (
+                    path,
+                    node.lineno,
+                )
+                names.add(arg.value)
+    return names
+
+
+class TestStageOrderFollowsThePipeline:
+    """Regression: STAGE_ORDER was a stale copy of the stage contract.
+
+    It was written before the orchestrator existed and never reconciled
+    with it. Three of its names were stamped by nothing, four boundaries
+    the pipeline does stamp were absent, and nothing failed — the
+    waterfall just quietly folded the emotion resolve and the whole LLM
+    stream into a bar labelled `tts_first_chunk`. The tests in this file
+    could not catch it because they fabricated timelines from the same
+    phantom names.
+    """
+
+    def test_every_stage_is_stamped_and_every_stamp_is_accounted_for(self) -> None:
+        stamped = _names_stamped_in_the_tree()
+        assert stamped, "the scan found no stamps at all — is REPO right?"
+        # No phantoms: a stage nothing stamps can never render a bar.
+        assert set(STAGE_ORDER) <= stamped, set(STAGE_ORDER) - stamped
+        # No strays: a stamp the waterfall does not know is a boundary it
+        # cannot show. It is either a stage or on the documented list.
+        assert stamped - set(STAGE_ORDER) == STAMPED_BUT_NOT_A_STAGE
+
+    def test_the_exception_list_holds_only_real_stamps(self) -> None:
+        # Otherwise a stamp could be deleted from the pipeline and the
+        # exception list would keep vouching for it forever.
+        assert STAMPED_BUT_NOT_A_STAGE <= _names_stamped_in_the_tree()
+        assert not STAMPED_BUT_NOT_A_STAGE & set(STAGE_ORDER)
 
 
 class TestPercentile:
