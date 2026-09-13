@@ -10,12 +10,18 @@ it.
 from __future__ import annotations
 
 import ast
+import json
 import runpy
+import sys
+import time
+import types
+import wave
 from pathlib import Path
 
 import pytest
 import typer
 from typer.main import get_command
+from typer.testing import CliRunner
 
 from neiro import cli
 
@@ -77,3 +83,68 @@ class TestEveryCommandIsRegistered:
 
         assert len(seen) == 1
         assert set(get_command(seen[0]).commands) == _commands_in_source()
+
+
+class TestWerReportsPercentiles:
+    """`neiro wer` is the command every STT swap is scored with, so its
+    transcribe time is the one place a mean would do the most damage.
+    """
+
+    # Three quick utterances and one that took four seconds -- a long
+    # clip, a cold cache, a cuBLAS hiccup. Nearest-rank p50 is 100 and
+    # p95 is 4000; the mean is 1075, a number nobody experienced.
+    TRANSCRIBE_S = (0.1, 0.1, 0.1, 4.0)
+
+    def test_transcribe_time_is_p50_and_p95_never_a_mean(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from neiro import recordset
+        from neiro.config import Neiro
+
+        # A dataset the command will accept: refs.jsonl plus silent WAVs
+        # at the configured input rate, so nothing is skipped as a rate
+        # mismatch.
+        samplerate = Neiro().audio.input_samplerate
+        dataset = tmp_path / "wer"
+        dataset.mkdir()
+        with (dataset / "refs.jsonl").open("w") as refs:
+            for i, _ in enumerate(self.TRANSCRIBE_S):
+                wav_name = f"{i + 1:03d}.wav"
+                with wave.open(str(dataset / wav_name), "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(samplerate)
+                    w.writeframes(bytes(2 * samplerate))
+                refs.write(json.dumps({"file": wav_name, "reference": "hello"}) + "\n")
+        monkeypatch.setattr(recordset, "DATA_ROOT", tmp_path)
+
+        # The clock only moves inside transcribe(), by a scripted amount,
+        # so the measured times are exact whatever else reads it.
+        clock = {"now": 0.0}
+        durations = iter(self.TRANSCRIBE_S)
+        monkeypatch.setattr(time, "perf_counter", lambda: clock["now"])
+
+        class FakeStt:
+            def __init__(self, cfg: object) -> None:
+                pass
+
+            def warm(self) -> float:
+                return 0.0
+
+            async def transcribe(self, audio: object) -> str:
+                clock["now"] += next(durations)
+                return "hello"
+
+        # Stubbed at the module level: the real one imports faster-whisper
+        # and loads a model, and the output format is what is under test.
+        stub = types.ModuleType("neiro.stt.faster_whisper")
+        stub.FasterWhisperStt = FakeStt  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "neiro.stt.faster_whisper", stub)
+
+        result = CliRunner().invoke(cli.app, ["wer", "--name", "wer"])
+
+        assert result.exit_code == 0, result.output
+        assert "p50 100 ms" in result.output
+        assert "p95 4000 ms" in result.output
+        assert "Mean" not in result.output
+        assert "1075" not in result.output

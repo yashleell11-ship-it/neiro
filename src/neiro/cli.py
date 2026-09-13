@@ -204,6 +204,7 @@ def wer(
     from rich.table import Table
 
     from neiro.config import Neiro
+    from neiro.evals.latency import percentile
     from neiro.evals.wer import load_references, score
     from neiro.recordset import DATA_ROOT
     from neiro.stt.faster_whisper import FasterWhisperStt
@@ -231,7 +232,10 @@ def wer(
     console.print(f"(model warmed in {warm_s:.1f}s)\n")
 
     pairs = []
-    total_ms = 0.0
+    # Every per-utterance time is kept, not summed. The report is p50/p95
+    # (CLAUDE.md rule 8: never a mean), and a percentile needs the
+    # distribution a running total throws away.
+    transcribe_ms: list[float] = []
     for entry in entries:
         wav_path = refs_path.parent / entry["file"]
         if not wav_path.exists():
@@ -251,7 +255,7 @@ def wer(
             continue
         t0 = time.perf_counter()
         hypothesis = asyncio.run(engine.transcribe(audio))
-        total_ms += (time.perf_counter() - t0) * 1000
+        transcribe_ms.append((time.perf_counter() - t0) * 1000)
         pairs.append((entry["file"], entry["reference"], hypothesis))
 
     if not pairs:
@@ -275,7 +279,13 @@ def wer(
         f"\n[bold]Corpus WER: {result.wer:.2%}[/bold] "
         f"({result.total_errors} errors / {result.total_ref_words} reference words)"
     )
-    console.print(f"Mean transcribe time: {total_ms / len(pairs):.0f} ms per utterance")
+    # p50 is what a turn is usually like; p95 is the long clip or cold
+    # cache a mean would have hidden behind the fast ones. Same
+    # nearest-rank helper as the latency eval, so the two are comparable.
+    console.print(
+        f"Transcribe time: p50 {percentile(transcribe_ms, 0.50):.0f} ms, "
+        f"p95 {percentile(transcribe_ms, 0.95):.0f} ms per utterance"
+    )
     console.print(
         "\nUnder ~10% is fine. Over ~15% means mic gain or room, not the model — "
         "check the peak levels in refs.jsonl before blaming the STT."
