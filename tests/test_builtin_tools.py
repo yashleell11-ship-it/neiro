@@ -8,8 +8,11 @@ against a script interface that did not exist).
 
 from __future__ import annotations
 
+from typing import Literal, get_args, get_origin
+
 import pytest
 
+from neiro.tools import media, system
 from neiro.tools.builtin import build_registry
 from neiro.tools.registry import ToolRegistry, ToolRejected
 from neiro.tools.tiers import Tier
@@ -142,3 +145,116 @@ class TestRejections:
         # Perfectly well-formed and still must not run unasked.
         with pytest.raises(ToolNotConfirmed):
             registry.call("set_volume", {"percent": 30})
+
+
+def _advertised_enum(registry: ToolRegistry, tool: str, field: str) -> list[str]:
+    """The enum exactly as the model sees it, read back from the schema
+    rather than from the pydantic class — the schema is the contract.
+    """
+    schema = next(s for s in registry.schemas() if s["function"]["name"] == tool)
+    return schema["function"]["parameters"]["properties"][field]["enum"]
+
+
+def _description(registry: ToolRegistry, tool: str) -> str:
+    schema = next(s for s in registry.schemas() if s["function"]["name"] == tool)
+    return schema["function"]["description"]
+
+
+def _confirming() -> ToolRegistry:
+    """A fresh, auto-confirming registry.
+
+    Fresh per call on purpose: `ToolSpec.max_per_minute` is a real limit
+    on a real registry, and an enum with more members than the bucket
+    allows would otherwise read as RateLimited rather than as the drift
+    these tests exist to catch.
+    """
+    return build_registry(confirm=lambda *_: True)
+
+
+class TestAdvertisedEnumsAreExecutable:
+    """The schema is prompt text: whatever it advertises, the model will
+    eventually emit. An enum member the handler then refuses is the worst
+    failure a tool can have — it passes validation, spends the rate-limit
+    bucket and the side-effect budget, gets Yash to click Yes, and only
+    then dies, with a ValueError the registry's ToolError contract does
+    not cover. That happened with `media_control("stop")`: promised in
+    the description and the enum, absent from `media.ACTIONS`.
+    """
+
+    @pytest.fixture
+    def playerctl_argv(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> list[list[str]]:
+        # Stub the one subprocess seam in each module, so the suite never
+        # actually pauses what is playing or mutes the speakers. The list
+        # records what media.py would have run.
+        argv: list[list[str]] = []
+
+        def fake_playerctl(args: list[str], timeout: float = 0.0) -> tuple[str, bool]:
+            argv.append(list(args))
+            return "", True
+
+        monkeypatch.setattr(media, "_run", fake_playerctl)
+        monkeypatch.setattr(system, "_run", lambda cmd, timeout=0.0: "")
+        # adjust_brightness refuses to run without its script; the test is
+        # about the enum, not about whether this machine has the script.
+        script = tmp_path / "brightness-smart.sh"
+        script.touch()
+        monkeypatch.setattr(system, "BRIGHTNESS_SCRIPT", script)
+        return argv
+
+    def test_media_schema_and_allowlist_are_one_set(self, registry: ToolRegistry) -> None:
+        # Both directions: nothing advertised that cannot run, nothing
+        # runnable that the model is not told about.
+        assert set(_advertised_enum(registry, "media_control", "action")) == set(media.ACTIONS)
+
+    def test_media_description_promises_nothing_outside_the_enum(
+        self, registry: ToolRegistry
+    ) -> None:
+        # The description is the model's only basis for choosing the
+        # tool. It said "stop" while the enum could not deliver it.
+        text = _description(registry, "media_control").lower()
+        enum = set(_advertised_enum(registry, "media_control", "action"))
+        for verb in ("stop", "open", "position"):
+            assert verb in enum or verb not in text, verb
+
+    def test_every_advertised_media_action_reaches_playerctl(
+        self, playerctl_argv: list[list[str]]
+    ) -> None:
+        for action in _advertised_enum(_confirming(), "media_control", "action"):
+            playerctl_argv.clear()
+            result = _confirming().call("media_control", {"action": action})
+            assert isinstance(result, str) and result.strip(), action
+            # The enum member is the playerctl verb, passed through
+            # unmodified — no mapping in between that could drift.
+            assert playerctl_argv == [[action]], action
+
+    def test_every_literal_member_of_every_tool_is_accepted(
+        self, playerctl_argv: list[list[str]]
+    ) -> None:
+        # The class of bug, not the instance: for every tool, every
+        # member of every Literal field must run without a bare
+        # ValueError. A tool that needs another required argument will
+        # be rejected here, loudly — extend the test, do not skip it.
+        shape = _confirming()
+        checked = 0
+        for name in shape.names():
+            spec = shape.spec(name)
+            for field, info in spec.args_model.model_fields.items():
+                if get_origin(info.annotation) is not Literal:
+                    continue
+                for member in get_args(info.annotation):
+                    result = _confirming().call(name, {field: member})
+                    assert isinstance(result, str) and result.strip(), f"{name}.{field}={member!r}"
+                    checked += 1
+        # If this ever reads zero the test has stopped testing anything.
+        assert checked >= len(media.ACTIONS)
+
+    @pytest.mark.parametrize("action", ["stop", "open", "position", "stop ", "", "play; ls"])
+    def test_a_bad_action_is_a_tool_error_and_never_reaches_playerctl(
+        self, playerctl_argv: list[list[str]], action: str
+    ) -> None:
+        # ToolRejected, not ValueError: the registry's callers speak
+        # ToolError messages aloud and are not written for anything else.
+        # "stop" is the case that used to get all the way to the handler.
+        with pytest.raises(ToolRejected):
+            _confirming().call("media_control", {"action": action})
+        assert playerctl_argv == []

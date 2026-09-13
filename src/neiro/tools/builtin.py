@@ -50,7 +50,10 @@ class BrightnessArgs(BaseModel):
 
 class MediaArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["play-pause", "next", "previous", "stop"]
+    # The same Literal `media.media_control` checks against — not a copy
+    # of it — so the schema cannot advertise an action the handler
+    # refuses. A member the model may legally emit must be executable.
+    action: media.MediaAction
 
 
 class WindowIndexArgs(BaseModel):
@@ -169,7 +172,7 @@ def build_registry(confirm=None) -> ToolRegistry:
         ),
         ToolSpec(
             name="media_control",
-            description="Play, pause, skip or stop whatever is playing.",
+            description="Play, pause or skip whatever is playing.",
             tier=Tier.YELLOW,
             args_model=MediaArgs,
             handler=lambda action: media.media_control(action),

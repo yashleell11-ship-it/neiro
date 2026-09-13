@@ -12,8 +12,18 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from typing import Literal, get_args
 
-ACTIONS = ("play", "pause", "play-pause", "next", "previous")
+# The ONE place the action set is written down. `MediaArgs` in
+# builtin.py annotates its field with this same type, so the enum the
+# model is shown and the allow-list `media_control` checks are the same
+# object and cannot drift. They did drift once, in both directions: the
+# schema promised "stop" and the handler refused it — after the
+# rate-limit bucket and side-effect budget were spent and Yash had
+# already clicked Yes — while "play" and "pause" were executable but
+# never advertised.
+MediaAction = Literal["play", "pause", "play-pause", "next", "previous"]
+ACTIONS: tuple[str, ...] = get_args(MediaAction)
 
 # playerctl says this on stderr and exits non-zero when nothing is
 # running. It's the normal case, not an error worth surfacing.
@@ -67,11 +77,20 @@ def get_now_playing() -> NowPlaying | None:
 
 
 def media_control(action: str) -> str:
-    """YELLOW tier. `action` is a Literal enum member.
+    """YELLOW tier. `action` is a `MediaAction` member and is passed to
+    playerctl verbatim — the enum member IS the playerctl verb.
 
     Deliberately excludes `open` (which takes a URI — a string that
-    reaches a command line) and `position` (which is fiddly by voice and
-    easy to get destructively wrong).
+    reaches a command line), `position` (which is fiddly by voice and
+    easy to get destructively wrong) and `stop` (MPRIS Stop is
+    player-defined — mpv treats it as end-of-playlist, not end-of-track
+    — and unlike `pause` it cannot be undone by voice; "stop the music"
+    is `pause`). The tool schema used to advertise `stop` anyway, which
+    is how the drift above happened.
+
+    The membership check is a guard for direct callers. Through the
+    registry it cannot fire: the pydantic model rejects anything outside
+    `MediaAction` before the budget is spent or a confirmation is asked.
     """
     if action not in ACTIONS:
         raise ValueError(f"action must be one of {list(ACTIONS)}, got {action!r}")
