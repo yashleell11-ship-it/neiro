@@ -8,11 +8,21 @@ look like an improvement.
 
 from __future__ import annotations
 
+import json
 import math
+import os
+import pickle
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import pytest
 
+from neiro.config import Neiro
 from neiro.evals.wer import DatasetScore, edit_distance, normalize, score, wer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 
 class TestNormalize:
@@ -246,16 +256,66 @@ class TestCorpusLevelNotMeanOfRates:
         assert math.isnan(score([("a", "", "something")]).wer)
 
 
+def _fake_pyarrow(where: Path) -> None:
+    """A stand-in `pyarrow.parquet` for the reader subprocess: a shard
+    whose name contains "broken" fails to open, every other shard yields
+    one row naming itself. pyarrow itself lives in the training venv,
+    which the test venv deliberately does not carry.
+    """
+    package = where / "pyarrow"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "parquet.py").write_text(
+        textwrap.dedent(
+            """
+            class _Schema:
+                names = ["audio_filepath", "text"]
+
+
+            class _Batch:
+                def __init__(self, path):
+                    self.path = path
+
+                def to_pylist(self):
+                    return [
+                        {"audio_filepath": {"bytes": b"\\x00", "path": "a.flac"}, "text": "namaste " + self.path}
+                    ]
+
+
+            class ParquetFile:
+                def __init__(self, path):
+                    if "broken" in path:
+                        raise OSError("truncated footer")
+                    self.path = path
+                    self.schema_arrow = _Schema()
+
+                def iter_batches(self, columns=None, batch_size=None):
+                    yield _Batch(self.path)
+            """
+        )
+    )
+
+
+def _run_reader(job: dict, pythonpath: Path) -> dict:
+    from bench_stt import _READER
+
+    proc = subprocess.run(
+        [sys.executable, "-c", _READER],
+        input=json.dumps(job).encode(),
+        capture_output=True,
+        env={**os.environ, "PYTHONPATH": str(pythonpath)},
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+    return pickle.loads(proc.stdout)
+
+
 class TestBenchmarkHarness:
     def test_every_corpus_names_its_transcript_column(self) -> None:
         # Adding a corpus is a line in the table, not a change to the
         # harness — but a wrong column name would silently score against
         # empty references, which reads as 100% WER and looks like a
         # broken recogniser.
-        import sys
-        from pathlib import Path as P
-
-        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
         from bench_stt import CORPORA
 
         for name, spec in CORPORA.items():
@@ -265,10 +325,103 @@ class TestBenchmarkHarness:
     def test_the_gate_is_about_his_voice_not_a_corpus(self) -> None:
         # A corpus number is a prior, not the gate. If this docstring
         # ever stops saying so, the benchmark will get mistaken for G3a.
-        import sys
-        from pathlib import Path as P
-
-        sys.path.insert(0, str(P(__file__).resolve().parents[1] / "scripts"))
         import bench_stt
 
         assert "own voice" in bench_stt.__doc__
+
+    def test_held_out_split_is_preferred_and_hidden_dirs_are_skipped(self, tmp_path: Path) -> None:
+        from bench_stt import select_shards
+
+        root = tmp_path / "kathbath"
+        (root / "hindi").mkdir(parents=True)
+        (root / "hindi" / "train-00000-of-00002.parquet").write_bytes(b"")
+        (root / "hindi" / "valid-00000-of-00001.parquet").write_bytes(b"")
+        # HF's download cache keeps partial files beside the real shards.
+        (root / ".cache" / "hindi").mkdir(parents=True)
+        (root / ".cache" / "hindi" / "valid-00001-of-00001.parquet").write_bytes(b"")
+
+        assert [p.name for p in select_shards(root, {"split": "valid"})] == [
+            "valid-00000-of-00001.parquet"
+        ]
+
+    def test_falls_back_to_any_shard_when_the_split_never_arrived(self, tmp_path: Path) -> None:
+        from bench_stt import select_shards
+
+        root = tmp_path / "kathbath"
+        (root / "hindi").mkdir(parents=True)
+        (root / "hindi" / "train-00000-of-00002.parquet").write_bytes(b"")
+
+        assert [p.name for p in select_shards(root, {"split": "valid"})] == [
+            "train-00000-of-00002.parquet"
+        ]
+        assert select_shards(root, {}) == select_shards(root, {"split": "valid"})
+
+    def test_an_unreadable_shard_is_skipped_not_fatal(self, tmp_path: Path) -> None:
+        # A download that stopped mid-shard leaves a file the glob finds
+        # and pyarrow cannot open. The run is about the recogniser, not
+        # the disk: the shard is reported and the rest are scored.
+        _fake_pyarrow(tmp_path)
+        out = _run_reader(
+            {
+                "shards": ["good-0.parquet", "broken-1.parquet", "good-2.parquet"],
+                "text_cols": ["text"],
+                "audio_cols": ["audio_filepath"],
+                "limit": 10,
+            },
+            tmp_path,
+        )
+        assert [text for _, text in out["rows"]] == [
+            "namaste good-0.parquet",
+            "namaste good-2.parquet",
+        ]
+        assert len(out["skipped"]) == 1
+        assert "broken-1" in out["skipped"][0]
+
+    def test_the_limit_stops_the_read_early(self, tmp_path: Path) -> None:
+        _fake_pyarrow(tmp_path)
+        out = _run_reader(
+            {
+                "shards": ["good-0.parquet", "good-1.parquet"],
+                "text_cols": ["text"],
+                "audio_cols": ["audio_filepath"],
+                "limit": 1,
+            },
+            tmp_path,
+        )
+        assert len(out["rows"]) == 1
+
+    def test_a_shard_without_the_columns_is_reported_not_scored_against_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        _fake_pyarrow(tmp_path)
+        out = _run_reader(
+            {
+                "shards": ["good-0.parquet"],
+                "text_cols": ["transcription"],
+                "audio_cols": ["audio"],
+                "limit": 10,
+            },
+            tmp_path,
+        )
+        assert out["rows"] == []
+        assert len(out["skipped"]) == 1
+
+    def test_language_flag_maps_onto_config_and_none_leaves_it_alone(self) -> None:
+        from bench_stt import override_language
+
+        cfg = Neiro(stt={"language": "en"})
+        assert override_language(cfg, "hi").stt.language == "hi"
+        assert override_language(cfg, None).stt.language == "hi"
+        with pytest.raises(ValueError):
+            override_language(cfg, "fr")
+
+    def test_latency_is_nearest_rank_percentiles_and_never_a_mean(self) -> None:
+        from bench_stt import latency_summary
+
+        values = [100.0, 200.0, 300.0, 400.0, 1000.0]
+        summary = latency_summary(values)
+        assert summary["stt_p50_ms"] == 300.0
+        assert summary["stt_p95_ms"] == 1000.0
+        # The mean of these is 400 — a latency nobody experienced.
+        assert 400.0 not in summary.values()
+        assert not any("mean" in key for key in summary)
