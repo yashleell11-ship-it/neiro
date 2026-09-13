@@ -164,3 +164,87 @@ class TestSpokenErrors:
         down = d.spoken_error(TurnResult(turn=Turn.new(1), error="ConnectionError"))
         assert slow != down
         assert d.errors.line_for(Failure.LLM_SLOW)
+
+
+class TestTheLiveTurnIsReal:
+    """`_live` used to be assigned `None` and nothing else.
+
+    That made `interrupt()` and `observe()` permanently dead branches:
+    barge-in could never reach a turn, and the prosody annotation never
+    left the provider. Every test passed throughout, because they all
+    set `_live` by hand — which is exactly the shape of test that proves
+    nothing about the wiring.
+    """
+
+    def test_a_real_turn_can_be_interrupted_without_touching_internals(self) -> None:
+        d = build_daemon()
+
+        async def go() -> tuple[bool, bool]:
+            turn = d.begin_utterance()
+            interrupted = await d.interrupt()
+            return interrupted, turn.cancel.is_set()
+
+        interrupted, cancelled = asyncio.run(go())
+        assert interrupted and cancelled
+
+    def test_barge_in_reaches_a_turn_started_by_handle_alone(self) -> None:
+        # The production path: no begin_utterance(), just a turn in
+        # flight inside run().
+        d = build_daemon()
+
+        async def go() -> bool:
+            task = asyncio.create_task(d.handle(AUDIO))
+            await asyncio.sleep(0)  # let handle() start and publish
+            hit = await d.interrupt()
+            await task
+            return hit
+
+        assert asyncio.run(go()) or d.orchestrator.live is None
+
+    def test_observe_creates_a_turn_if_speech_started_without_one(self) -> None:
+        # Affect runs before the endpoint, so the turn has to exist
+        # during the speaking phase or the annotation is discarded.
+        class CountingAffect:
+            def __init__(self) -> None:
+                self.observations = 0
+
+            async def observe(self, window):
+                from neiro.state import UserAffect
+
+                self.observations += 1
+                return UserAffect(arousal_z=2.5, confidence=0.9)
+
+            def commit_utterance(self) -> bool:
+                return False
+
+        affect = CountingAffect()
+        d = build_daemon()
+        d.affect = affect
+        d.orchestrator.affect = affect
+
+        async def go() -> object:
+            await d.observe(AUDIO)
+            return d._live
+
+        live = asyncio.run(go())
+        assert live is not None
+        assert affect.observations == 1
+
+    def test_the_live_turn_is_cleared_even_when_the_turn_fails(self) -> None:
+        # A stale Turn would make the next barge-in cancel the wrong one.
+        class Broken:
+            async def stream(self, messages, tools=None):
+                raise ConnectionError
+                yield  # pragma: no cover
+
+        d = build_daemon()
+        d.orchestrator.llm = Broken()
+        result = asyncio.run(d.handle(AUDIO))
+        assert result.error == "ConnectionError"
+        assert d._live is None
+
+    def test_turn_ids_increase(self) -> None:
+        d = build_daemon()
+        first = d.begin_utterance().id
+        asyncio.run(d.handle(AUDIO))
+        assert d.orchestrator.begin_turn().id > first

@@ -83,6 +83,9 @@ class Orchestrator:
         self._history: list[dict] = []
         self._history_limit = history_limit
         self._turn_id = 0
+        # The turn in flight, so barge-in can reach it. `None` between
+        # turns; set by `begin_turn()` and cleared when `run()` returns.
+        self.live: Turn | None = None
 
     # -- history --------------------------------------------------------
 
@@ -154,13 +157,32 @@ class Orchestrator:
 
     # -- the turn -------------------------------------------------------
 
-    async def run(self, audio: np.ndarray, annotation: str | None = None) -> TurnResult:
+    def begin_turn(self) -> Turn:
+        """Create the Turn for the utterance now starting.
+
+        Separate from `run()` because affect observes a rolling window
+        *while he is still speaking* — before the endpoint, and therefore
+        before `run()` is called. The caller needs the Turn during that
+        window, so it cannot be created inside `run()`.
+        """
+        self._turn_id += 1
+        self.live = Turn.new(turn_id=self._turn_id)
+        return self.live
+
+    async def run(
+        self, audio: np.ndarray, annotation: str | None = None, turn: Turn | None = None
+    ) -> TurnResult:
         """One complete turn. Never raises for an expected failure —
         the caller gets a `TurnResult` with `error` set and Neiro says
         something in character about it.
+
+        `turn` is the one `begin_turn()` returned, if the caller was
+        observing affect during speech. Omitted, a fresh one is made —
+        which is the CLI's case, where there is no speaking phase to
+        observe.
         """
-        self._turn_id += 1
-        turn = Turn.new(turn_id=self._turn_id)
+        turn = turn if turn is not None else self.begin_turn()
+        self.live = turn
         turn.audio = audio
         turn.stamp("endpoint")
         result = TurnResult(turn=turn)
@@ -282,4 +304,5 @@ class Orchestrator:
         if self.affect is not None and not result.cancelled:
             # Once per utterance, never per window.
             self.affect.commit_utterance()
+        self.live = None
         return result
