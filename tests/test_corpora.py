@@ -174,6 +174,10 @@ class TestRealDownload:
                 "labels must be canonical, not corpus spellings"
             )
 
+    @pytest.mark.skipif(
+        not (Path(__file__).resolve().parents[1] / "data/datasets/crema-d").is_dir(),
+        reason="CREMA-D not downloaded yet",
+    )
     def test_crema_d_has_its_published_shape(self) -> None:
         # 91 actors, 6 emotions, ~7442 clips. If the count collapses, the
         # download or the parser broke — and a training run on 12 rows
