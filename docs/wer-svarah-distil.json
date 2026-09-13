@@ -1,0 +1,41 @@
+{
+ "corpus": "svarah",
+ "engine": "distil",
+ "n": 120,
+ "wer": 0.0622,
+ "total_errors": 89,
+ "total_ref_words": 1431,
+ "stt_p50_ms": 163.7,
+ "worst": [
+  {
+   "name": "svarah-0033",
+   "ref": "trains,",
+   "hyp": "",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0034",
+   "ref": "Cat",
+   "hyp": "Good.",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0010",
+   "ref": "Jammu, Samba, Kathua, Rajouri, Poonch",
+   "hyp": "Jamu, Samba, Kathua, Rajori, Punch.",
+   "errors": 3
+  },
+  {
+   "name": "svarah-0053",
+   "ref": "to everybody.",
+   "hyp": "everybody.",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0047",
+   "ref": "Book a HP gas cylinder using my registered contact number 79083174897",
+   "hyp": "book a HV gas cylinder using my registered contact number 790-83-17-4897",
+   "errors": 5
+  }
+ ]
+}

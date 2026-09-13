@@ -43,7 +43,11 @@ SAMPLERATE = 16000
 # Corpora that ship transcripts, and where each keeps them. Adding one is
 # a line here rather than a change to the harness.
 CORPORA = {
-    "svarah": {"dir": "svarah-indic-accented-english", "text": "text", "audio": "audio"},
+    # Svarah keeps the audio bytes under `audio_filepath`, not `audio` —
+    # the name says path and the value is a {bytes, path} dict. Guessing
+    # "audio" found nothing and reported "is it downloaded?", which is
+    # the wrong diagnosis for a column-name mismatch.
+    "svarah": {"dir": "svarah-indic-accented-english", "text": "text", "audio": "audio_filepath"},
     "fleurs": {"dir": "fleurs", "text": "transcription", "audio": "audio"},
     "common-voice-17-0": {"dir": "common-voice-17-0", "text": "sentence", "audio": "audio"},
     "kathbath": {"dir": "kathbath", "text": "text", "audio": "audio"},
@@ -69,7 +73,7 @@ for s in shards:
     t = pq.read_table(s)
     names = t.schema.names
     text_col = next((c for c in ("{spec["text"]}", "text", "sentence", "transcription", "verbatim") if c in names), None)
-    audio_col = next((c for c in ("{spec["audio"]}", "audio") if c in names), None)
+    audio_col = next((c for c in ("{spec["audio"]}", "audio", "audio_filepath") if c in names), None)
     if not text_col or not audio_col:
         continue
     for r in t.select([audio_col, text_col]).to_pylist():
