@@ -83,9 +83,18 @@ class OllamaNativeLlm:
 
     locality = Locality.TIERABLE
 
-    def __init__(self, cfg: Neiro | None = None, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        cfg: Neiro | None = None,
+        base_url: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._cfg = cfg or Neiro()
         self._base_url = (base_url or self._cfg.llm.base_url).rstrip("/")
+        # The seam that lets a test drive `stream()` over a recorded
+        # NDJSON fixture with no server. A re-implementation of the
+        # reshaping inside a test proves nothing about the client.
+        self._transport = transport
 
     def build_request(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         body: dict = {
@@ -114,9 +123,19 @@ class OllamaNativeLlm:
         """
         accumulator = StreamAccumulator()
         checked = False
+        # The accumulator keys tool calls by index for the WHOLE stream
+        # and concatenates arguments into the slot — that is how the
+        # OpenAI shape streams one call's arguments across many deltas.
+        # ollama's position is per message, so calls that arrive in
+        # separate messages must not both be index 0: they would share
+        # a slot, the arguments would become two JSON objects glued
+        # together, and tool_calls() would drop both without a word.
+        next_tool_index = 0
 
         async with (
-            httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client,
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0, connect=5.0), transport=self._transport
+            ) as client,
             client.stream(
                 "POST", f"{self._base_url}/api/chat", json=self.build_request(messages, tools)
             ) as response,
@@ -134,9 +153,10 @@ class OllamaNativeLlm:
                 # indexed form rather than given a second code path.
                 delta: dict = {"content": message.get("content") or ""}
                 if message.get("tool_calls"):
+                    calls = message["tool_calls"]
                     delta["tool_calls"] = [
                         {
-                            "index": i,
+                            "index": next_tool_index + i,
                             "function": {
                                 "name": (call.get("function") or {}).get("name", ""),
                                 "arguments": json.dumps(
@@ -144,8 +164,9 @@ class OllamaNativeLlm:
                                 ),
                             },
                         }
-                        for i, call in enumerate(message["tool_calls"])
+                        for i, call in enumerate(calls)
                     ]
+                    next_tool_index += len(calls)
 
                 added = accumulator.add_delta(delta)
                 if not checked and len(accumulator.text) >= 32:

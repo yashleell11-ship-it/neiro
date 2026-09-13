@@ -9,8 +9,10 @@ apart.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
+import httpx
 import pytest
 
 from neiro.llm.ollama_native import (
@@ -19,8 +21,50 @@ from neiro.llm.ollama_native import (
     check_chunk_not_thinking,
     parse_ndjson_line,
 )
-from neiro.llm.openai_compat import OpenAiCompatLlm, ThinkingModeError
+from neiro.llm.openai_compat import OpenAiCompatLlm, StreamAccumulator, ThinkingModeError
 from neiro.state import Locality
+
+TOOLS = [{"type": "function", "function": {"name": "set_volume", "parameters": {}}}]
+
+
+def _tool_message(name: str, arguments: dict) -> dict:
+    """One NDJSON object as ollama emits a whole tool call: arguments
+    are a JSON object, not the OpenAI path's partial string."""
+    return {
+        "model": "neiro-4b",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": name, "arguments": arguments}}],
+        },
+        "done": False,
+    }
+
+
+END = {"model": "neiro-4b", "message": {"role": "assistant", "content": ""}, "done": True}
+
+
+def _serving(lines: list[dict]) -> OllamaNativeLlm:
+    """A client whose /api/chat replies with the given NDJSON stream."""
+    body = "".join(json.dumps(line) + "\n" for line in lines).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/chat"
+        return httpx.Response(200, content=body)
+
+    return OllamaNativeLlm(base_url="http://ollama.test", transport=httpx.MockTransport(handler))
+
+
+def _drain(llm: OllamaNativeLlm) -> StreamAccumulator:
+    async def go() -> StreamAccumulator:
+        final = None
+        async for event in llm.stream([{"role": "user", "content": "hi"}], TOOLS):
+            if "done" in event:
+                final = event["done"]
+        assert final is not None
+        return final
+
+    return asyncio.run(go())
 
 
 class TestNdjson:
@@ -79,34 +123,54 @@ class TestInterchangeable:
         assert OllamaNativeLlm.locality is Locality.TIERABLE
         assert OpenAiCompatLlm.locality is Locality.TIERABLE
 
-    def test_tool_calls_are_reshaped_into_the_shared_accumulator_form(self) -> None:
-        # ollama sends whole tool calls; the OpenAI path sends indexed
-        # fragments. Reshaping here means one accumulator, not two.
-        from neiro.llm.openai_compat import StreamAccumulator
 
-        chunk = {
-            "message": {
-                "content": "",
-                "tool_calls": [{"function": {"name": "set_volume", "arguments": {"percent": 30}}}],
-            }
-        }
-        message = chunk["message"]
-        delta = {
-            "content": "",
-            "tool_calls": [
-                {
-                    "index": i,
-                    "function": {
-                        "name": c["function"]["name"],
-                        "arguments": json.dumps(c["function"]["arguments"]),
-                    },
-                }
-                for i, c in enumerate(message["tool_calls"])
-            ],
-        }
-        acc = StreamAccumulator()
-        acc.add_delta(delta)
+class TestToolCalls:
+    """ollama sends whole tool calls; the OpenAI path sends indexed
+    fragments. The client reshapes into the shared accumulator so there
+    is one accumulator, not two — and these drive the real `stream()`,
+    because a re-implementation of the reshaping inside a test is what
+    let the index bug below through.
+    """
+
+    def test_a_whole_call_is_reshaped_into_the_shared_accumulator_form(self) -> None:
+        acc = _drain(_serving([_tool_message("set_volume", {"percent": 30}), END]))
         calls = acc.tool_calls()
         assert len(calls) == 1
         assert calls[0].name == "set_volume"
         assert calls[0].args == {"percent": 30}
+        assert acc.finish_reason == "stop"
+
+    def test_calls_in_separate_messages_keep_distinct_indices(self) -> None:
+        # The accumulator keys by index for the WHOLE stream and
+        # concatenates arguments into the slot. A per-message index
+        # restarts at 0, so two calls in two messages both land in slot
+        # 0 as '{"percent":30}{"app":"firefox"}' — unparseable, dropped
+        # with no error. Both must survive, JSON intact.
+        acc = _drain(
+            _serving(
+                [
+                    _tool_message("set_volume", {"percent": 30}),
+                    _tool_message("open_app", {"app": "firefox"}),
+                    END,
+                ]
+            )
+        )
+        calls = acc.tool_calls()
+        assert [(c.name, c.args) for c in calls] == [
+            ("set_volume", {"percent": 30}),
+            ("open_app", {"app": "firefox"}),
+        ]
+        assert [c.index for c in calls] == [0, 1]
+
+    def test_two_calls_in_one_message_are_still_distinct(self) -> None:
+        # The other way the counter could go wrong: one slot per message.
+        message = _tool_message("set_volume", {"percent": 30})
+        message["message"]["tool_calls"].append(
+            {"function": {"name": "open_app", "arguments": {"app": "firefox"}}}
+        )
+        acc = _drain(_serving([message, END]))
+        assert [c.index for c in acc.tool_calls()] == [0, 1]
+
+    def test_the_request_carries_the_tools(self) -> None:
+        body = OllamaNativeLlm().build_request([], TOOLS)
+        assert body["tools"] == TOOLS
