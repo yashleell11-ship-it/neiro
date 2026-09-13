@@ -67,13 +67,18 @@ requestAnimationFrame(frame);
 
 // --- transport ---------------------------------------------------------
 // The token is injected into the page by the server, never put in the
-// URL: URLs end up in history, logs and Referer headers.
+// URL: URLs end up in history, logs and Referer headers — uvicorn logs
+// every handshake's path, query string included. It rides the
+// Sec-WebSocket-Protocol header instead, the one header a page can set
+// on a WebSocket. The prefix is TOKEN_SUBPROTOCOL_PREFIX in
+// src/neiro/server.py; the server selects this same subprotocol back,
+// which is what lets the browser complete the handshake.
 const token = window.NEIRO_TOKEN;
 let socket = null;
 
 function connect() {
   if (!token) { el.phase.textContent = 'demo'; return; }
-  socket = new WebSocket(`ws://${location.host}/neiro?token=${encodeURIComponent(token)}`);
+  socket = new WebSocket(`ws://${location.host}/neiro`, [`neiro.token.${token}`]);
   socket.binaryType = 'arraybuffer';
 
   socket.onopen = () => {

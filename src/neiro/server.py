@@ -39,6 +39,15 @@ import numpy as np
 
 PROTOCOL_VERSION = 1
 
+# The session token rides the `Sec-WebSocket-Protocol` header as
+# `neiro.token.<token>`, never the URL. uvicorn writes every handshake's
+# path to the `uvicorn.error` logger at INFO — query string included,
+# on accept AND on reject — so a token in the URL is a token in the
+# journal, and `--no-access-log` does not help. Request headers are
+# never logged, and this header is the one a browser lets a page set on
+# a `WebSocket`. Verified against uvicorn 0.52.4's websockets impl.
+TOKEN_SUBPROTOCOL_PREFIX = "neiro.token."
+
 # Server -> client message types. Frozen; add fields, never rename.
 SERVER_MESSAGES = (
     "hello",  # protocol version, session token echo, config the face needs
@@ -89,6 +98,23 @@ def server_message(kind: str, **fields: Any) -> str:
     if kind not in SERVER_MESSAGES:
         raise ProtocolError(f"unknown server message {kind!r}; frozen set is {SERVER_MESSAGES}")
     return json.dumps({"t": kind, **fields}, separators=(",", ":"))
+
+
+def token_from_subprotocols(header: str | None) -> str | None:
+    """The token a client offered as `neiro.token.<token>`, or None.
+
+    The header is a comma-separated list; a browser may offer several
+    and expects the server to select one of them. Anything without the
+    prefix is ignored rather than rejected here — `Session.check` is
+    the only place that says no, so it stays the only place to audit.
+    """
+    if not header:
+        return None
+    for offered in header.split(","):
+        offered = offered.strip()
+        if offered.startswith(TOKEN_SUBPROTOCOL_PREFIX):
+            return offered[len(TOKEN_SUBPROTOCOL_PREFIX) :]
+    return None
 
 
 def _token_matches(presented: str, expected: str) -> bool:
@@ -172,19 +198,25 @@ def build_app(session: Session, host: str = "127.0.0.1", port: int = 8760):
 
     @app.websocket("/neiro")
     async def endpoint(websocket: WebSocket) -> None:
+        # Not the query string — see TOKEN_SUBPROTOCOL_PREFIX. `getlist`
+        # because a client may split its offers across header lines.
+        token = token_from_subprotocols(
+            ", ".join(websocket.headers.getlist("sec-websocket-protocol"))
+        )
         try:
-            session.check(
-                websocket.query_params.get("token"),
-                websocket.headers.get("origin"),
-                allowed_origins,
-            )
+            session.check(token, websocket.headers.get("origin"), allowed_origins)
         except PermissionError:
             # Close before accepting: an unauthenticated peer never gets
             # a usable socket, and learns nothing about why.
             await websocket.close(code=1008)
             return
 
-        await websocket.accept()
+        # A browser fails the handshake unless the server selects one of
+        # the subprotocols it offered, so the token-bearing one is echoed
+        # back — to the peer that already holds it, in a response header
+        # nothing logs. `session.token`, not `token`: only a value that
+        # passed the check is ever written into a response.
+        await websocket.accept(subprotocol=TOKEN_SUBPROTOCOL_PREFIX + session.token)
         await websocket.send_text(
             server_message("hello", protocol=PROTOCOL_VERSION, samplerate=24000)
         )
