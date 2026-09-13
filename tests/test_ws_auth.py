@@ -408,3 +408,115 @@ class TestUnderUvicorn:
         source = (P(__file__).resolve().parents[1] / "src/neiro/server.py").read_text()
         statements = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
         assert not any(line.strip() == "from __future__ import annotations" for line in statements)
+
+
+class TestThePageAndTheFace:
+    """What the app serves besides the socket: the page with the token
+    in it, the files the page imports, and what `hello` tells the face.
+    """
+
+    def _client(self, session: Session, **kwargs):
+        from starlette.testclient import TestClient
+
+        return TestClient(build_app(session, host=HOST, port=PORT, **kwargs))
+
+    def test_the_page_carries_the_token_and_the_face(self) -> None:
+        session = Session()
+        response = self._client(session).get("/")
+        assert response.status_code == 200
+        # Injected into the page, so it never rides a URL — and never
+        # cached, so it never sits on disk either.
+        assert f"window.NEIRO_TOKEN={json.dumps(session.token)}" in response.text
+        assert response.headers["cache-control"] == "no-store"
+        assert 'id="stage"' in response.text  # the real page, not the stub
+        assert "neiro:token" not in response.text  # the marker was replaced
+
+    def test_the_pages_imports_are_served_from_the_web_tree(self) -> None:
+        client = self._client(Session())
+        for path in ("/src/audio.js", "/src/face.js", "/src/vrm.js", "/src/ws.js"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert "javascript" in response.headers["content-type"], path
+        # The avatar's libraries, vendored: no CDN at runtime.
+        assert client.get("/vendor/three.module.min.js").status_code == 200
+        assert client.get("/vendor/three-vrm.module.min.js").status_code == 200
+        assert client.get("/vendor/addons/loaders/GLTFLoader.js").status_code == 200
+
+    def test_a_missing_web_tree_still_serves_a_page_with_the_token(self, tmp_path) -> None:
+        session = Session()
+        response = self._client(session, web_dir=tmp_path / "nowhere").get("/")
+        assert response.status_code == 200
+        assert session.token in response.text
+
+    def _hello(self, session: Session, **kwargs) -> dict:
+        client = self._client(session, **kwargs)
+        with client.websocket_connect(
+            "/neiro",
+            subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + session.token],
+            headers={"Origin": GOOD_ORIGIN},
+        ) as ws:
+            return json.loads(ws.receive_text())
+
+    def test_hello_carries_the_face_config_from_cfg_not_a_copy(self, tmp_path) -> None:
+        from neiro.config import ExpressionConfig, Neiro
+
+        cfg = Neiro()
+        cfg.expression = ExpressionConfig(tau_rise_s=0.05, tau_fall_s=0.7)
+        hello = self._hello(Session(), cfg=cfg, web_dir=tmp_path)
+        assert hello["face"]["tau_rise_s"] == 0.05
+        assert hello["face"]["tau_fall_s"] == 0.7
+        assert set(hello["face"]) == set(ExpressionConfig().model_dump())
+        assert hello["samplerate"] == cfg.audio.output_samplerate
+
+    def test_hello_names_no_avatar_when_there_is_no_file(self, tmp_path) -> None:
+        # Nothing is invented: no VRM on disk, no avatar in hello, and
+        # the page keeps its drawn face.
+        assert self._hello(Session(), web_dir=tmp_path)["avatar"] is None
+
+    def test_hello_names_the_first_vrm_and_the_mount_serves_it(self, tmp_path) -> None:
+        folder = tmp_path / "public" / "avatar"
+        folder.mkdir(parents=True)
+        (folder / "zed.vrm").write_bytes(b"glTF-zed")
+        (folder / "amy.vrm").write_bytes(b"glTF-amy")
+        session = Session()
+        hello = self._hello(session, web_dir=tmp_path)
+        assert hello["avatar"] == "public/avatar/amy.vrm"
+        response = self._client(session, web_dir=tmp_path).get("/" + hello["avatar"])
+        assert response.status_code == 200 and response.content == b"glTF-amy"
+
+    def test_a_second_tab_is_refused_while_the_first_is_connected(self) -> None:
+        from starlette.websockets import WebSocketDisconnect
+
+        session = Session()
+        client = self._client(session)
+        offered = [TOKEN_SUBPROTOCOL_PREFIX + session.token]
+        headers = {"Origin": GOOD_ORIGIN}
+        with client.websocket_connect("/neiro", subprotocols=offered, headers=headers) as first:
+            first.receive_text()  # hello
+            _wait_until(lambda: session.connected, "attach")
+            with (
+                pytest.raises(WebSocketDisconnect) as refusal,
+                client.websocket_connect("/neiro", subprotocols=offered, headers=headers),
+            ):
+                pytest.fail("a second tab was accepted")
+            assert refusal.value.code == 1013
+            # The first is untouched by the refusal.
+            assert session.connected
+        _wait_until(lambda: not session.connected, "detach")
+
+    def test_junk_from_the_tab_closes_the_socket_and_detaches(self) -> None:
+        from starlette.websockets import WebSocketDisconnect
+
+        session = Session()
+        client = self._client(session)
+        with client.websocket_connect(
+            "/neiro",
+            subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + session.token],
+            headers={"Origin": GOOD_ORIGIN},
+        ) as ws:
+            ws.receive_text()
+            ws.send_text("not the protocol")
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_text()
+            assert closed.value.code == 1003
+        _wait_until(lambda: not session.connected, "detach after junk")
