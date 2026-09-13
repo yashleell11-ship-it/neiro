@@ -30,10 +30,10 @@ hf_id = "openslr/librispeech_asr"
 license = "CC BY 4.0"
 flags = ["permissive"]
 access = "direct"
-size_gb = 61.0
+size_gb = 123.7
 hours = 1000.0
 weights_publishable = "yes"
-note = "Large clean English speech that never says 'Neiro' — the backbone of the wake-word negative set (openWakeWord/microWakeWord both use it) and a permissive 2,484-speaker pool for speaker-verification impostor trials and threshold calibration. Also the source corpus of the LibriTTS-R voices piper-sa..."
+note = "Size corrected 2026-09-13 from 61 to the measured 123.7 GB -- the HF repo carries every split (clean-100/360, other-500, dev, test), not just train-clean. Large clean English speech that never says 'Neiro' — the backbone of the wake-word negative set (openWakeWord/microWakeWord both use it) and a permissive 2,484-speaker pool for speaker-verification impostor trials and threshold calibration. Also the source corpus of the LibriTTS-R voices piper-sa..."
 
 [[dataset]]
 name = "musan"
