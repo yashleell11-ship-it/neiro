@@ -176,6 +176,7 @@ from neiro.training.llm_data import (
     parse_tool_call_arguments,
     render_and_mask,
 )
+from neiro.training.stt_data import read_checkpoint_step, write_checkpoint_atomically
 
 MODEL_DIR = REPO / "models" / "qwen3.5-4b-safetensors"
 DATA_DIR = REPO / "data" / "prepared" / "text"
@@ -653,6 +654,15 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--save-every", type=int, default=500, help="checkpoint the adapter every N optimiser steps"
     )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "load <--out>/checkpoint if it exists and continue from its recorded "
+            "step — a multi-hour unattended run has one checkpoint to lose to a "
+            "power cut, not the whole run, only if it is asked to look for it"
+        ),
+    )
 
     ap.add_argument(
         "--max-length", type=int, default=None, help="override; skips the measurement below"
@@ -923,8 +933,21 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     args.out.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = args.out / "checkpoint"
+    resumed_step = 0
+    if args.resume and checkpoint_dir.exists():
+        # get_peft_model() already ran above; this replaces the adapter's
+        # freshly-initialised weights with the saved ones rather than
+        # stacking a second adapter on top of the first.
+        model.load_adapter(str(checkpoint_dir), adapter_name="default", is_trainable=True)
+        resumed_step = read_checkpoint_step(checkpoint_dir)
+        print(
+            f"resumed from {checkpoint_dir} at step {resumed_step} — optimiser and "
+            "schedule restart fresh from here, cheaper than losing the run"
+        )
+
     model.train()
-    step, micro = 0, 0
+    step, micro = resumed_step, 0
     running_loss, running_tokens = 0.0, 0
     started = time.perf_counter()
     deadline = started + args.max_hours * 3600.0
@@ -968,8 +991,16 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 running_loss, running_tokens = 0.0, 0
             if step % args.save_every == 0:
-                model.save_pretrained(str(args.out / "adapter"))
-                print(f"  checkpointed adapter at step {step}")
+                # Same reasoning as stt_train.py's identical mechanism: a
+                # power cut mid-save must leave the PREVIOUS good checkpoint
+                # intact, not a half-written "adapter" that --resume would
+                # load broken, or worse, that is the only copy that exists.
+                def _save(dest: Path, m=model) -> None:
+                    m.save_pretrained(str(dest))
+                    tokenizer.save_pretrained(str(dest))
+
+                write_checkpoint_atomically(_save, checkpoint_dir, step)
+                print(f"  checkpointed at step {step} -> {checkpoint_dir}")
             if total_steps and step >= total_steps:
                 stop_reason = "max_steps"
                 break
