@@ -94,8 +94,10 @@ from neiro.training.stt_data import (
     index_corpus,
     pad_labels,
     plan_split,
+    read_checkpoint_step,
     strip_decoder_start,
     total_hours,
+    write_checkpoint_atomically,
 )
 
 MODEL_DIR = REPO / "models" / "large-v3-turbo"
@@ -583,6 +585,21 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--adapter", type=Path, default=None, help="load an existing adapter before evaluating"
     )
+    ap.add_argument(
+        "--save-every",
+        type=int,
+        default=200,
+        help=(
+            "optimiser steps between checkpoint saves — a long run has no progress "
+            "at all to resume from until the first one lands, so this is not "
+            "optional the way it would be on a machine that never loses power"
+        ),
+    )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="load <--out>/checkpoint if it exists and continue training from there",
+    )
     ap.add_argument("--dry-run", action="store_true", help="index, build, one step, stop")
     ap.add_argument("--eval-only", action="store_true", help="the BEFORE number, with no training")
     ap.add_argument(
@@ -802,8 +819,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"training {total_steps} optimiser steps (batch {args.batch} x accum {args.accum})")
 
+    checkpoint_dir = args.out / "checkpoint"
+    resumed_step = 0
+    if args.resume and checkpoint_dir.exists():
+        # The checkpoint IS the adapter, already attached at this point (every
+        # save below writes the live PeftModel, not a separate copy) — so
+        # resuming is re-loading its weights onto the same wrapped model,
+        # not building a second PeftModel on top of one that already has LoRA
+        # layers. get_peft_model() further up already ran; this replaces its
+        # (randomly initialised) adapter weights with the saved ones.
+        model.load_adapter(str(checkpoint_dir), adapter_name="default", is_trainable=True)
+        resumed_step = read_checkpoint_step(checkpoint_dir)
+        print(
+            f"resumed from {checkpoint_dir} at step {resumed_step} — optimiser and "
+            "schedule restart fresh from here, which is a cheaper loss than the "
+            "hours of compute a bare restart would throw away"
+        )
+
     model.train()
-    step = 0
+    step = resumed_step
     running, seen = 0.0, 0
     started = time.perf_counter()
     peak = 0.0
@@ -835,6 +869,20 @@ def main(argv: list[str] | None = None) -> int:
                     f"peak {peak} GB"
                 )
                 running, seen = 0.0, 0
+            if args.save_every and step % args.save_every == 0:
+                # Overwrites in place rather than accumulating one directory
+                # per save — a power cut has one checkpoint to lose, not
+                # partial writes scattered across thirty of them filling the
+                # disk. write_checkpoint_atomically saves to a temp dir and
+                # renames over the live one, so a cut mid-save leaves the
+                # PREVIOUS good checkpoint intact rather than a half-written
+                # one that --resume would load broken.
+                def _save(dest: Path) -> None:
+                    model.save_pretrained(str(dest))
+                    processor.save_pretrained(str(dest))
+
+                write_checkpoint_atomically(_save, checkpoint_dir, step)
+                print(f"  checkpoint saved at step {step} -> {checkpoint_dir}")
             if step >= total_steps:
                 break
         if step >= total_steps:

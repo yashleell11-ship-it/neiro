@@ -41,12 +41,14 @@ from neiro.training.stt_data import (
     index_shard,
     pad_labels,
     plan_split,
+    read_checkpoint_step,
     select_shards,
     shard_split,
     speaker_key,
     strip_decoder_start,
     text_for,
     total_hours,
+    write_checkpoint_atomically,
 )
 
 KATHBATH = CORPORA["kathbath"]
@@ -658,3 +660,63 @@ class TestParquetIndex:
         found = select_shards(data_root / "kathbath" / "hindi")
         assert all(".cache" not in str(p) for p in found)
         assert len(found) == 2
+
+
+class TestCheckpointing:
+    """A long run on a machine with a flaky power supply — the reason
+    these exist. Verified live once too: a real training pass on
+    Kathbath saved at step 3 and 6, and a resumed run picked up at 6
+    and finished cleanly (2026-09-14) — this class covers the atomicity
+    and step-recording pieces that don't need a real model to test.
+    """
+
+    def test_a_cut_mid_save_leaves_the_previous_checkpoint_intact(self, tmp_path: Path) -> None:
+        ckpt = tmp_path / "checkpoint"
+
+        def first_save(dest: Path) -> None:
+            dest.mkdir(parents=True)
+            (dest / "adapter.bin").write_text("good weights at step 100")
+
+        write_checkpoint_atomically(first_save, ckpt, 100)
+        assert (ckpt / "adapter.bin").read_text() == "good weights at step 100"
+
+        def cut_mid_save(dest: Path) -> None:
+            dest.mkdir(parents=True)
+            (dest / "adapter.bin").write_text("half-written")
+            raise OSError("power cut")
+
+        with pytest.raises(OSError, match="power cut"):
+            write_checkpoint_atomically(cut_mid_save, ckpt, 200)
+
+        # The live checkpoint is exactly what it was before the failed
+        # save — not the half-written attempt, not gone entirely.
+        assert (ckpt / "adapter.bin").read_text() == "good weights at step 100"
+        assert read_checkpoint_step(ckpt) == 100
+
+    def test_step_is_recorded_and_read_back(self, tmp_path: Path) -> None:
+        ckpt = tmp_path / "checkpoint"
+        write_checkpoint_atomically(lambda dest: dest.mkdir(parents=True), ckpt, 4200)
+        assert read_checkpoint_step(ckpt) == 4200
+
+    def test_a_checkpoint_with_no_step_file_resumes_from_zero_not_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        # An older save, or one from a version of this format that
+        # predates step.json — safe to under-count, never to crash.
+        ckpt = tmp_path / "checkpoint"
+        ckpt.mkdir()
+        assert read_checkpoint_step(ckpt) == 0
+
+    def test_repeated_saves_do_not_accumulate_directories(self, tmp_path: Path) -> None:
+        # One checkpoint to lose in a power cut, not thirty filling the
+        # disk over a 20-hour run.
+        ckpt = tmp_path / "checkpoint"
+        for step in (100, 200, 300):
+            write_checkpoint_atomically(
+                lambda dest, s=step: (dest.mkdir(parents=True), (dest / f"s{s}").write_text("x")),
+                ckpt,
+                step,
+            )
+        assert read_checkpoint_step(ckpt) == 300
+        assert {p.name for p in ckpt.iterdir()} == {"s300", "step.json"}
+        assert not (tmp_path / "checkpoint.tmp").exists()

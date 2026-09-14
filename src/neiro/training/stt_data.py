@@ -52,11 +52,13 @@ lazily.
 from __future__ import annotations
 
 import io
+import json
 import random
 import re
+import shutil
 import sys
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -739,3 +741,45 @@ def ct2_convert_command(
         "--quantization",
         quantization,
     ]
+
+
+def write_checkpoint_atomically(
+    save_fn: Callable[[Path], None], checkpoint_dir: Path, step: int
+) -> None:
+    """Save to a temp directory, then rename over the live checkpoint.
+
+    A power cut during `save_fn` leaves `checkpoint_dir.tmp` half-written
+    and `checkpoint_dir` itself untouched — `--resume` reads the old,
+    complete checkpoint and loses at most `--save-every` steps, not the
+    checkpoint it was about to lose anyway plus every step since the one
+    before it. Writing straight into `checkpoint_dir` would risk exactly
+    that: a cut mid-write corrupts the only copy `--resume` has to load.
+
+    `os.rename` is atomic on both ends of this project's two OSes as long
+    as source and destination share a filesystem — `checkpoint.tmp` and
+    `checkpoint` are always siblings under the same `--out`, so that
+    holds here without the caller having to think about it.
+    """
+    tmp_dir = checkpoint_dir.with_name(checkpoint_dir.name + ".tmp")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    save_fn(tmp_dir)
+    (tmp_dir / "step.json").write_text(json.dumps({"step": step}))
+    if checkpoint_dir.exists():
+        shutil.rmtree(checkpoint_dir)
+    tmp_dir.rename(checkpoint_dir)
+
+
+def read_checkpoint_step(checkpoint_dir: Path) -> int:
+    """The step a checkpoint was saved at, or 0 if it never recorded one.
+
+    A checkpoint directory that exists but has no `step.json` (an older
+    save, or one interrupted after the rename but before this file
+    existed in an earlier version of the format) is not an error — it
+    just means resuming re-plays from the start of the optimiser
+    schedule, which is safe, only wasteful.
+    """
+    meta = checkpoint_dir / "step.json"
+    if not meta.exists():
+        return 0
+    return int(json.loads(meta.read_text())["step"])
