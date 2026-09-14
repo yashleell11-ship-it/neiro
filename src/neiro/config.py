@@ -54,7 +54,11 @@ class SttConfig(BaseModel):
     # TRANSLATES Hindi into English that passes the confidence floors.
     # Measured 2026-09-14 — see docs/DECISIONS.md. English is unchanged
     # at 6.2% on Svarah, so nothing was traded away for it.
-    model_id: str = "models/large-v3-turbo-ct2"
+    # Fine-tuned on 30h of Kathbath+IndicVoices, 2026-09-14: Hindi WER
+    # 29.6% -> 23.0% on the full Kathbath benchmark, English unchanged
+    # (the base weights are frozen except two attention projections).
+    # See docs/DECISIONS.md and models/stt-hindi-lora/report.json.
+    model_id: str = "models/stt-hindi-lora/ct2"
     compute_type: str = "int8_float16"
     beam_size: int = 1
     condition_on_previous_text: bool = False

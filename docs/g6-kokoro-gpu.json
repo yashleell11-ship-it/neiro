@@ -1,0 +1,38 @@
+{
+ "clauses": {
+  "1": "Sure.",
+  "3": "It is noon.",
+  "8": "Ninety six percent, still charging, about an hour."
+ },
+ "repeats": 12,
+ "budget_ms": 500.0,
+ "engines": [
+  {
+   "name": "kokoro",
+   "available": true,
+   "reason": "",
+   "warm_ms": 18334.8,
+   "peak_vram_mb": 679.88134765625,
+   "by_clause": {
+    "1": {
+     "n": 12,
+     "ttfa_p50_ms": 23.3,
+     "ttfa_p95_ms": 40.6,
+     "audio_s": 1.3
+    },
+    "3": {
+     "n": 12,
+     "ttfa_p50_ms": 24.6,
+     "ttfa_p95_ms": 35.4,
+     "audio_s": 1.52
+    },
+    "8": {
+     "n": 12,
+     "ttfa_p50_ms": 35.4,
+     "ttfa_p95_ms": 76.9,
+     "audio_s": 3.52
+    }
+   }
+  }
+ ]
+}

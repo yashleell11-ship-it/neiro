@@ -171,6 +171,20 @@ MODELS: tuple[ModelSpec, ...] = (
         ),
     ),
     ModelSpec(
+        name="large-v3-turbo",
+        component="stt",
+        purpose="training",
+        runs="both",
+        hf_id="openai/whisper-large-v3-turbo",
+        revision="41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+        license="mit",
+        size_gb=1.62,
+        note=(
+            "safetensors twin of the ct2 runtime copy, for the Hindi fine-tune on "
+            "Kathbath + IndicVoices; converted back to ct2 afterwards"
+        ),
+    ),
+    ModelSpec(
         name="distil-large-v3.5",
         component="stt",
         purpose="training",
