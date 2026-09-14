@@ -1,0 +1,107 @@
+{
+ "test": {
+  "n": 3489,
+  "ccc_valence": 0.2657,
+  "ccc_arousal": 0.3325,
+  "arousal_auc": 0.8057,
+  "valence_auc": 0.6943,
+  "pred_std_arousal": 0.273
+ },
+ "by_corpus": {
+  "crema-d": {
+   "n": 814,
+   "ccc_valence": 0.5616,
+   "ccc_arousal": 0.6422,
+   "arousal_auc": 0.8518,
+   "valence_auc": 0.8538,
+   "pred_std_arousal": 0.4801
+  },
+  "emonet-voice-bench": {
+   "n": 613,
+   "ccc_valence": 0.126,
+   "ccc_arousal": 0.0823,
+   "arousal_auc": 0.6222,
+   "valence_auc": 0.5856,
+   "pred_std_arousal": 0.1046
+  },
+  "rasa": {
+   "n": 1942,
+   "ccc_valence": 0.1319,
+   "ccc_arousal": 0.156,
+   "arousal_auc": 0.8235,
+   "valence_auc": 0.6236,
+   "pred_std_arousal": 0.1413
+  },
+  "ravdess": {
+   "n": 120,
+   "ccc_valence": 0.371,
+   "ccc_arousal": 0.6879,
+   "arousal_auc": 0.8916,
+   "valence_auc": 0.7519,
+   "pred_std_arousal": 0.4098
+  }
+ },
+ "split_speakers": {
+  "train": 2764,
+  "val": 627,
+  "test": 604
+ },
+ "by_speech_kind": {
+  "acted": {
+   "n": 2876,
+   "ccc_valence": 0.2791,
+   "ccc_arousal": 0.3547,
+   "arousal_auc": 0.8342,
+   "valence_auc": 0.7197,
+   "pred_std_arousal": 0.2961
+  }
+ },
+ "corpora": {
+  "crema-d": 7441,
+  "emonet-voice-bench": 4018,
+  "rasa": 4541,
+  "ravdess": 1440
+ },
+ "licences": {
+  "per_corpus": {
+   "crema-d": {
+    "licence": "Open Database License (ODbL) v1.0 for the database; Database Conten...",
+    "weights_publishable": "yes"
+   },
+   "emonet-voice-bench": {
+    "licence": "cc-by-4.0",
+    "weights_publishable": "yes"
+   },
+   "rasa": {
+    "licence": "cc-by-4.0",
+    "weights_publishable": "yes"
+   },
+   "ravdess": {
+    "licence": "Creative Commons Attribution Non Commercial Share Alike 4.0 Interna...",
+    "weights_publishable": "no"
+   }
+  },
+  "weights_publishable": "no"
+ },
+ "best_val_ccc_arousal": 0.5556,
+ "config": {
+  "corpora": [
+   "crema-d",
+   "ravdess",
+   "rasa",
+   "emonet-voice-bench"
+  ],
+  "epochs": 3,
+  "batch": 8,
+  "lr": 0.0001,
+  "seconds": 4.0,
+  "unfreeze": 4,
+  "arousal_boundary": 0.0,
+  "valence_boundary": 0.0,
+  "encoder": "/home/yash/code/neiro/models/w2v-bert-2.0",
+  "out": "../models/ser-lane-b-v2",
+  "dry_run": false,
+  "workers": 4,
+  "publishable_only": false
+ }
+}
