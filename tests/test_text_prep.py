@@ -201,6 +201,60 @@ class TestSyntheticPersonaChat:
         _assert_alternates(rec)
         assert "😀" not in json.dumps(rec.as_dict(), ensure_ascii=False)
 
+    def test_markdown_speaker_markers_are_read_and_the_rest_are_counted(
+        self, tmp_path: Path
+    ) -> None:
+        # 42 real transcripts wrap the marker in markdown. Three
+        # spellings of it carry the same information as `User 1:` and are
+        # read; the fourth has no marker at all on any line, and which of
+        # the two people is speaking is not something to invent.
+        _csv(
+            tmp_path / "data" / "Synthetic-Persona-Chat_valid.csv",
+            [
+                {
+                    "user 1 personas": "x",
+                    "user 2 personas": "y",
+                    "Best Generated Conversation": (
+                        "**User 1:** Hello!\n**User 2:** Hi, I knit.\n**User 1:** Nice."
+                    ),
+                },
+                {
+                    "user 1 personas": "x",
+                    "user 2 personas": "y",
+                    "Best Generated Conversation": (
+                        "* * User 1: * * Hello!\n* * User 2: * * Hi, I quilt."
+                    ),
+                },
+                {
+                    "user 1 personas": "x",
+                    "user 2 personas": "y",
+                    "Best Generated Conversation": (
+                        "* * User 1: Hello! * *\n* * *\n* * User 2: Hi, I game. * *"
+                    ),
+                },
+                {
+                    "user 1 personas": "x",
+                    "user 2 personas": "y",
+                    "Best Generated Conversation": (
+                        "Hi! I'm [user 1 name].\nHello, nice to meet you!"
+                    ),
+                },
+            ],
+        )
+        prep.clear_drops()
+        recs = list(read_synthetic_persona_chat(tmp_path))
+        assert [[m["content"] for m in r.messages if m["role"] != "system"] for r in recs] == [
+            ["Hello!", "Hi, I knit."],
+            ["Hello!", "Hi, I quilt."],
+            ["Hello!", "Hi, I game."],
+        ], "every markdown spelling of the marker reads as the marker, and `* * *` is not speech"
+        for rec in recs:
+            _assert_alternates(rec)
+            assert "*" not in json.dumps(rec.as_dict())
+        assert prep.drops() == {"synthetic-persona-chat: no speaker marker": 1}, (
+            "a transcript with no marker is dropped with a number, not silently"
+        )
+
 
 class TestIndicTalk:
     def test_script_sets_lang_and_spoken_text_is_cleaned(self, tmp_path: Path) -> None:
@@ -855,6 +909,17 @@ size_gb = 0.0
 weights_publishable = "yes"
 
 [[dataset]]
+name = "synthetic-persona-chat"
+target = "persona_lora"
+priority = 1
+hf_id = "org/persona"
+license = "cc-by-4.0"
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.0
+weights_publishable = "yes"
+
+[[dataset]]
 name = "crema-d"
 target = "ser_lane_b"
 priority = 1
@@ -894,6 +959,17 @@ def _downloads(tmp_path: Path) -> Path:
         ],
     )  # fmt: skip
     (base / "cmu-hinglish-dog" / prep.COMPLETE_MARKER).write_text("{}")
+    _csv(
+        base / "synthetic-persona-chat" / "data" / "valid.csv",
+        [
+            {"user 1 personas": "x", "user 2 personas": "y",
+             "Best Generated Conversation": "User 1: Hi.\nUser 2: Hello."},
+            # No speaker marker on either line: dropped, and counted.
+            {"user 1 personas": "x", "user 2 personas": "y",
+             "Best Generated Conversation": "Hi there.\nHello back."},
+        ],
+    )  # fmt: skip
+    (base / "synthetic-persona-chat" / prep.COMPLETE_MARKER).write_text("{}")
     return base
 
 
@@ -901,7 +977,11 @@ class TestLicenceGate:
     def test_a_non_publishable_source_is_refused_with_a_reason(self, tmp_path: Path) -> None:
         base = _downloads(tmp_path)
         p = plan(Manifest.loads(_MANIFEST), datasets_dir=base)
-        assert [d.name for d in p.included] == ["phinc", "cmu-hinglish-dog"]
+        assert [d.name for d in p.included] == [
+            "phinc",
+            "cmu-hinglish-dog",
+            "synthetic-persona-chat",
+        ]
         assert "goemotions" in p.refused and "NC" in p.refused["goemotions"]
         assert p.missing == ["brighter-hindi-emotion-categories"], "in the manifest, not on disk"
 
@@ -917,7 +997,7 @@ class TestLicenceGate:
     def test_publishable_only_also_drops_the_unclear_ones(self, tmp_path: Path) -> None:
         base = _downloads(tmp_path)
         p = plan(Manifest.loads(_MANIFEST), datasets_dir=base, publishable_only=True)
-        assert [d.name for d in p.included] == ["phinc"]
+        assert [d.name for d in p.included] == ["phinc", "synthetic-persona-chat"]
         assert "cmu-hinglish-dog" in p.refused
 
     def test_an_unknown_name_is_an_error_not_a_silent_skip(self, tmp_path: Path) -> None:
@@ -946,13 +1026,21 @@ class TestScript:
             for name in ("train.jsonl", "val.jsonl")
             for line in (out / name).read_text().splitlines()
         ]
-        assert len(rows) == 3, "two phinc rows are identical and are written once"
-        assert {r["source"] for r in rows} == {"phinc", "cmu-hinglish-dog"}
+        assert len(rows) == 4, "two phinc rows are identical and are written once"
+        assert {r["source"] for r in rows} == {
+            "phinc",
+            "cmu-hinglish-dog",
+            "synthetic-persona-chat",
+        }
         assert all(
             set(r) == {"messages", "tools", "source", "licence", "lang", "kind"} for r in rows
         )
 
         stats = json.loads((out / "stats.json").read_text())
+        assert stats["sources"]["synthetic-persona-chat"]["dropped"] == {
+            "synthetic-persona-chat: no speaker marker": 1
+        }, "a dropped row is counted per source in stats.json, not lost in the arithmetic"
+        assert stats["sources"]["phinc"]["dropped"] == {}, "the tally is per source, not cumulative"
         assert stats["sources"]["phinc"]["n"] == 2
         assert stats["sources"]["phinc"]["duplicates"] == 1
         assert stats["sources"]["phinc"]["publishable"] is True
@@ -960,7 +1048,7 @@ class TestScript:
         assert stats["sources"]["phinc"]["lang"] == {"hinglish": 2}
         assert "goemotions" in stats["refused"]
         assert stats["missing"] == ["brighter-hindi-emotion-categories"]
-        assert stats["totals"]["n"] == 3
+        assert stats["totals"]["n"] == 4
         assert stats["publishable"] is False, "one unclear source makes the adapter unpublishable"
 
     def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:

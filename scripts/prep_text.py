@@ -196,8 +196,14 @@ def main(argv: list[str] | None = None) -> int:
                 _count(stats["totals"]["by_lang"], rec.lang)
                 _count(stats["totals"]["by_kind"], rec.kind)
             per["seconds"] = round(time.perf_counter() - t0, 1)
+            # Rows the reader refused rather than guessed at. Written per
+            # source so a corpus that quietly loses rows is visible in
+            # stats.json instead of only in the arithmetic.
+            per["dropped"] = prep.drops()
             stats["sources"][ds.name] = per
             print(f"{ds.name}: {per['n']} records in {per['seconds']}s", flush=True)
+            for why, count in sorted(per["dropped"].items()):
+                print(f"  dropped {count}: {why}", flush=True)
 
     (args.out / "stats.json").write_text(json.dumps(stats, indent=1, ensure_ascii=False) + "\n")
     print()

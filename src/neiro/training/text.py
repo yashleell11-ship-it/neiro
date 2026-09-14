@@ -76,6 +76,26 @@ PARQUET_BATCH_ROWS = 4096
 
 _TABLE_SUFFIXES = (".parquet", ".jsonl", ".jsonl.gz", ".csv", ".json")
 
+# A malformed row is dropped, never guessed at — but a row that vanishes
+# without a number is indistinguishable from a row that was never there.
+# A reader that refuses one says so here; `load` clears the tally per
+# source and scripts/prep_text.py writes it into stats.json.
+_DROPS: dict[str, int] = {}
+
+
+def drop(reason: str) -> None:
+    """Record one row the reader refused to read, under a short reason."""
+    _DROPS[reason] = _DROPS.get(reason, 0) + 1
+
+
+def drops() -> dict[str, int]:
+    """The drop tally since the last `clear_drops()`, reason → count."""
+    return dict(_DROPS)
+
+
+def clear_drops() -> None:
+    _DROPS.clear()
+
 
 @dataclass
 class Record:
@@ -477,7 +497,17 @@ def read_hinglish_top(root: Path) -> Iterator[Record]:
 
 
 PERSONA_SYSTEM_PREFIX = "Your persona:\n"
-_PERSONA_LINE = re.compile(r"^User ([12]): ?(.*)$")
+# 42 of 21,907 transcripts write the speaker marker in markdown instead
+# of plain — `**User 1:** hi`, `* * User 1: * * hi`, `* * User 1: hi *
+# *` — and a pattern anchored on a bare `User 1:` matched no line of
+# them, so the row reached _dialogue empty and disappeared without a
+# count. The marker is the same in all of them; only the emphasis around
+# it differs, so emphasis is allowed before it, after it, and at the end
+# of the line.
+_PERSONA_LINE = re.compile(r"^[\s*]*User\s*([12])\s*:[\s*]*(.*?)[\s*]*$")
+# A line that is nothing but emphasis (`* * *`) is a separator, not
+# speech, and must not be glued onto the turn above it.
+_PERSONA_RULE = re.compile(r"^[\s*_-]+$")
 
 
 def read_synthetic_persona_chat(root: Path) -> Iterator[Record]:
@@ -491,13 +521,20 @@ def read_synthetic_persona_chat(root: Path) -> Iterator[Record]:
             transcript = row.get("Best Generated Conversation") or ""
             turns: list[tuple[str, str]] = []
             for line in transcript.splitlines():
-                m = _PERSONA_LINE.match(line.strip())
+                stripped = line.strip()
+                m = _PERSONA_LINE.match(stripped)
                 if m:
                     turns.append((m.group(1), m.group(2)))
-                elif turns and line.strip():
-                    turns[-1] = (turns[-1][0], turns[-1][1] + " " + line.strip())
+                elif turns and stripped and not _PERSONA_RULE.match(stripped):
+                    turns[-1] = (turns[-1][0], turns[-1][1] + " " + stripped)
             messages = _dialogue(turns)
             if messages is None:
+                # What is left after the markdown spellings are read is a
+                # handful of transcripts with no speaker marker on any
+                # line. Which of the two people is talking is exactly the
+                # thing this reader may not invent, so the row goes — and
+                # is counted on the way out.
+                drop("synthetic-persona-chat: no speaker marker")
                 continue
             persona = [_spoken(p) for p in (row.get("user 2 personas") or "").splitlines()]
             lines = "\n".join(f"- {p}" for p in persona if p)
@@ -1161,6 +1198,7 @@ def load(
     reason = refusal_reason(ds)
     if reason is not None:
         raise LicenceRefused(f"{ds.name}: {reason}")
+    clear_drops()
     for n, rec in enumerate(READERS[ds.name](base / ds.name), start=1):
         yield replace(rec, source=ds.name, licence=ds.license)
         if limit is not None and n >= limit:
