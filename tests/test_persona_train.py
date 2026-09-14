@@ -39,9 +39,10 @@ from neiro.training.llm_data import (
     filter_publishable,
     find_tool_call_turn,
     gguf_convert_commands,
+    index_jsonl_lines,
     iter_jsonl,
+    iter_jsonl_at_offsets,
     parse_tool_call_arguments,
-    shuffle_stream,
 )
 
 # --------------------------------------------------------------------------
@@ -66,45 +67,80 @@ class TestIterJsonl:
 
 
 # --------------------------------------------------------------------------
-# streaming shuffle
+# global shuffle via a byte-offset index
 
 
-class TestShuffleStream:
-    def test_output_is_a_permutation_of_the_input(self) -> None:
-        items = list(range(200))
-        out = list(shuffle_stream(items, buffer_size=20, seed=0))
-        assert sorted(out) == items
+class TestIndexJsonlLines:
+    def test_one_offset_per_non_blank_line(self, tmp_path: Path) -> None:
+        path = tmp_path / "rows.jsonl"
+        path.write_text('{"a": 1}\n{"a": 2}\n{"a": 3}\n')
+        offsets = index_jsonl_lines(path)
+        assert len(offsets) == 3
+        assert list(iter_jsonl_at_offsets(path, offsets)) == [{"a": 1}, {"a": 2}, {"a": 3}]
 
-    def test_the_same_seed_gives_the_same_order(self) -> None:
-        items = list(range(200))
-        first = list(shuffle_stream(items, buffer_size=20, seed=7))
-        second = list(shuffle_stream(items, buffer_size=20, seed=7))
-        assert first == second
+    def test_blank_lines_get_no_offset(self, tmp_path: Path) -> None:
+        path = tmp_path / "rows.jsonl"
+        path.write_text('{"a": 1}\n\n  \n{"a": 2}\n')
+        assert len(index_jsonl_lines(path)) == 2
 
-    def test_different_seeds_give_different_orders(self) -> None:
-        items = list(range(200))
-        first = list(shuffle_stream(items, buffer_size=20, seed=1))
-        second = list(shuffle_stream(items, buffer_size=20, seed=2))
-        assert first != second
+    def test_an_empty_file_has_no_offsets(self, tmp_path: Path) -> None:
+        path = tmp_path / "rows.jsonl"
+        path.write_text("")
+        assert index_jsonl_lines(path) == []
 
-    def test_a_buffer_of_one_is_not_an_error(self) -> None:
-        # No real shuffling is possible with a size-1 buffer, but it must
-        # still yield every item exactly once.
-        items = list(range(10))
-        assert sorted(shuffle_stream(items, buffer_size=1, seed=0)) == items
+    def test_offsets_are_distinct_and_increasing_in_file_order(self, tmp_path: Path) -> None:
+        path = tmp_path / "rows.jsonl"
+        path.write_text('{"a": 1}\n{"a": 2}\n{"a": 3}\n')
+        offsets = index_jsonl_lines(path)
+        assert offsets == sorted(set(offsets))
 
-    def test_a_shuffle_actually_reorders_a_long_sequence(self) -> None:
-        items = list(range(500))
-        out = list(shuffle_stream(items, buffer_size=100, seed=0))
-        assert out != items
 
-    def test_buffer_size_below_one_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="buffer_size"):
-            list(shuffle_stream([1, 2, 3], buffer_size=0, seed=0))
+class TestIterJsonlAtOffsets:
+    def _path(self, tmp_path: Path) -> Path:
+        path = tmp_path / "rows.jsonl"
+        path.write_text("".join(json.dumps({"a": i}) + "\n" for i in range(20)))
+        return path
 
-    def test_fewer_items_than_the_buffer_still_yields_everything(self) -> None:
-        items = list(range(5))
-        assert sorted(shuffle_stream(items, buffer_size=100, seed=0)) == items
+    def test_reading_in_shuffled_offset_order_reorders_the_records(self, tmp_path: Path) -> None:
+        import random
+
+        path = self._path(tmp_path)
+        offsets = index_jsonl_lines(path)
+        shuffled = list(offsets)
+        random.Random(0).shuffle(shuffled)
+        assert shuffled != offsets  # the shuffle actually did something
+        out = list(iter_jsonl_at_offsets(path, shuffled))
+        assert sorted(r["a"] for r in out) == list(range(20))  # same records
+        assert [r["a"] for r in out] != list(range(20))  # different order
+
+    def test_reading_in_the_original_offset_order_is_the_original_order(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._path(tmp_path)
+        offsets = index_jsonl_lines(path)
+        out = list(iter_jsonl_at_offsets(path, offsets))
+        assert [r["a"] for r in out] == list(range(20))
+
+    def test_a_source_grouped_file_is_not_still_grouped_after_reordering(
+        self, tmp_path: Path
+    ) -> None:
+        # The actual bug this exists to fix: train.jsonl is one big block
+        # per source. Simulate that shape and check a shuffled read
+        # interleaves the two "sources" instead of emitting one fully
+        # before the other.
+        import random
+
+        path = tmp_path / "grouped.jsonl"
+        rows = [{"source": "big", "i": i} for i in range(200)] + [
+            {"source": "small", "i": i} for i in range(20)
+        ]
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        offsets = index_jsonl_lines(path)
+        random.Random(0).shuffle(offsets)
+        first_50 = [r["source"] for r in iter_jsonl_at_offsets(path, offsets[:50])]
+        assert "small" in first_50, (
+            "a global shuffle must mix the small source in early, not only at the end"
+        )
 
 
 # --------------------------------------------------------------------------

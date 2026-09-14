@@ -145,6 +145,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import re
 import shlex
 import sys
@@ -169,10 +170,11 @@ from neiro.training.llm_data import (
     filter_publishable,
     find_tool_call_turn,
     gguf_convert_commands,
+    index_jsonl_lines,
     iter_jsonl,
+    iter_jsonl_at_offsets,
     parse_tool_call_arguments,
     render_and_mask,
-    shuffle_stream,
 )
 
 MODEL_DIR = REPO / "models" / "qwen3.5-4b-safetensors"
@@ -213,11 +215,18 @@ class PersonaStream(IterableDataset):
     """Lazily reads, filters, renders and masks `train.jsonl` one line at
     a time -- 415,209 rows never sit tokenized in RAM together.
 
-    Shuffling is `neiro.training.llm_data.shuffle_stream`'s streaming
-    buffer, reseeded from `seed + epoch` on `set_epoch` (the same
-    contract `stt_train.py`'s `ParquetClips.set_epoch` uses) -- necessary
-    because the file is NOT globally shuffled (see `shuffle_stream`'s
-    docstring): it is one contiguous block per source.
+    Shuffling is a GLOBAL shuffle of a byte-offset index
+    (`neiro.training.llm_data.index_jsonl_lines` /
+    `iter_jsonl_at_offsets`), reseeded from `seed + epoch` on
+    `set_epoch` (the same contract `stt_train.py`'s `ParquetClips.
+    set_epoch` uses) -- not a streaming reservoir buffer. `train.jsonl`
+    is one contiguous block per source (see `index_jsonl_lines`'s
+    docstring), several of them bigger than any buffer this card could
+    afford to hold as tokenized-adjacent state; a reservoir buffer fed
+    nothing but GoEmotions for its first ~20k items can only ever emit
+    GoEmotions. Indexing offsets once and shuffling THAT costs a few
+    seconds and ~3.5 MB, and the read order it produces can start
+    anywhere in the file.
     """
 
     def __init__(
@@ -231,7 +240,6 @@ class PersonaStream(IterableDataset):
         *,
         publishable_only: bool,
         shuffle: bool,
-        buffer_size: int,
         seed: int,
     ) -> None:
         self.path = path
@@ -242,19 +250,26 @@ class PersonaStream(IterableDataset):
         self.log = log
         self.publishable_only = publishable_only
         self.shuffle = shuffle
-        self.buffer_size = buffer_size
         self.seed = seed
         self.epoch = 0
+        self._offsets: list[int] | None = None
 
     def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
 
+    def _record_stream(self):
+        if self.shuffle:
+            if self._offsets is None:
+                self._offsets = index_jsonl_lines(self.path)
+            order = list(self._offsets)
+            random.Random(self.seed + self.epoch).shuffle(order)
+            return iter_jsonl_at_offsets(self.path, order)
+        return iter_jsonl(self.path)
+
     def __iter__(self):
-        records = iter_jsonl(self.path)
+        records = self._record_stream()
         if self.publishable_only:
             records = filter_publishable(records, self.per_source, self.log)
-        if self.shuffle:
-            records = shuffle_stream(records, self.buffer_size, self.seed + self.epoch)
         for record in records:
             messages = parse_tool_call_arguments(record["messages"], self.log)
             if messages is None:
@@ -294,22 +309,28 @@ class Collator:
 
 def measure_lengths(path: Path, tokenizer, chat_template: str, sample: int, seed: int) -> list[int]:
     """Token lengths of `sample` records drawn from `path` via the same
-    streaming shuffle buffer training uses -- thrown away after
+    global offset shuffle training uses -- thrown away after
     `choose_max_length` reads it, never trained on.
     """
     log = SkipLog()
+    offsets = index_jsonl_lines(path)
+    order = list(offsets)
+    random.Random(seed).shuffle(order)
     lengths: list[int] = []
-    stream = shuffle_stream(iter_jsonl(path), buffer_size=max(sample * 4, 1000), seed=seed)
-    for record in stream:
+    for record in iter_jsonl_at_offsets(path, order):
         if len(lengths) >= sample:
             break
         messages = parse_tool_call_arguments(record["messages"], log)
         if messages is None:
             continue
+        # A template with {% generation %} tags makes apply_chat_template
+        # return a BatchEncoding (dict-like: "input_ids", "attention_mask")
+        # rather than a plain token list -- len() on THAT counts keys (2),
+        # not tokens. Index by key, the same way render_and_mask does.
         rendered = tokenizer.apply_chat_template(
             messages, tools=record.get("tools") or None, chat_template=chat_template, tokenize=True
         )
-        lengths.append(len(rendered))
+        lengths.append(len(rendered["input_ids"]))
     return lengths
 
 
@@ -488,6 +509,10 @@ def evaluate_tool_calls(
             continue
         tools = record.get("tools") or []
         declared = [t["function"]["name"] for t in tools if "function" in t]
+        # return_dict=True: apply_chat_template returns a BatchEncoding
+        # here too (a dict of "input_ids"/"attention_mask"), never a bare
+        # tensor -- indexed by key, not assumed, the same lesson
+        # measure_lengths above had to learn.
         rendered = tokenizer.apply_chat_template(
             prompt_messages,
             tools=tools or None,
@@ -495,15 +520,19 @@ def evaluate_tool_calls(
             add_generation_prompt=True,
             enable_thinking=False,
             return_tensors="pt",
-        ).to(device)
+            return_dict=True,
+        )
+        input_ids = rendered["input_ids"].to(device)
+        attention_mask = rendered["attention_mask"].to(device)
         generated = model.generate(
-            input_ids=rendered,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
             do_sample=False,
             no_repeat_ngram_size=no_repeat_ngram_size,
             pad_token_id=tokenizer.pad_token_id,
         )
-        text = tokenizer.decode(generated[0, rendered.shape[1] :], skip_special_tokens=True)
+        text = tokenizer.decode(generated[0, input_ids.shape[1] :], skip_special_tokens=True)
         check = check_tool_call_shape(text, declared or None)
         n += 1
         well_formed += int(check.well_formed)
@@ -591,13 +620,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--workers",
         type=int,
         default=0,
-        help="DataLoader workers; 0 keeps the shuffle-buffer simple",
-    )
-    ap.add_argument(
-        "--shuffle-buffer",
-        type=int,
-        default=20000,
-        help="streaming shuffle buffer size — see neiro.training.llm_data.shuffle_stream",
+        help="DataLoader workers; 0 keeps the offset-index shuffle simple",
     )
     ap.add_argument("--clip-grad", type=float, default=1.0)
     ap.add_argument("--log-every", type=int, default=10)
@@ -762,7 +785,6 @@ def main(argv: list[str] | None = None) -> int:
         train_log,
         publishable_only=args.publishable_only,
         shuffle=True,
-        buffer_size=args.shuffle_buffer,
         seed=args.seed,
     )
     collate = Collator(tokenizer.pad_token_id)

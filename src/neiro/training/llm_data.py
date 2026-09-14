@@ -98,7 +98,6 @@ from __future__ import annotations
 
 import json
 import math
-import random
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -160,36 +159,49 @@ def iter_jsonl(path: str | Path) -> Iterator[dict[str, Any]]:
                 yield json.loads(line)
 
 
-def shuffle_stream[T](items: Iterable[T], buffer_size: int, seed: int) -> Iterator[T]:
-    """A streaming shuffle: approximately uniform, exactly O(buffer_size)
-    memory, one pass over `items`.
+def index_jsonl_lines(path: str | Path) -> list[int]:
+    """The byte offset of every non-blank line in `path` -- one sequential
+    pass, O(n) small ints in memory (437k lines is ~3.5 MB of offsets),
+    never the file's content.
 
-    The prepared file is NOT globally shuffled -- `scripts/prep_text.py`
-    writes one source's rows contiguously before moving to the next, so
-    the first ~40k lines are entirely GoEmotions (`emotion_text`) and the
-    last ~139k are entirely IndicTalk (`chat`/`hi`+`hinglish`). Reading it
-    in file order would spend the first hour of a run on one `kind` and
-    one language and never see the rest. This is the classic reservoir
-    -style streaming shuffle (as used by `tf.data.Dataset.shuffle`): fill
-    a buffer of `buffer_size` items, then for every new item, yield a
-    uniformly random buffer slot and put the new item there; drain the
-    buffer at the end. With `buffer_size` large next to a training run's
-    step count (but far smaller than 437k), the mix seen by the model is
-    close to a full shuffle without ever holding the whole file.
+    This is what makes a GLOBAL shuffle of a >1 GB file possible without
+    holding it in RAM: `scripts/prep_text.py` writes one source's rows
+    contiguously before moving to the next, so `train.jsonl` is NOT
+    shuffled -- the first 40,266 lines are entirely GoEmotions
+    (`emotion_text`, tiny records), and the last 139,223 are entirely
+    IndicTalk (`chat`, `hi`+`hinglish`). This is not a small effect: an
+    earlier version of this data path used a fixed-size reservoir
+    -shuffle buffer (`buffer_size=20000`) on the raw line stream, and
+    because every source's block is contiguous and several exceed that
+    buffer size, the first tens of thousands of examples it produced were
+    still effectively 100% GoEmotions -- a buffer fed nothing but one
+    source can only ever emit that source, no matter how it shuffles
+    internally. Shuffling the INDEX instead of streaming the content
+    fixes this at the root: `iter_jsonl_at_offsets` then reads in
+    whatever order the offsets list says, so the first record it yields
+    can come from anywhere in the file.
     """
-    if buffer_size < 1:
-        raise ValueError(f"buffer_size must be at least 1, got {buffer_size}")
-    rng = random.Random(seed)
-    buffer: list[T] = []
-    for item in items:
-        if len(buffer) < buffer_size:
-            buffer.append(item)
-            continue
-        index = rng.randrange(buffer_size)
-        yield buffer[index]
-        buffer[index] = item
-    rng.shuffle(buffer)
-    yield from buffer
+    offsets: list[int] = []
+    with Path(path).open("rb") as fh:
+        offset = fh.tell()
+        for raw_line in fh:
+            if raw_line.strip():
+                offsets.append(offset)
+            offset = fh.tell()
+    return offsets
+
+
+def iter_jsonl_at_offsets(path: str | Path, offsets: Sequence[int]) -> Iterator[dict[str, Any]]:
+    """Read the JSONL records at `offsets`, in that exact order -- one
+    open file handle, one seek+readline per offset. Pairs with
+    `index_jsonl_lines`: shuffle the offsets list (cheap: a list of
+    ints), then stream through this to get a globally-shuffled read of a
+    file too large to shuffle by holding its rows.
+    """
+    with Path(path).open("rb") as fh:
+        for offset in offsets:
+            fh.seek(offset)
+            yield json.loads(fh.readline().decode("utf-8"))
 
 
 def parse_tool_call_arguments(
