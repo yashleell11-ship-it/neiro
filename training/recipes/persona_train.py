@@ -403,10 +403,28 @@ def build_model(args, device: torch.device):
     return model, tokenizer, chat_template, target_regex
 
 
-def masked_loss(model, input_ids, attention_mask, labels) -> tuple[torch.Tensor | None, int]:
+def masked_loss(
+    model, input_ids, attention_mask, labels, chunk_size: int = 256
+) -> tuple[torch.Tensor | None, int]:
     """See the module docstring's "memory-efficient loss" section. Returns
     (mean loss over scored tokens, number of scored tokens), or
     `(None, 0)` when nothing in the batch is scored at all.
+
+    The lm_head projection is CHUNKED over the kept (scored) positions,
+    `chunk_size` rows at a time, rather than run on all of them in one
+    call. Restricting the projection to scored positions bounds the
+    typical case; it does not bound the WORST case, and the worst case
+    is real: a chat record with a short prompt and one long, almost
+    entirely un-masked reply can leave nearly the whole sequence
+    "kept". Measured live on this card: the held-out perplexity eval hit
+    exactly this shape and OOM'd trying to allocate 1.09 GiB for one
+    fp32 `(~1100, 248320)` logits tensor from a single record, well
+    inside a training run that had otherwise been fitting comfortably.
+    Chunking bounds any ONE allocation to `chunk_size` rows regardless of
+    how many are kept in total, and — because it is used here rather
+    than duplicated at each call site — protects training the same way
+    it protects eval; a crash three hours into an unattended run is far
+    more expensive than 256 being a mild pessimisation.
     """
     backbone = model.base_model.model.model
     lm_head = model.base_model.model.lm_head
@@ -421,9 +439,17 @@ def masked_loss(model, input_ids, attention_mask, labels) -> tuple[torch.Tensor 
     n = int(keep.sum().item())
     if n == 0:
         return None, 0
-    logits = lm_head(flat_hidden[keep])
-    loss = F.cross_entropy(logits.float(), flat_labels[keep])
-    return loss, n
+    kept_hidden = flat_hidden[keep]
+    kept_labels = flat_labels[keep]
+    total_loss = kept_hidden.new_zeros(())
+    for start in range(0, n, chunk_size):
+        chunk_hidden = kept_hidden[start : start + chunk_size]
+        chunk_labels = kept_labels[start : start + chunk_size]
+        chunk_logits = lm_head(chunk_hidden)
+        total_loss = total_loss + F.cross_entropy(
+            chunk_logits.float(), chunk_labels, reduction="sum"
+        )
+    return total_loss / n, n
 
 
 def peak_vram_gb() -> float | None:
@@ -445,15 +471,15 @@ def load_val_by_kind(path: Path, kinds: tuple[str, ...]) -> dict[str, list[dict]
 
 
 def sample_records(records: list[dict], limit: int, seed: int) -> list[dict]:
-    import random
-
     if len(records) <= limit:
         return list(records)
     return random.Random(seed).sample(records, limit)
 
 
 @torch.no_grad()
-def evaluate_perplexity(model, tokenizer, chat_template, records, max_length, device, log) -> dict:
+def evaluate_perplexity(
+    model, tokenizer, chat_template, records, max_length, device, log, loss_chunk_size: int
+) -> dict:
     """Token-weighted perplexity over `records` (a single `kind`'s
     sample). Total negative log-likelihood over total scored tokens,
     never a mean of per-record rates — the same reason `stt_train.py`'s
@@ -472,7 +498,7 @@ def evaluate_perplexity(model, tokenizer, chat_template, records, max_length, de
             continue
         ids = torch.tensor([example["input_ids"]], dtype=torch.long, device=device)
         labels = torch.tensor([example["labels"]], dtype=torch.long, device=device)
-        loss, n = masked_loss(model, ids, None, labels)
+        loss, n = masked_loss(model, ids, None, labels, chunk_size=loss_chunk_size)
         if loss is None:
             continue
         total_nll += float(loss) * n
@@ -643,6 +669,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="hard ceiling from the VRAM sweep in the module docstring; wins over the "
         "measured percentile when the two disagree",
     )
+    ap.add_argument(
+        "--loss-chunk-size",
+        type=int,
+        default=256,
+        help="rows the lm_head projection processes at once in masked_loss — bounds a "
+        "single record's worst case (few masked tokens) the same way --max-length "
+        "bounds the typical one; see masked_loss's docstring for the OOM this fixed",
+    )
 
     ap.add_argument("--eval-limit", type=int, default=150, help="held-out records scored per kind")
     ap.add_argument(
@@ -804,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 model.train()
                 started = time.perf_counter()
-                loss, n = masked_loss(model, ids, attn, labels)
+                loss, n = masked_loss(model, ids, attn, labels, chunk_size=args.loss_chunk_size)
                 forward_ms = (time.perf_counter() - started) * 1000
                 if loss is None:
                     print("this batch scored zero tokens — draw another dry-run sample")
@@ -854,7 +888,14 @@ def main(argv: list[str] | None = None) -> int:
         for kind in ("chat", "emotion_text"):
             sample_rows = sample_records(val_by_kind[kind], args.eval_limit, args.eval_seed)
             before[kind] = evaluate_perplexity(
-                model, tokenizer, chat_template, sample_rows, max_length, device, eval_log
+                model,
+                tokenizer,
+                chat_template,
+                sample_rows,
+                max_length,
+                device,
+                eval_log,
+                args.loss_chunk_size,
             )
             print(f"BEFORE {kind}: {json.dumps(before[kind])}")
         sample_rows = sample_records(val_by_kind["tool_call"], args.eval_limit, args.eval_seed)
@@ -898,7 +939,7 @@ def main(argv: list[str] | None = None) -> int:
             ids = batch["input_ids"].to(device)
             attn = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)
-            loss, n = masked_loss(model, ids, attn, labels)
+            loss, n = masked_loss(model, ids, attn, labels, chunk_size=args.loss_chunk_size)
             if loss is None:
                 continue
             (loss / args.accum).backward()
@@ -948,7 +989,14 @@ def main(argv: list[str] | None = None) -> int:
     for kind in ("chat", "emotion_text"):
         sample_rows = sample_records(val_by_kind[kind], args.eval_limit, args.eval_seed)
         after[kind] = evaluate_perplexity(
-            model, tokenizer, chat_template, sample_rows, max_length, device, eval_log
+            model,
+            tokenizer,
+            chat_template,
+            sample_rows,
+            max_length,
+            device,
+            eval_log,
+            args.loss_chunk_size,
         )
         print(f"AFTER {kind}: {json.dumps(after[kind])}")
     sample_rows = sample_records(val_by_kind["tool_call"], args.eval_limit, args.eval_seed)
