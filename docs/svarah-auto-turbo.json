@@ -1,0 +1,52 @@
+{
+ "corpus": "svarah",
+ "engine": "distil",
+ "model": "models/large-v3-turbo-ct2",
+ "language": "auto",
+ "n": 120,
+ "wer": 0.0622,
+ "total_errors": 89,
+ "total_ref_words": 1431,
+ "rejected": 0,
+ "stt_p50_ms": 291.0,
+ "stt_p95_ms": 311.0,
+ "detected_languages": {
+  "en": 117,
+  "ru": 1,
+  "hi": 1,
+  "id": 1
+ },
+ "skipped_shards": [],
+ "worst": [
+  {
+   "name": "svarah-0003",
+   "ref": "Wow",
+   "hyp": "Вау!",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0010",
+   "ref": "Jammu, Samba, Kathua, Rajouri, Poonch",
+   "hyp": "जमू, सामबा, कथूवा, रजोरी, पुंच",
+   "errors": 5
+  },
+  {
+   "name": "svarah-0033",
+   "ref": "trains,",
+   "hyp": "Rains",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0034",
+   "ref": "Cat",
+   "hyp": "Ken",
+   "errors": 1
+  },
+  {
+   "name": "svarah-0076",
+   "ref": "Three",
+   "hyp": "3.",
+   "errors": 1
+  }
+ ]
+}

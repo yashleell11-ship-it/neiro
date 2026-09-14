@@ -246,6 +246,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="overrides cfg.stt.language for this run; default: whatever config.toml says",
     )
+    ap.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "overrides cfg.stt.model_id for this run — the whole point of the harness is "
+            "A/B-ing one recogniser against another on the same utterances, and a model "
+            "that can only be changed by editing config.toml cannot be A/B'd honestly"
+        ),
+    )
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--data-root", type=Path, default=DATASETS_DIR)
     ap.add_argument(
@@ -266,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(rows)} utterances from {args.corpus}")
 
     cfg = override_language(Neiro(), args.language)
+    if args.model:
+        # A local directory is allowed as well as an HF id: the pinned
+        # revision already lives under models/, and re-resolving it
+        # through the hub would silently follow `main` instead.
+        cfg.stt.model_id = args.model
     if args.engine == "distil":
         from neiro.stt.faster_whisper import FasterWhisperStt
 
@@ -274,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         from neiro.stt.moonshine import MoonshineStt
 
         stt = MoonshineStt(cfg)
+    print(f"model: {cfg.stt.model_id}")
     print(f"language: {cfg.stt.language}")
     warm = stt.warm()
     print(f"warm: {warm:.1f}s")
@@ -323,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "corpus": args.corpus,
         "engine": args.engine,
+        "model": cfg.stt.model_id,
         "language": cfg.stt.language,
         "n": len(pairs),
         # Corpus-level: total errors over total reference words. NOT the

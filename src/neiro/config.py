@@ -48,7 +48,13 @@ class AudioConfig(BaseModel):
 
 
 class SttConfig(BaseModel):
-    model_id: str = "distil-whisper/distil-large-v3.5-ct2"
+    # Multilingual, because Hindi is half the project. distil-large-v3.5
+    # carries a multilingual vocabulary and an English-trained decoder:
+    # 100% WER on Kathbath pinned to hi, and on auto it confidently
+    # TRANSLATES Hindi into English that passes the confidence floors.
+    # Measured 2026-09-14 — see docs/DECISIONS.md. English is unchanged
+    # at 6.2% on Svarah, so nothing was traded away for it.
+    model_id: str = "models/large-v3-turbo-ct2"
     compute_type: str = "int8_float16"
     beam_size: int = 1
     condition_on_previous_text: bool = False
