@@ -153,6 +153,24 @@ MODELS: tuple[ModelSpec, ...] = (
         note="already downloaded and proven by Gate G1 on sm_120",
     ),
     ModelSpec(
+        name="large-v3-turbo-ct2",
+        component="stt",
+        purpose="runtime",
+        runs="both",
+        hf_id="deepdml/faster-whisper-large-v3-turbo-ct2",
+        revision="4df90f75321148c3a29a9e2351b7ddf8f5b115a8",
+        license="mit",
+        size_gb=1.62,
+        note=(
+            "the Hindi half of the project. distil-large-v3.5 carries a multilingual "
+            "vocabulary but an English-trained decoder: pinned to hi it scores 100% WER "
+            "on Kathbath and the confidence floors reject 76 of 120 clips, and on auto it "
+            "confidently TRANSLATES Hindi speech into English that passes the floors, "
+            "which is worse. Whisper large-v3-turbo is genuinely multilingual, 809M, and "
+            "4 decoder layers rather than 32, so it is the cheapest honest candidate."
+        ),
+    ),
+    ModelSpec(
         name="distil-large-v3.5",
         component="stt",
         purpose="training",
