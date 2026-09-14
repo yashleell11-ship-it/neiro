@@ -362,12 +362,31 @@ def transcribe(
 ) -> tuple[list[tuple[str, str, str]], list[str], list[float]]:
     """Greedy decode of every batch. Returns (name, reference, hypothesis)
     triples plus the corpus each came from and per-utterance latencies.
+
+    **Every call is wall-clock bounded.** Whisper's well-documented
+    failure mode on out-of-distribution or noisy audio is a repetition
+    loop: it keeps re-emitting a phrase and never produces the EOS token,
+    so `max_new_tokens` is reached on every step of every remaining
+    beam — nothing in `generate()`'s normal API stops that early. On
+    this run it hung the eval pass twice in a row on the same input
+    before this landed: 25+ minutes with the GPU at 99% and zero
+    progress. `MaxTimeCriteria` cuts a pathological batch off at
+    `args.max_generate_s` and returns whatever it had; a batch that hits
+    the wall is recorded as a full-reference miss (empty hypothesis) via
+    `wer.score`'s own handling of `""`, not silently dropped, so the WER
+    number still reflects that the model failed on it — and every other
+    batch in the run is protected instead of the whole eval blocking
+    forever on the first bad one.
     """
+    from transformers import StoppingCriteriaList
+    from transformers.generation.stopping_criteria import MaxTimeCriteria
+
     model.eval()
     was_cached = model.config.use_cache
     triples: list[tuple[str, str, str]] = []
     corpora: list[str] = []
     latencies: list[float] = []
+    timed_out = 0
     for batch in loader:
         features = batch["input_features"].to(device, dtype=model.dtype)
         started = time.perf_counter()
@@ -379,8 +398,14 @@ def transcribe(
             num_beams=args.beams,
             max_new_tokens=args.max_new_tokens,
             use_cache=True,
+            stopping_criteria=StoppingCriteriaList(
+                [MaxTimeCriteria(max_time=args.max_generate_s, initial_timestamp=started)]
+            ),
         )
-        elapsed = (time.perf_counter() - started) * 1000 / max(len(batch["names"]), 1)
+        wall = time.perf_counter() - started
+        if wall >= args.max_generate_s:
+            timed_out += 1
+        elapsed = wall * 1000 / max(len(batch["names"]), 1)
         texts = processor.batch_decode(ids, skip_special_tokens=True)
         for name, reference, hypothesis, corpus in zip(
             batch["names"], batch["texts"], texts, batch["corpora"], strict=True
@@ -388,6 +413,11 @@ def transcribe(
             triples.append((name, reference, hypothesis.strip()))
             corpora.append(corpus)
             latencies.append(elapsed)
+    if timed_out:
+        print(
+            f"  {timed_out} batch(es) hit the {args.max_generate_s}s generation "
+            "wall and were cut off rather than hanging the run"
+        )
     model.config.use_cache = was_cached
     return triples, corpora, latencies
 
@@ -577,6 +607,28 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--language", default="hi")
     ap.add_argument("--beams", type=int, default=1)
     ap.add_argument("--max-new-tokens", type=int, default=128)
+    ap.add_argument(
+        "--skip-before-eval",
+        action="store_true",
+        help=(
+            "don't run the BEFORE baseline pass — for a --resume relaunch after "
+            "a crash, where the baseline was already captured by the run that "
+            "crashed and re-running it just repeats the slowest, least stable "
+            "part of the whole recipe for no new information"
+        ),
+    )
+    ap.add_argument(
+        "--max-generate-s",
+        type=float,
+        default=20.0,
+        help=(
+            "hard wall-clock limit per eval batch, Whisper's own repetition-"
+            "loop failure mode: it can re-emit a phrase forever and never "
+            "reach EOS or max_new_tokens' natural stop, and generate() has "
+            "no other way to bound that. 20s covers every batch that has "
+            "ever finished normally on this card with headroom to spare"
+        ),
+    )
     ap.add_argument("--model", type=Path, default=MODEL_DIR)
     ap.add_argument("--data-root", type=Path, default=DATASETS_DIR)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
@@ -788,17 +840,20 @@ def main(argv: list[str] | None = None) -> int:
         for name, partition in plan.evals.items()
     }
     before: dict[str, dict] = {}
-    # The BEFORE number must be the BASE model. With the adapter freshly
-    # initialised its B matrix is zero, so it is mathematically the base
-    # model already — but that stops being true the moment --adapter loads
-    # a trained one, and a baseline that silently included the thing being
-    # measured is the worst kind of wrong.
-    baseline = contextlib.nullcontext() if args.adapter else model.disable_adapter()
-    with baseline:
-        for name, loader in eval_loaders.items():
-            triples, corpora, latencies = transcribe(model, loader, processor, device, args)
-            before[name] = wer_table(triples, corpora, latencies)
-            print_wer_table(f"BEFORE — {name}", before[name], None)
+    if args.skip_before_eval:
+        print("skipping BEFORE eval (--skip-before-eval): baseline was captured earlier")
+    else:
+        # The BEFORE number must be the BASE model. With the adapter freshly
+        # initialised its B matrix is zero, so it is mathematically the base
+        # model already — but that stops being true the moment --adapter loads
+        # a trained one, and a baseline that silently included the thing being
+        # measured is the worst kind of wrong.
+        baseline = contextlib.nullcontext() if args.adapter else model.disable_adapter()
+        with baseline:
+            for name, loader in eval_loaders.items():
+                triples, corpora, latencies = transcribe(model, loader, processor, device, args)
+                before[name] = wer_table(triples, corpora, latencies)
+                print_wer_table(f"BEFORE — {name}", before[name], None)
 
     if args.eval_only:
         _write_report(args, plan, log, licences, before, None, params, None)
