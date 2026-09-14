@@ -42,6 +42,12 @@ dependencies = [
   "huggingface-hub",
 ]
 
+[dependency-groups]
+# The recipes' pure functions live in ../src and are tested by the
+# runtime venv, which has no pyarrow — so the parquet-level tests in
+# tests/test_stt_train.py skip there and run here instead.
+dev = ["pytest>=9.1.1"]
+
 [tool.uv.sources]
 # Explicit, so this venv's CUDA build cannot be replaced by a resolution
 # happening somewhere else. `ser_train.py` also refuses to start on a CPU
