@@ -444,6 +444,17 @@ class TestHermes:
                 "</tool_call>",
             },
         ]
+        # Same `[]` and the same boilerplate, but nothing is called. The
+        # boilerplate must still go, and it goes because it *is*
+        # boilerplate — a <tools> block describing an XML protocol our
+        # format does not use — not because the row happened to offer no
+        # tools. Keyed on the tool list instead, this row keeps a system
+        # turn telling her to answer in <tool_call> tags.
+        no_tools_no_calls = [
+            {"from": "system", "value": _hermes_system([])},
+            {"from": "human", "value": "What is the capital of France?"},
+            {"from": "gpt", "value": "Paris."},
+        ]
         # The Glaive subset sometimes writes the result object bare, with
         # no `content` key; the reply that follows quotes it.
         bare_result = [
@@ -466,6 +477,7 @@ class TestHermes:
                 {"id": "d", "conversations": no_access, "tools": "null"},
                 {"id": "e", "conversations": literal, "tools": json.dumps(tools)},
                 {"id": "f", "conversations": no_tools_but_calls, "tools": "[]"},
+                {"id": "h", "conversations": no_tools_no_calls, "tools": "[]"},
                 {"id": "g", "conversations": bare_result, "tools": json.dumps(tools)},
             ],
         )
@@ -474,9 +486,10 @@ class TestHermes:
             "Show the front door and record it.",
             "Give me a patent record.",
             "Book me a flight.",
+            "What is the capital of France?",
             "A random name, please.",
         ], "an orphan result, an unparsable call and a call with no tools are dropped"
-        agentic, plain, negative, bare = recs
+        agentic, plain, negative, boilerplate, bare = recs
         for rec in recs:
             for m in rec.messages:
                 assert "<tool_call>" not in (m["content"] or "")
@@ -495,6 +508,12 @@ class TestHermes:
 
         assert plain.kind == "chat" and plain.tools is None
         assert _roles(plain) == ["system", "user", "assistant"], "JSON-mode keeps its system turn"
+
+        assert boilerplate.kind == "chat" and boilerplate.tools is None
+        assert _roles(boilerplate) == ["user", "assistant"], (
+            "the <tools> boilerplate goes because it is boilerplate, not because the row "
+            "offered no tools; keyed on the tool list it would survive as a system turn"
+        )
 
         assert _roles(bare) == ["user", "assistant", "tool", "assistant"]
         assert json.loads(bare.messages[2]["content"]) == {"name": "James"}, (
