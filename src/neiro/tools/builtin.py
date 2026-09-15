@@ -23,7 +23,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from neiro.tools import hyprland, media, system
+from neiro.tools import apps, hyprland, media, system, websearch
 from neiro.tools.audit import AuditLog
 from neiro.tools.registry import ToolRegistry, ToolSpec
 from neiro.tools.tiers import Tier
@@ -65,6 +65,22 @@ class WindowIndexArgs(BaseModel):
 class WorkspaceArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     number: int = Field(ge=1, le=10)
+
+
+class OpenAppArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target: Literal["here", "pc"] = Field(
+        description="'here' is this machine; 'pc' is Yash's other machine, the 3090 Ti box."
+    )
+    app: apps.App
+
+
+class WebSearchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The only `str` field in this registry that isn't an identifier —
+    # it's what he actually asked to search for, so it's opted into
+    # spoken_text_fields below rather than being a bare disallowed str.
+    query: str = Field(min_length=1, max_length=200)
 
 
 # --- handlers: thin adapters, no logic ---------------------------------
@@ -199,6 +215,27 @@ def build_registry(confirm=None, *, audit: AuditLog | None = None) -> ToolRegist
             tier=Tier.YELLOW,
             args_model=WorkspaceArgs,
             handler=lambda number: hyprland.switch_workspace(number),
+        ),
+        ToolSpec(
+            name="open_app",
+            description=(
+                "Launch an application, here or on Yash's other machine (the PC). "
+                "Use when he asks to open, start or launch something by name."
+            ),
+            tier=Tier.YELLOW,
+            args_model=OpenAppArgs,
+            handler=lambda target, app: apps.open_app(target, app),
+        ),
+        ToolSpec(
+            name="web_search",
+            description=(
+                "Search the web. Use only when he asks for something current or "
+                "outside what you already know — not for things you can already answer."
+            ),
+            tier=Tier.YELLOW,
+            args_model=WebSearchArgs,
+            handler=lambda query: websearch.search_and_describe(query),
+            spoken_text_fields=frozenset({"query"}),
         ),
     ]
 

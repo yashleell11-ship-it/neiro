@@ -34,7 +34,8 @@ declared in code (`state.Locality`) and enforced by
 architectural rule, not a default that could later be changed casually.
 
 - **`local`** (the machine Yash is sitting at — the laptop, at the
-  hostel): **nothing leaves.** No network at all.
+  hostel): **nothing leaves, with two named exceptions** — see "Tool
+  exceptions" below. Neither is a provider tier and neither is silent.
 - **`lan`** (home; the 3090 Ti is his own desktop, on the same router,
   over ethernet): the LLM prompt — which contains the transcript and,
   when affect is on, the `[voice: …]` annotation — and the TTS text
@@ -47,6 +48,32 @@ architectural rule, not a default that could later be changed casually.
 - **`tunnel`** (hostel→home via Cloudflare Access; only if T17b measures
   it fast enough): the LLM prompt and TTS text cross it, over TLS with a
   bearer token. **Raw audio never does** — STT is LAN-only by rule.
+
+## Tool exceptions (2026-09-15, docs/DECISIONS.md)
+
+Two tools are exceptions to "`local` tier ⇒ nothing leaves," on purpose,
+and both are YELLOW: spoken confirmation *and* a clickable notification
+are required before either runs, and both are audited like every other
+tool (`~/.local/state/neiro/audit.jsonl`).
+
+- **`open_app(target="pc", ...)`** reaches the 3090 Ti box over
+  Tailscale to launch an app there. Still just Yash's own two machines
+  — the same pair `lan`/`tunnel` already cover for the LLM provider —
+  never an arbitrary host.
+- **`web_search`** reaches the open internet (DuckDuckGo, no API key).
+  This is the one tool in the whole registry that isn't Yash's own
+  hardware on the other end. It exists because RED tier already draws
+  the line at "sending anything off-machine the user didn't name" — a
+  search query he asked for this turn is the opposite of that.
+
+**Not yet done, and worth doing before either ships live:** neither
+tool's registration currently checks which provider tier is serving the
+turn. Routing a request through the box or a tunnel and then also
+reaching the box again, or the internet, compounds exactly the
+confidentiality question this file exists to be honest about — the
+registry only gates on GREEN/YELLOW/RED (tools/tiers.py) today, not on
+`state.Tier` (LOCAL/LAN/TUNNEL). Flagged here rather than left
+implicit; see docs/DECISIONS.md.
 
 Voice-activity detection, affect detection, the audio sink, and every
 tool are `Locality.LOCAL_PINNED`: they never run anywhere but the

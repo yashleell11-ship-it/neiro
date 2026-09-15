@@ -12,7 +12,7 @@ from typing import Literal, get_args, get_origin
 
 import pytest
 
-from neiro.tools import media, system
+from neiro.tools import apps, media, system, websearch
 from neiro.tools.builtin import build_registry
 from neiro.tools.registry import ToolRegistry, ToolRejected
 from neiro.tools.tiers import Tier
@@ -25,6 +25,8 @@ YELLOW_TOOLS = (
     "media_control",
     "focus_window",
     "switch_workspace",
+    "open_app",
+    "web_search",
 )
 
 
@@ -46,9 +48,15 @@ class TestShape:
     def test_no_tool_takes_a_free_form_string(self, registry: ToolRegistry) -> None:
         # The registry enforces this at registration, so building it at
         # all is the assertion — but state it, because it IS the design.
+        # The one legal exception is a field opted into
+        # spoken_text_fields (registry.py) — genuinely spoken content,
+        # never an identifier. web_search.query is the first of these.
         for name in registry.names():
             spec = registry.spec(name)
             for field, info in spec.args_model.model_fields.items():
+                if field in spec.spoken_text_fields:
+                    assert info.annotation is str, f"{name}.{field} is spoken but not str"
+                    continue
                 assert info.annotation is not str, f"{name}.{field}"
 
     def test_descriptions_tell_the_model_when_to_use_them(self, registry: ToolRegistry) -> None:
@@ -213,6 +221,11 @@ class TestAdvertisedEnumsAreExecutable:
         script = tmp_path / "brightness-smart.sh"
         script.touch()
         monkeypatch.setattr(system, "BRIGHTNESS_SCRIPT", script)
+        # open_app would really launch a process (locally) or ssh to the
+        # box; web_search would really hit the network. Neither belongs
+        # in a unit suite — stub both to the boundary this module owns.
+        monkeypatch.setattr(apps, "open_app", lambda target, app: f"stub open {app} {target}")
+        monkeypatch.setattr(websearch, "search_and_describe", lambda query: f"stub search {query}")
         return argv
 
     def test_media_schema_and_allowlist_are_one_set(self, registry: ToolRegistry) -> None:
@@ -252,11 +265,27 @@ class TestAdvertisedEnumsAreExecutable:
         checked = 0
         for name in shape.names():
             spec = shape.spec(name)
-            for field, info in spec.args_model.model_fields.items():
-                if get_origin(info.annotation) is not Literal:
-                    continue
+            literal_fields = {
+                field: info
+                for field, info in spec.args_model.model_fields.items()
+                if get_origin(info.annotation) is Literal
+            }
+            for field, info in literal_fields.items():
+                # A tool can have more than one required Literal field
+                # (open_app: target AND app) — calling with only the one
+                # under test would fail on the other's missing value, not
+                # on the thing this test is actually checking. Every
+                # OTHER required field gets its first enum member so the
+                # call is well-formed; the field under test still varies
+                # across its full range.
+                other_defaults = {
+                    other_field: get_args(other_info.annotation)[0]
+                    for other_field, other_info in literal_fields.items()
+                    if other_field != field
+                }
                 for member in get_args(info.annotation):
-                    result = _confirming().call(name, {field: member})
+                    args = {**other_defaults, field: member}
+                    result = _confirming().call(name, args)
                     assert isinstance(result, str) and result.strip(), f"{name}.{field}={member!r}"
                     checked += 1
         # If this ever reads zero the test has stopped testing anything.

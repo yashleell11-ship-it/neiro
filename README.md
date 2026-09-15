@@ -3,8 +3,10 @@
 **音色** — *timbre*: the quality that makes two voices saying the same word sound different.
 
 An anime character who lives on your laptop, hears *how* you sound and not just what you
-said, and answers with a voice and a face driven by one shared emotional state. Fully
-local. No API keys, no network at runtime.
+said, and answers with a voice and a face driven by one shared emotional state. Local by
+default — no API keys for the voice loop itself — with two named, confirm-gated
+exceptions: opening an app on Yash's own second machine, and a web search. See
+`docs/PRIVACY.md`.
 
 > **Status: early.** The voice loop runs end to end with real models. The face lands in
 > Stage 1. Numbers below are measured on the machine described in *Hardware*, not
