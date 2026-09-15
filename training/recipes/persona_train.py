@@ -67,12 +67,12 @@ field, and the template's fallback for that case is always an EMPTY
 scaffold -- `<think>\\n\\n</think>\\n\\n` -- byte-identical to what the
 server injects as a literal prompt prefix at serve time via
 `chat_template_kwargs: {enable_thinking: false}`
-(`neiro.llm.openai_compat.OpenAiCompatLlm.build_request`). So training
+(`elizabeth.llm.openai_compat.OpenAiCompatLlm.build_request`). So training
 on this data trains the non-thinking path with no extra flag needed --
 but this is *checked*, not assumed: `--dry-run` renders a real sample
 and refuses to continue if a non-empty `<think>` block appears anywhere
 in it, the same "assert, don't assume" policy rule 4 already applies at
-runtime. Full reasoning in `neiro.training.llm_data`'s module docstring,
+runtime. Full reasoning in `elizabeth.training.llm_data`'s module docstring,
 including why the standard incremental-prefix trick for chat-template
 masking is UNSAFE on this specific template and what replaces it
 (`{% generation %}` tags, transformers' own mechanism, verified
@@ -127,9 +127,9 @@ perplexity (total negative log-likelihood over total scored tokens,
 never a mean of per-example rates -- the same aggregation the WER table
 in `stt_train.py` uses). `tool_call` reports a structural well-formed
 -call rate from real generation on held-out prompts, before and after,
-on the same prompts -- `neiro.training.llm_data.check_tool_call_shape`.
+on the same prompts -- `elizabeth.training.llm_data.check_tool_call_shape`.
 
-**Licence.** This run calls `neiro.training.licences.licences_for` on
+**Licence.** This run calls `elizabeth.training.licences.licences_for` on
 the sources actually present in `data/prepared/text/stats.json` (the
 prep step's own record of what it read), not on an assumed list --
 report it, don't guess it. `--publishable-only` drops only the
@@ -159,9 +159,9 @@ from torch.utils.data import DataLoader, IterableDataset
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.evals.latency import percentile
-from neiro.training.licences import licences_for
-from neiro.training.llm_data import (
+from elizabeth.evals.latency import percentile
+from elizabeth.training.licences import licences_for
+from elizabeth.training.llm_data import (
     IGNORE_INDEX,
     SkipLog,
     build_training_chat_template,
@@ -176,7 +176,7 @@ from neiro.training.llm_data import (
     parse_tool_call_arguments,
     render_and_mask,
 )
-from neiro.training.stt_data import read_checkpoint_step, write_checkpoint_atomically
+from elizabeth.training.stt_data import read_checkpoint_step, write_checkpoint_atomically
 
 MODEL_DIR = REPO / "models" / "qwen3.5-4b-safetensors"
 DATA_DIR = REPO / "data" / "prepared" / "text"
@@ -217,7 +217,7 @@ class PersonaStream(IterableDataset):
     a time -- 415,209 rows never sit tokenized in RAM together.
 
     Shuffling is a GLOBAL shuffle of a byte-offset index
-    (`neiro.training.llm_data.index_jsonl_lines` /
+    (`elizabeth.training.llm_data.index_jsonl_lines` /
     `iter_jsonl_at_offsets`), reseeded from `seed + epoch` on
     `set_epoch` (the same contract `stt_train.py`'s `ParquetClips.
     set_epoch` uses) -- not a streaming reservoir buffer. `train.jsonl`
@@ -521,7 +521,7 @@ def evaluate_tool_calls(
     model, tokenizer, records, device, max_new_tokens, log, no_repeat_ngram_size: int
 ) -> dict:
     """Structural well-formed-call rate on real generations from held-out
-    prompts — `neiro.training.llm_data.check_tool_call_shape`, never
+    prompts — `elizabeth.training.llm_data.check_tool_call_shape`, never
     semantic equality (the task this checks does not need it).
     """
     n, well_formed, known = 0, 0, 0

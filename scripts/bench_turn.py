@@ -34,9 +34,9 @@ sys.path.insert(0, str(REPO / "src"))
 
 import numpy as np
 
-from neiro.evals.latency import percentile, stage_breakdown
-from neiro.llm.openai_compat import StreamAccumulator
-from neiro.orchestrator import Orchestrator
+from elizabeth.evals.latency import percentile, stage_breakdown
+from elizabeth.llm.openai_compat import StreamAccumulator
+from elizabeth.orchestrator import Orchestrator
 
 # Measured on this machine; see docs/DECISIONS.md. These are the costs
 # the pipeline has to absorb, not costs it creates.

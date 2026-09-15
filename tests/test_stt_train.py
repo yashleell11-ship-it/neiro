@@ -2,7 +2,7 @@
 
 `training/recipes/stt_train.py` needs CUDA torch and cannot be imported
 in this venv, which is exactly why everything worth asserting lives in
-`neiro.training.stt_data` instead. The load-bearing test here is the
+`elizabeth.training.stt_data` instead. The load-bearing test here is the
 speaker split: Kathbath publishes a `valid` shard that looks like a
 held-out set and shares every one of its 20 speakers with `train`, so a
 fine-tune that trusted the filename would report a WER for speakers it
@@ -25,8 +25,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.training.corpora import _bucket
-from neiro.training.stt_data import (
+from elizabeth.training.corpora import _bucket
+from elizabeth.training.stt_data import (
     BUCKETS,
     CORPORA,
     IGNORE_INDEX,
@@ -599,8 +599,8 @@ class TestParquetIndex:
 
     def _corpus(self, tmp_path: Path) -> Path:
         root = tmp_path / "kathbath"
-        (root / ".neiro-complete").parent.mkdir(parents=True, exist_ok=True)
-        (root / ".neiro-complete").write_text("test\n")
+        (root / ".elizabeth-complete").parent.mkdir(parents=True, exist_ok=True)
+        (root / ".elizabeth-complete").write_text("test\n")
         self._write(
             root / "hindi" / "train-00000-of-00001.parquet",
             [

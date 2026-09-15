@@ -1,7 +1,7 @@
 """The WebSocket protocol and its auth.
 
 A localhost WebSocket is NOT private: any page the browser has open can
-`new WebSocket("ws://127.0.0.1:8760/neiro")` and start listening to a
+`new WebSocket("ws://127.0.0.1:8760/elizabeth")` and start listening to a
 microphone-driven assistant. These tests are the wall.
 """
 
@@ -14,7 +14,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
-from neiro.server import (
+from elizabeth.server import (
     CLIENT_MESSAGES,
     PROTOCOL_VERSION,
     SERVER_MESSAGES,
@@ -170,7 +170,7 @@ class TestAudioFrames:
 class TestTokenSubprotocol:
     """`Sec-WebSocket-Protocol` is the one request header a browser lets
     a page set on a WebSocket, so the token rides there as
-    `neiro.token.<token>` — never in the URL, which uvicorn logs."""
+    `elizabeth.token.<token>` — never in the URL, which uvicorn logs."""
 
     def test_no_header_is_no_token(self) -> None:
         assert token_from_subprotocols(None) is None
@@ -183,7 +183,7 @@ class TestTokenSubprotocol:
 
     def test_an_unrelated_offer_is_not_a_token(self) -> None:
         assert token_from_subprotocols("chat") is None
-        assert token_from_subprotocols("neiro.tokenabc") is None
+        assert token_from_subprotocols("elizabeth.tokenabc") is None
 
     def test_a_bare_prefix_is_an_empty_token_which_check_refuses(self) -> None:
         empty = token_from_subprotocols(TOKEN_SUBPROTOCOL_PREFIX)
@@ -210,7 +210,7 @@ class TestTheEndpoint:
         return TestClient(build_app(session, host=HOST, port=PORT))
 
     def _connect(
-        self, client, *, token: str | bytes | None, origin: str | None, path: str = "/neiro"
+        self, client, *, token: str | bytes | None, origin: str | None, path: str = "/elizabeth"
     ):
         headers = {} if origin is None else {"Origin": origin}
         offered = None
@@ -291,7 +291,7 @@ class TestTheEndpoint:
             self._client(session),
             token=None,
             origin=GOOD_ORIGIN,
-            path=f"/neiro?token={session.token}",
+            path=f"/elizabeth?token={session.token}",
         )
 
     def test_ready_carries_the_avatars_real_expressions(self) -> None:
@@ -374,7 +374,7 @@ class TestUnderUvicorn:
 
         async def go() -> str:
             async with websockets.connect(
-                f"ws://{HOST}:{port}/neiro",
+                f"ws://{HOST}:{port}/elizabeth",
                 subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + session.token],
                 additional_headers={"Origin": GOOD_ORIGIN},
             ) as ws:
@@ -391,7 +391,7 @@ class TestUnderUvicorn:
             log.setLevel(previous_level)
 
         lines = [record.getMessage() for record in captured]
-        handshakes = [line for line in lines if "WebSocket /neiro" in line]
+        handshakes = [line for line in lines if "WebSocket /elizabeth" in line]
         # The line must exist, or the assertion after it could never fail.
         assert handshakes and all("[accepted]" in line for line in handshakes), lines
         assert session.token not in "\n".join(lines)
@@ -405,7 +405,7 @@ class TestUnderUvicorn:
         # server.py explaining why it is absent naturally contains the
         # words, and matching those would make this pass for the wrong
         # reason -- or fail when someone documents the decision.
-        source = (P(__file__).resolve().parents[1] / "src/neiro/server.py").read_text()
+        source = (P(__file__).resolve().parents[1] / "src/elizabeth/server.py").read_text()
         statements = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
         assert not any(line.strip() == "from __future__ import annotations" for line in statements)
 
@@ -426,10 +426,10 @@ class TestThePageAndTheFace:
         assert response.status_code == 200
         # Injected into the page, so it never rides a URL — and never
         # cached, so it never sits on disk either.
-        assert f"window.NEIRO_TOKEN={json.dumps(session.token)}" in response.text
+        assert f"window.ELIZABETH_TOKEN={json.dumps(session.token)}" in response.text
         assert response.headers["cache-control"] == "no-store"
         assert 'id="stage"' in response.text  # the real page, not the stub
-        assert "neiro:token" not in response.text  # the marker was replaced
+        assert "elizabeth:token" not in response.text  # the marker was replaced
 
     def test_the_pages_imports_are_served_from_the_web_tree(self) -> None:
         client = self._client(Session())
@@ -451,16 +451,16 @@ class TestThePageAndTheFace:
     def _hello(self, session: Session, **kwargs) -> dict:
         client = self._client(session, **kwargs)
         with client.websocket_connect(
-            "/neiro",
+            "/elizabeth",
             subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + session.token],
             headers={"Origin": GOOD_ORIGIN},
         ) as ws:
             return json.loads(ws.receive_text())
 
     def test_hello_carries_the_face_config_from_cfg_not_a_copy(self, tmp_path) -> None:
-        from neiro.config import ExpressionConfig, Neiro
+        from elizabeth.config import Elizabeth, ExpressionConfig
 
-        cfg = Neiro()
+        cfg = Elizabeth()
         cfg.expression = ExpressionConfig(tau_rise_s=0.05, tau_fall_s=0.7)
         hello = self._hello(Session(), cfg=cfg, web_dir=tmp_path)
         assert hello["face"]["tau_rise_s"] == 0.05
@@ -491,12 +491,12 @@ class TestThePageAndTheFace:
         client = self._client(session)
         offered = [TOKEN_SUBPROTOCOL_PREFIX + session.token]
         headers = {"Origin": GOOD_ORIGIN}
-        with client.websocket_connect("/neiro", subprotocols=offered, headers=headers) as first:
+        with client.websocket_connect("/elizabeth", subprotocols=offered, headers=headers) as first:
             first.receive_text()  # hello
             _wait_until(lambda: session.connected, "attach")
             with (
                 pytest.raises(WebSocketDisconnect) as refusal,
-                client.websocket_connect("/neiro", subprotocols=offered, headers=headers),
+                client.websocket_connect("/elizabeth", subprotocols=offered, headers=headers),
             ):
                 pytest.fail("a second tab was accepted")
             assert refusal.value.code == 1013
@@ -510,7 +510,7 @@ class TestThePageAndTheFace:
         session = Session()
         client = self._client(session)
         with client.websocket_connect(
-            "/neiro",
+            "/elizabeth",
             subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + session.token],
             headers={"Origin": GOOD_ORIGIN},
         ) as ws:

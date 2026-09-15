@@ -8,7 +8,7 @@
     uv run scripts/bench_stt.py --corpus svarah --engine moonshine
 
 Gate G3a's number is WER on **Yash's own voice** — that is the only
-accuracy figure that decides anything, and it needs `neiro record-set`
+accuracy figure that decides anything, and it needs `elizabeth record-set`
 first. This is the thing to run *before* that: a public
 Indian-accented-English corpus gives an honest prior for what his accent
 costs, without an afternoon of recording — and the two Hindi corpora
@@ -50,9 +50,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.config import Neiro
-from neiro.evals.latency import percentile
-from neiro.evals.wer import UtteranceScore, edit_distance, normalize, score
+from elizabeth.config import Elizabeth
+from elizabeth.evals.latency import percentile
+from elizabeth.evals.wer import UtteranceScore, edit_distance, normalize, score
 
 SAMPLERATE = 16000
 DATASETS_DIR = REPO / "data" / "datasets"
@@ -60,7 +60,7 @@ DATASETS_DIR = REPO / "data" / "datasets"
 # Its absence is not fatal here — a half-downloaded corpus still yields
 # rows — but it is worth one line on stderr, because a WER on a partial
 # corpus is a WER on whichever shards happened to arrive first.
-COMPLETE_MARKER = ".neiro-complete"
+COMPLETE_MARKER = ".elizabeth-complete"
 LANGUAGES = ("auto", "en", "hi")
 
 # Corpora that ship transcripts, and where each keeps them. Adding one is
@@ -209,7 +209,7 @@ def load_rows(
     return out["rows"], out["skipped"]
 
 
-def override_language(cfg: Neiro, language: str | None) -> Neiro:
+def override_language(cfg: Elizabeth, language: str | None) -> Elizabeth:
     """`--language` wins over config.toml for this run only; None means
     whatever the config says, which is what the daemon would do.
     """
@@ -274,18 +274,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"{len(rows)} utterances from {args.corpus}")
 
-    cfg = override_language(Neiro(), args.language)
+    cfg = override_language(Elizabeth(), args.language)
     if args.model:
         # A local directory is allowed as well as an HF id: the pinned
         # revision already lives under models/, and re-resolving it
         # through the hub would silently follow `main` instead.
         cfg.stt.model_id = args.model
     if args.engine == "distil":
-        from neiro.stt.faster_whisper import FasterWhisperStt
+        from elizabeth.stt.faster_whisper import FasterWhisperStt
 
         stt = FasterWhisperStt(cfg)
     else:
-        from neiro.stt.moonshine import MoonshineStt
+        from elizabeth.stt.moonshine import MoonshineStt
 
         stt = MoonshineStt(cfg)
     print(f"model: {cfg.stt.model_id}")

@@ -1,6 +1,6 @@
 # Privacy
 
-Neiro is a voice assistant with a live microphone. This file states
+Elizabeth is a voice assistant with a live microphone. This file states
 plainly what is captured, where it lives, and how to remove it. It
 exists because a voice-first project that stays quiet about this is not
 trustworthy, and the verification pass found the original spec never
@@ -10,13 +10,13 @@ raised it.
 
 - **Live audio**, briefly, in a 30-second ring buffer in memory. Not
   written to disk during normal operation.
-- **Transcripts** of what you said and Neiro's replies, written to
-  `~/.local/state/neiro/turns.jsonl` for latency measurement and
+- **Transcripts** of what you said and Elizabeth's replies, written to
+  `~/.local/state/elizabeth/turns.jsonl` for latency measurement and
   debugging. Retention: unbounded by default in v1 (no rotation yet —
-  `neiro forget`/`neiro purge` are planned, not shipped).
+  `elizabeth forget`/`elizabeth purge` are planned, not shipped).
 - **Prosody calibration state** (a handful of floats — rolling mean/std
   of your pitch, energy, and speaking rate), persisted per capture
-  device to `~/.local/state/neiro/baseline.json`. This is what lets
+  device to `~/.local/state/elizabeth/baseline.json`. This is what lets
   arousal detection skip a 5-utterance warm-up every single session. It
   is *not* conversation content.
 - **Recorded evaluation sets** (`data/voice/`, gitignored): WER
@@ -54,7 +54,7 @@ architectural rule, not a default that could later be changed casually.
 Two tools are exceptions to "`local` tier ⇒ nothing leaves," on purpose,
 and both are YELLOW: spoken confirmation *and* a clickable notification
 are required before either runs, and both are audited like every other
-tool (`~/.local/state/neiro/audit.jsonl`).
+tool (`~/.local/state/elizabeth/audit.jsonl`).
 
 - **`open_app(target="pc", ...)`** reaches the 3090 Ti box over
   Tailscale to launch an app there. Still just Yash's own two machines
@@ -85,9 +85,9 @@ exactly what crosses the LAN versus the tunnel.
 
 ## Commands (planned, tracked here so they don't get forgotten)
 
-- `neiro forget --since <date>` — delete turns.jsonl entries after a date.
-- `neiro purge` — delete all local state, including the prosody baseline.
-- `neiro pause` — stop the LLM server without deleting anything.
+- `elizabeth forget --since <date>` — delete turns.jsonl entries after a date.
+- `elizabeth purge` — delete all local state, including the prosody baseline.
+- `elizabeth pause` — stop the LLM server without deleting anything.
 
-Until these ship, deleting `~/.local/state/neiro/` by hand does the same
+Until these ship, deleting `~/.local/state/elizabeth/` by hand does the same
 thing.

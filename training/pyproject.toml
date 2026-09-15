@@ -1,4 +1,4 @@
-# Neiro's TRAINING environment — deliberately a separate uv project from
+# Elizabeth's TRAINING environment — deliberately a separate uv project from
 # the runtime at the repo root.
 #
 # Why separate: the runtime venv must never contain CUDA torch. ctranslate2
@@ -16,12 +16,12 @@
 #   uv run python -c "import torch; print(torch.cuda.get_device_name())"
 
 [project]
-name = "neiro-training"
+name = "elizabeth-training"
 version = "0.0.1"
-description = "Fine-tuning recipes for Neiro's STT, SER, TTS, LLM persona, wake word, and endpointer"
+description = "Fine-tuning recipes for Elizabeth's STT, SER, TTS, LLM persona, wake word, and endpointer"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  # NOT neiro-voice. Depending on the runtime project editably propagated
+  # NOT elizabeth-voice. Depending on the runtime project editably propagated
   # its `torch = { index = "pytorch-cpu" }` source into this resolution
   # and silently replaced the CUDA build — training then died on a
   # torchaudio extension load, hours after it last worked. The shared

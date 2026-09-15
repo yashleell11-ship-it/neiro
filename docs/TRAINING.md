@@ -77,7 +77,7 @@ cd training && uv run python ../scripts/prep_text.py --only goemotions --limit 2
 cd training && uv run python ../scripts/prep_text.py --publishable-only
 ```
 
-It reads every text corpus that has a `.neiro-complete` marker (from
+It reads every text corpus that has a `.elizabeth-complete` marker (from
 `scripts/fetch_datasets.py`), writes `data/prepared/text/train.jsonl`,
 `val.jsonl` and `stats.json`, and prints a table. The split is a seeded
 sha256 of the conversation (5% val by default, `--seed`,

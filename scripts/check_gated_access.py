@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.training.manifest import Manifest
+from elizabeth.training.manifest import Manifest
 
 DATA_SUFFIXES = (".parquet", ".tar", ".tar.gz", ".tgz", ".zip", ".arrow", ".wav", ".flac")
 
@@ -144,7 +144,7 @@ def main() -> int:
         if kind == "oauth" or token.startswith("hf_oauth"):
             print("\n...but with an oauth token, clicking will not help. Fix the token first.")
     else:
-        print("\nAll gated datasets are pullable. `neiro fetch-datasets --tier 1` will work.")
+        print("\nAll gated datasets are pullable. `elizabeth fetch-datasets --tier 1` will work.")
     return 1 if blocked else 0
 
 

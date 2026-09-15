@@ -48,8 +48,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.affect.labels import normalise
-from neiro.training.corpora import (
+from elizabeth.affect.labels import normalise
+from elizabeth.training.corpora import (
     EMONET_INDEX,
     EMONET_INDEX_COLUMNS,
     emonet_agreed,
@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     shards = sorted(args.src.glob("*.parquet"))
     if not shards:
         print(
-            f"No parquet under {args.src} — run `neiro fetch-datasets --only emonet-voice-bench`."
+            f"No parquet under {args.src} — run `elizabeth fetch-datasets --only emonet-voice-bench`."
         )
         return 2
     index_path = args.out / EMONET_INDEX

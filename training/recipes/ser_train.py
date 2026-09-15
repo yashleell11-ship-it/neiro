@@ -7,8 +7,8 @@
     uv run python recipes/ser_train.py --corpora crema-d ravdess --batch 8
 
 **What it predicts.** Two continuous values, valence and arousal, in
-[-1, 1] — the same shape as `UserAffect`. Not one of Neiro's six VRM
-expressions: those are `NeiroState`, what *she* feels. Keeping the two
+[-1, 1] — the same shape as `UserAffect`. Not one of Elizabeth's six VRM
+expressions: those are `ElizabethState`, what *she* feels. Keeping the two
 apart is CLAUDE.md rule 5, and a regression head is what makes it
 structurally impossible to confuse them.
 
@@ -44,9 +44,9 @@ from torch.utils.data import DataLoader, Dataset
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.affect.labels import CIRCUMPLEX
-from neiro.evals.arousal_auc import auc
-from neiro.training.corpora import (
+from elizabeth.affect.labels import CIRCUMPLEX
+from elizabeth.evals.arousal_auc import auc
+from elizabeth.training.corpora import (
     READERS,
     Utterance,
     ensure_extracted,
@@ -54,7 +54,7 @@ from neiro.training.corpora import (
     split,
     summarise,
 )
-from neiro.training.licences import licences_for
+from elizabeth.training.licences import licences_for
 
 ENCODER = REPO / "models" / "w2v-bert-2.0"
 OUT_DIR = REPO / "models" / "ser-lane-b"
@@ -361,7 +361,9 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = load(args.corpora)
     if not rows:
-        print("No labelled utterances found. Run `neiro fetch-datasets --target ser_lane_b` first.")
+        print(
+            "No labelled utterances found. Run `elizabeth fetch-datasets --target ser_lane_b` first."
+        )
         return 2
     print(json.dumps(summarise(rows), indent=1))
 
@@ -408,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not args.encoder.exists():
-        print(f"Encoder not at {args.encoder} — run `neiro fetch-models --only w2v-bert-2.0`.")
+        print(f"Encoder not at {args.encoder} — run `elizabeth fetch-models --only w2v-bert-2.0`.")
         return 2
 
     from transformers import AutoFeatureExtractor

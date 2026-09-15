@@ -2,7 +2,7 @@
 """Measure the emotion-tag compliance gate against a running model.
 
     uv run scripts/eval_tag_compliance.py --n 60
-    uv run scripts/eval_tag_compliance.py --model neiro-4b --n 200
+    uv run scripts/eval_tag_compliance.py --model elizabeth-4b --n 200
 
 Stage 1 gates this at >=98%. Below that the plan's fallback is the
 tools-off GBNF path (grammar-constrained decoding, which llama.cpp
@@ -20,10 +20,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.config import Neiro
-from neiro.evals.tag_compliance import score
-from neiro.llm.ollama_native import OllamaNativeLlm
-from neiro.llm.prompt import PROMPT_VERSION, system_message, user_message
+from elizabeth.config import Elizabeth
+from elizabeth.evals.tag_compliance import score
+from elizabeth.llm.ollama_native import OllamaNativeLlm
+from elizabeth.llm.prompt import PROMPT_VERSION, system_message, user_message
 
 # Deliberately spread across registers: flat statements, questions,
 # emotional news, tool-ish requests, terse replies, and the two demo
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=REPO / "docs" / "tag-compliance.json")
     args = ap.parse_args(argv)
 
-    cfg = Neiro()
+    cfg = Elizabeth()
     if args.model:
         cfg.llm.model = args.model
 

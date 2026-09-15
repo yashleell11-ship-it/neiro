@@ -1,4 +1,4 @@
-"""Regression tests for RingBuffer (src/neiro/audio/ring.py).
+"""Regression tests for RingBuffer (src/elizabeth/audio/ring.py).
 
 This is the piece Task 4's pre-roll depends on being exactly right —
 get the wraparound math wrong and the failure mode is subtle (the first
@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from neiro.audio.ring import RingBuffer
+from elizabeth.audio.ring import RingBuffer
 
 
 def test_empty_buffer_reads_nothing() -> None:

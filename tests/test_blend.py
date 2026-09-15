@@ -10,22 +10,22 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.config import Neiro
-from neiro.emotion.blend import EXPRESSIVE, ExpressionBlender
-from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState
+from elizabeth.config import Elizabeth
+from elizabeth.emotion.blend import EXPRESSIVE, ExpressionBlender
+from elizabeth.state import NEUTRAL_STATE, ElizabethState, EmotionLabel
 
 FRAME = 1.0 / 60.0
 
 
-def run(blender: ExpressionBlender, state: NeiroState, seconds: float) -> dict[str, float]:
+def run(blender: ExpressionBlender, state: ElizabethState, seconds: float) -> dict[str, float]:
     for _ in range(max(1, int(seconds / FRAME))):
         blender.step(state, FRAME)
     return dict(blender.weights)
 
 
-HAPPY = NeiroState.from_label(EmotionLabel.HAPPY, 0.8)
-ANGRY = NeiroState.from_label(EmotionLabel.ANGRY, 0.9)
-SURPRISED = NeiroState.from_label(EmotionLabel.SURPRISED, 0.9)
+HAPPY = ElizabethState.from_label(EmotionLabel.HAPPY, 0.8)
+ANGRY = ElizabethState.from_label(EmotionLabel.ANGRY, 0.9)
+SURPRISED = ElizabethState.from_label(EmotionLabel.SURPRISED, 0.9)
 
 
 class TestApproach:
@@ -41,15 +41,15 @@ class TestApproach:
 
     def test_intensity_from_the_tag_is_the_ceiling(self) -> None:
         # <e:happy:3> must not settle at the same place as <e:happy:9>.
-        weak = ExpressionBlender().settle(NeiroState.from_label(EmotionLabel.HAPPY, 0.3))
-        strong = ExpressionBlender().settle(NeiroState.from_label(EmotionLabel.HAPPY, 0.9))
+        weak = ExpressionBlender().settle(ElizabethState.from_label(EmotionLabel.HAPPY, 0.3))
+        strong = ExpressionBlender().settle(ElizabethState.from_label(EmotionLabel.HAPPY, 0.9))
         assert weak["happy"] < strong["happy"]
         assert weak["happy"] == pytest.approx(0.3, abs=0.02)
 
     def test_rise_is_faster_than_fall(self) -> None:
         # THE number in this file. Equal time constants are what make an
         # avatar look mechanical even when everything else is right.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.expression.tau_rise_s < cfg.expression.tau_fall_s
 
         rising = ExpressionBlender()
@@ -134,11 +134,11 @@ class TestVrmConstraints:
     def test_total_weight_never_exceeds_the_cap(self) -> None:
         # VRM expressions are additive on one mesh; past 1.0 the geometry
         # looks broken rather than expressive.
-        cfg = Neiro()
+        cfg = Elizabeth()
         b = ExpressionBlender()
-        b.settle(NeiroState.from_label(EmotionLabel.HAPPY, 1.0))
+        b.settle(ElizabethState.from_label(EmotionLabel.HAPPY, 1.0))
         for _ in range(200):
-            b.step(NeiroState.from_label(EmotionLabel.ANGRY, 1.0), FRAME)
+            b.step(ElizabethState.from_label(EmotionLabel.ANGRY, 1.0), FRAME)
             assert sum(b.weights.values()) <= cfg.expression.max_total_weight + 1e-6
 
     def test_clamping_preserves_the_mix(self) -> None:

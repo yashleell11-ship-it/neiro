@@ -1,5 +1,5 @@
 """The hands-free listener, driven frame by frame with scripted
-probabilities (src/neiro/audio/listen.py).
+probabilities (src/elizabeth/audio/listen.py).
 
 Every expectation is derived from config at test time — how many frames
 the gate needs, how long the dead zone is — so a retuned config moves
@@ -18,15 +18,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.audio.listen import (
+from elizabeth.audio.listen import (
     BARGEIN_RESUME_S,
     EventKind,
     Listener,
     ListenEvent,
     ListenState,
 )
-from neiro.audio.vad import VadFrameSizeError
-from neiro.config import Neiro
+from elizabeth.audio.vad import VadFrameSizeError
+from elizabeth.config import Elizabeth
 
 T0 = 100.0  # the fake clock's reading at the first frame
 Policy = Callable[[float], tuple[bool, float]]
@@ -39,7 +39,7 @@ def always(done: bool, p: float) -> Policy:
 class Frames:
     """Frame counts the listener must agree with, all from config."""
 
-    def __init__(self, cfg: Neiro) -> None:
+    def __init__(self, cfg: Elizabeth) -> None:
         self.n = cfg.vad.frame_samples
         self.seconds = self.n / cfg.audio.input_samplerate
         ms = self.seconds * 1000.0
@@ -67,7 +67,7 @@ class Mic:
     """Feeds frames with a scripted Silero probability and a scripted
     smart-turn, on a clock that advances one frame per feed."""
 
-    def __init__(self, cfg: Neiro, policy: Policy) -> None:
+    def __init__(self, cfg: Elizabeth, policy: Policy) -> None:
         self.cfg = cfg
         self.f = Frames(cfg)
         self.policy = policy
@@ -138,8 +138,8 @@ class Mic:
 
 
 @pytest.fixture
-def cfg() -> Neiro:
-    return Neiro()
+def cfg() -> Elizabeth:
+    return Elizabeth()
 
 
 LEAD = 10  # quiet frames before he speaks, more than one pre-roll's worth
@@ -147,7 +147,9 @@ SPEECH = 31  # ~1 s
 
 
 class TestHisTurn:
-    def test_the_happy_path_ends_at_the_first_pause_smart_turn_accepts(self, cfg: Neiro) -> None:
+    def test_the_happy_path_ends_at_the_first_pause_smart_turn_accepts(
+        self, cfg: Elizabeth
+    ) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
         m.loud(SPEECH)
@@ -164,7 +166,9 @@ class TestHisTurn:
         assert m.asks == [0.0]
         assert m.listener.state is ListenState.IDLE
 
-    def test_the_audio_is_pre_roll_then_every_frame_up_to_the_decision(self, cfg: Neiro) -> None:
+    def test_the_audio_is_pre_roll_then_every_frame_up_to_the_decision(
+        self, cfg: Elizabeth
+    ) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
         m.loud(SPEECH)
@@ -175,7 +179,7 @@ class TestHisTurn:
         last = (index + 1) * m.f.n
         np.testing.assert_array_equal(event.audio, m.stream()[first:last])
 
-    def test_the_pre_roll_is_the_audio_just_before_speech(self, cfg: Neiro) -> None:
+    def test_the_pre_roll_is_the_audio_just_before_speech(self, cfg: Elizabeth) -> None:
         # By value: the samples in front of his first word are the ones
         # the mic heard right before it, not zeros and not older audio.
         m = Mic(cfg, always(True, 0.9))
@@ -194,7 +198,9 @@ class TestHisTurn:
             m.fed[LEAD],
         )
 
-    def test_a_hesitation_smart_turn_rejects_does_not_end_the_utterance(self, cfg: Neiro) -> None:
+    def test_a_hesitation_smart_turn_rejects_does_not_end_the_utterance(
+        self, cfg: Elizabeth
+    ) -> None:
         # "I want to go to... uh... the library". A 600 ms pause is
         # well past the VAD stop; only smart-turn saying "not done"
         # keeps this one turn.
@@ -224,7 +230,7 @@ class TestHisTurn:
         first = LEAD * m.f.n - m.f.pre_roll_samples
         np.testing.assert_array_equal(event.audio, m.stream()[first : (index + 1) * m.f.n])
 
-    def test_max_delay_ends_a_turn_smart_turn_never_accepts(self, cfg: Neiro) -> None:
+    def test_max_delay_ends_a_turn_smart_turn_never_accepts(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(False, 0.3))
         m.quiet(LEAD)
         m.loud(SPEECH)
@@ -241,7 +247,7 @@ class TestHisTurn:
         assert max(m.asks) < cfg.endpoint.max_wait_s
         assert event.probability == 0.3
 
-    def test_one_loud_frame_starts_nothing(self, cfg: Neiro) -> None:
+    def test_one_loud_frame_starts_nothing(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
         m.loud(1)
@@ -249,7 +255,7 @@ class TestHisTurn:
         assert m.events == []
         assert m.asks == []
 
-    def test_silero_is_reset_between_utterances(self, cfg: Neiro) -> None:
+    def test_silero_is_reset_between_utterances(self, cfg: Elizabeth) -> None:
         # Or the tail of one utterance biases the start of the next.
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
@@ -257,12 +263,12 @@ class TestHisTurn:
         m.quiet(60)
         assert m.resets == 1
 
-    def test_a_wrong_frame_size_is_refused(self, cfg: Neiro) -> None:
+    def test_a_wrong_frame_size_is_refused(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(True, 0.9))
         with pytest.raises(VadFrameSizeError):
             m.listener.feed(np.zeros(2 * m.f.n, dtype=np.float32))
 
-    def test_recent_reads_what_was_just_fed(self, cfg: Neiro) -> None:
+    def test_recent_reads_what_was_just_fed(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
         np.testing.assert_array_equal(
@@ -271,7 +277,7 @@ class TestHisTurn:
 
 
 class TestHerTurn:
-    def test_barge_in_waits_out_the_dead_zone_then_the_hold(self, cfg: Neiro) -> None:
+    def test_barge_in_waits_out_the_dead_zone_then_the_hold(self, cfg: Elizabeth) -> None:
         # Her own first syllable reaches the mic before any canceller
         # has adapted: loud, speech-like audio from the first frame of
         # her reply must not trip anything until the dead zone has
@@ -287,7 +293,7 @@ class TestHerTurn:
         assert m.listener.state is ListenState.SPEAKING
         assert not m.listener.her_turn
 
-    def test_audio_under_the_echo_floor_never_interrupts_her(self, cfg: Neiro) -> None:
+    def test_audio_under_the_echo_floor_never_interrupts_her(self, cfg: Elizabeth) -> None:
         # Silero can be fooled by her own residual echo; the RMS floor
         # cannot. Speech-probability 0.99 on near-silent frames is not
         # him.
@@ -300,7 +306,7 @@ class TestHerTurn:
         index, _ = m.only(EventKind.BARGE_IN)
         assert index == 40 + m.f.hold - 1
 
-    def test_his_correction_starts_with_pre_roll_and_the_hold(self, cfg: Neiro) -> None:
+    def test_his_correction_starts_with_pre_roll_and_the_hold(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.listener.set_speaking(True)
         m.quiet(LEAD)
@@ -315,7 +321,7 @@ class TestHerTurn:
         first = first_speech * m.f.n - m.f.pre_roll_samples
         np.testing.assert_array_equal(event.audio, m.stream()[first : (index + 1) * m.f.n])
 
-    def test_the_loop_confirming_she_stopped_does_not_drop_his_words(self, cfg: Neiro) -> None:
+    def test_the_loop_confirming_she_stopped_does_not_drop_his_words(self, cfg: Elizabeth) -> None:
         # The natural call order: BARGE_IN, kill playback,
         # set_speaking(False). The utterance in progress survives it.
         m = Mic(cfg, always(True, 0.9))
@@ -328,7 +334,7 @@ class TestHerTurn:
         m.quiet(60)
         m.only(EventKind.UTTERANCE)
 
-    def test_set_speaking_is_idempotent(self, cfg: Neiro) -> None:
+    def test_set_speaking_is_idempotent(self, cfg: Elizabeth) -> None:
         # A loop that calls it per chunk must not re-arm the dead zone
         # every time, or barge-in never arms at all.
         m = Mic(cfg, always(True, 0.9))
@@ -339,7 +345,7 @@ class TestHerTurn:
         index, _ = m.only(EventKind.BARGE_IN)
         assert index == m.f.first_armed + m.f.hold - 2
 
-    def test_her_starting_while_he_speaks_waits_for_his_endpoint(self, cfg: Neiro) -> None:
+    def test_her_starting_while_he_speaks_waits_for_his_endpoint(self, cfg: Elizabeth) -> None:
         m = Mic(cfg, always(True, 0.9))
         m.quiet(LEAD)
         m.loud(SPEECH)
@@ -359,7 +365,7 @@ class TestHerTurn:
 
 
 class TestFalseInterruption:
-    def barge(self, cfg: Neiro, policy: Policy) -> Mic:
+    def barge(self, cfg: Elizabeth, policy: Policy) -> Mic:
         m = Mic(cfg, policy)
         m.listener.set_speaking(True)
         m.quiet(m.f.first_armed + 1)
@@ -367,7 +373,7 @@ class TestFalseInterruption:
         m.only(EventKind.BARGE_IN)
         return m
 
-    def test_a_cough_resumes_her(self, cfg: Neiro) -> None:
+    def test_a_cough_resumes_her(self, cfg: Elizabeth) -> None:
         m = self.barge(cfg, always(False, 0.2))
         (barged, _) = m.events[0]
         m.quiet(120)
@@ -381,7 +387,7 @@ class TestFalseInterruption:
         assert m.listener.her_turn
         assert m.resets == 1
 
-    def test_after_resume_the_dead_zone_is_armed_again(self, cfg: Neiro) -> None:
+    def test_after_resume_the_dead_zone_is_armed_again(self, cfg: Elizabeth) -> None:
         # She starts speaking again: her first syllable must be as safe
         # as it was the first time.
         m = self.barge(cfg, always(False, 0.2))
@@ -390,14 +396,14 @@ class TestFalseInterruption:
         barges = [i for i, e in m.events if e.kind is EventKind.BARGE_IN]
         assert barges[-1] == resumed_at + 1 + m.f.first_armed + m.f.hold - 2
 
-    def test_a_turn_accepted_inside_the_window_is_not_resumed(self, cfg: Neiro) -> None:
+    def test_a_turn_accepted_inside_the_window_is_not_resumed(self, cfg: Elizabeth) -> None:
         m = self.barge(cfg, always(True, 0.9))
         m.quiet(120)
         m.only(EventKind.UTTERANCE)
         m.none_of(EventKind.RESUME)
         assert not m.listener.her_turn
 
-    def test_sustained_speech_past_the_window_is_a_real_interruption(self, cfg: Neiro) -> None:
+    def test_sustained_speech_past_the_window_is_a_real_interruption(self, cfg: Elizabeth) -> None:
         # He is still talking when the window closes: whatever
         # smart-turn says later, she does not talk over him.
         m = self.barge(cfg, always(False, 0.2))
@@ -408,13 +414,13 @@ class TestFalseInterruption:
         assert event.forced
 
     def test_a_window_past_the_hard_ceiling_can_never_resume_her(
-        self, cfg: Neiro, monkeypatch: pytest.MonkeyPatch
+        self, cfg: Elizabeth, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Why the default sits below max_wait_s: past it the forced
         # endpoint delivers the cough as an utterance first, and RESUME
         # is unreachable. Whoever moves the window into config needs
         # this to stay true.
-        from neiro.audio import listen
+        from elizabeth.audio import listen
 
         monkeypatch.setattr(listen, "BARGEIN_RESUME_S", cfg.endpoint.max_wait_s + 1.0)
         m = self.barge(cfg, always(False, 0.2))
@@ -443,7 +449,7 @@ def real_speech() -> Path | None:
 
 class TestAgainstTheModels:
     def test_a_real_clip_becomes_one_utterance_with_the_speech_in_it(self) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         clip = real_speech()
         if clip is None:
             pytest.skip("no CC0 real-speech fixture under tests/audio/fixtures, and no CREMA-D")

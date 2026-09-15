@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from neiro.training.manifest import NON_PUBLISHABLE_FLAGS, TARGETS, Manifest
+from elizabeth.training.manifest import NON_PUBLISHABLE_FLAGS, TARGETS, Manifest
 
 GOOD = """
 schema_version = 1

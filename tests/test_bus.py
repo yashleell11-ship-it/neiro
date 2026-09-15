@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from neiro.bus import DEFAULT_DEPTH, Bus
+from elizabeth.bus import DEFAULT_DEPTH, Bus
 
 
 class TestBounded:

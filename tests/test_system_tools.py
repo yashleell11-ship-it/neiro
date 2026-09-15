@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.tools.media import ACTIONS, NowPlaying, get_now_playing, media_control
-from neiro.tools.system import (
+from elizabeth.tools.media import ACTIONS, NowPlaying, get_now_playing, media_control
+from elizabeth.tools.system import (
     MAX_BRIGHTNESS_STEPS,
     AudioState,
     SystemStats,

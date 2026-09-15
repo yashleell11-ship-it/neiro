@@ -7,8 +7,8 @@
     cd training && uv run python ../scripts/prep_text.py --dry-run       # the plan, nothing written
 
 Reads data/datasets/<name>/ for every text corpus in data/datasets.toml
-that has a `.neiro-complete` marker and a reader in
-`neiro.training.text`, and writes
+that has a `.elizabeth-complete` marker and a reader in
+`elizabeth.training.text`, and writes
 
     data/prepared/text/train.jsonl
     data/prepared/text/val.jsonl
@@ -38,8 +38,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.training import text as prep
-from neiro.training.manifest import Manifest
+from elizabeth.training import text as prep
+from elizabeth.training.manifest import Manifest
 
 MANIFEST = REPO / "data" / "datasets.toml"
 PREPARED_ROOT = REPO / "data" / "prepared"

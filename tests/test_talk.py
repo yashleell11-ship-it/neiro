@@ -1,4 +1,4 @@
-"""`neiro talk` driven end to end with fakes: keys in, a WAV and a
+"""`elizabeth talk` driven end to end with fakes: keys in, a WAV and a
 playback call out, and the spacebar as barge-in.
 
 The daemon and orchestrator are real; only the providers, the
@@ -16,10 +16,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.config import Neiro
-from neiro.daemon import Daemon
-from neiro.state import Locality
-from neiro.talk import TalkLoop
+from elizabeth.config import Elizabeth
+from elizabeth.daemon import Daemon
+from elizabeth.state import Locality
+from elizabeth.talk import TalkLoop
 
 SR = 16000
 
@@ -101,7 +101,7 @@ class FakePlayer:
 
 
 def _loop(tmp_path: Path, keys: list[str | None], llm: ScriptedLlm) -> tuple[TalkLoop, list[str]]:
-    cfg = Neiro()
+    cfg = Elizabeth()
     daemon = Daemon(cfg)
     daemon.build(stt=FakeStt(), llm=llm, tts=FakeTts())
     script = deque(keys)
@@ -133,13 +133,13 @@ class TestOneTurn:
         # A WAV was written and handed to the player.
         assert loop.play.started == [tmp_path / "reply.wav"]
         assert (tmp_path / "reply.wav").stat().st_size > 44
-        assert any(line.startswith("neiro  ") for line in lines)
+        assert any(line.startswith("elizabeth  ") for line in lines)
         assert any(line.startswith("turn ") for line in lines), "no HUD line"
 
     def test_the_tag_never_reaches_the_printed_reply(self, tmp_path: Path) -> None:
         loop, lines = _loop(tmp_path, [" ", " "], ScriptedLlm())
         asyncio.run(loop.run(max_turns=1))
-        spoken = next(line for line in lines if line.startswith("neiro  "))
+        spoken = next(line for line in lines if line.startswith("elizabeth  "))
         assert "<e:" not in spoken
         assert loop.results[0].state.label.value == "happy"
 
@@ -350,11 +350,11 @@ class TestBrowserWiring:
         assert any("face server stopped" in line and "port taken" in line for line in lines)
 
     def test_browser_options_bind_a_face_and_make_websocket_sinks(self) -> None:
-        from neiro.audio.sink_ws import WsSink
-        from neiro.talk import browser_options
+        from elizabeth.audio.sink_ws import WsSink
+        from elizabeth.talk import browser_options
 
         lines: list[str] = []
-        cfg = Neiro()
+        cfg = Elizabeth()
         face, options = browser_options(cfg, out=lines.append, port=0)
         try:
             assert lines == [f"face: {face.url}"]
@@ -364,7 +364,7 @@ class TestBrowserWiring:
             assert sink.session is face.session
             assert options["server"] == face.serve
             # Bound now, not later: the port is already taken.
-            from neiro.server import Face
+            from elizabeth.server import Face
 
             with pytest.raises(OSError):
                 Face(cfg, port=face.port).bind()

@@ -2,7 +2,7 @@
 
 Focused on the safety property rather than the socket: whatever the
 model supplies, the payload that reaches the compositor is built from
-Neiro's own resolved values and survives the egress filter. The socket
+Elizabeth's own resolved values and survives the egress filter. The socket
 is replaced by a capture here — nothing in the repo drives it live yet,
 so the wire string itself is what these pin, because that is the part
 every online example gets wrong (CLAUDE.md rule 1).
@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.tools import hyprland
-from neiro.tools.egress import EgressRejected, check
-from neiro.tools.hyprland import Window, dispatch, focus_window_by_index, switch_workspace
+from elizabeth.tools import hyprland
+from elizabeth.tools.egress import EgressRejected, check
+from elizabeth.tools.hyprland import Window, dispatch, focus_window_by_index, switch_workspace
 
 
 def fake_windows() -> list[Window]:

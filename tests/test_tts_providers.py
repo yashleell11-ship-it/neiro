@@ -22,15 +22,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from neiro.emotion.voice import exaggeration_for, instruct_for
-from neiro.state import NEUTRAL_STATE, EmotionLabel, Locality, NeiroState, Tier
-from neiro.tts.chatterbox import ChatterboxTts, ChatterboxUnavailable
-from neiro.tts.kokoro import FRAMES_PER_SECOND, SAMPLERATE, KokoroTts
-from neiro.tts.qwen3tts import DEFAULT_SPEAKER, Qwen3Tts, Qwen3TtsUnavailable
-from neiro.tts.visemes import VISEMES
+from elizabeth.emotion.voice import exaggeration_for, instruct_for
+from elizabeth.state import NEUTRAL_STATE, ElizabethState, EmotionLabel, Locality, Tier
+from elizabeth.tts.chatterbox import ChatterboxTts, ChatterboxUnavailable
+from elizabeth.tts.kokoro import FRAMES_PER_SECOND, SAMPLERATE, KokoroTts
+from elizabeth.tts.qwen3tts import DEFAULT_SPEAKER, Qwen3Tts, Qwen3TtsUnavailable
+from elizabeth.tts.visemes import VISEMES
 
-HAPPY = NeiroState.from_label(EmotionLabel.HAPPY, 0.8)
-SAD = NeiroState.from_label(EmotionLabel.SAD, 0.2)
+HAPPY = ElizabethState.from_label(EmotionLabel.HAPPY, 0.8)
+SAD = ElizabethState.from_label(EmotionLabel.SAD, 0.2)
 TEXT = "Hello there."
 VOICE = "af_test"
 
@@ -110,7 +110,7 @@ async def _drain(stream):
     return [pair async for pair in stream]
 
 
-def _speak(tts, text: str = TEXT, state: NeiroState | None = HAPPY):
+def _speak(tts, text: str = TEXT, state: ElizabethState | None = HAPPY):
     return asyncio.run(_drain(tts.synth(text, state)))
 
 
@@ -156,7 +156,7 @@ class TestChatterbox:
             t.load()
 
     def test_the_dial_reaches_the_engine_from_the_same_state_as_the_face(self) -> None:
-        # One dial, derived from the NeiroState that drives the face. A
+        # One dial, derived from the ElizabethState that drives the face. A
         # bright expression over a flat reading is exactly the mismatch
         # people notice, so the value the engine receives must move with
         # the state, not merely exist.

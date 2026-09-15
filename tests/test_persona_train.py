@@ -1,7 +1,7 @@
 """The rules the persona/Hinglish/tool-calling LoRA's data path is built
 on. `training/recipes/persona_train.py` needs CUDA torch and cannot be
 imported here, which is exactly why everything worth asserting lives in
-`neiro.training.llm_data` instead — importable and testable in the
+`elizabeth.training.llm_data` instead — importable and testable in the
 runtime venv, no GPU required.
 
 The load-bearing test here is `TestTrainingChatTemplate`: an earlier
@@ -15,7 +15,7 @@ transformers' own `{% generation %}` mechanism instead; these tests use
 tiny synthetic templates (never the real 8 GB checkpoint) to pin the
 masking behaviour and the vendor-template-shape assertion.
 
-    /home/yash/code/neiro/.venv/bin/python -m pytest tests/test_persona_train.py
+    /home/yash/code/elizabeth/.venv/bin/python -m pytest tests/test_persona_train.py
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pytest
 
-from neiro.evals.latency import percentile
-from neiro.training.llm_data import (
+from elizabeth.evals.latency import percentile
+from elizabeth.training.llm_data import (
     IGNORE_INDEX,
     SkipLog,
     ToolCallCheck,

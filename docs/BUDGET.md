@@ -33,7 +33,7 @@ never estimated or left blank once the code exists to measure them.
   opener, **365 ms** for three words and **769 ms** for eight (p50 over
   12 runs; p95 is within 5% of p50 at every length, so the engine is
   steady rather than occasionally slow). Warm-up after the page cache is
-  hot is 4.2 s, and 64 s from cold disk — which is why `neiro talk`
+  hot is 4.2 s, and 64 s from cold disk — which is why `elizabeth talk`
   warms every runtime before the first turn rather than on it.
 
   Two consequences. **The budget's TTS row was written for Kokoro on the

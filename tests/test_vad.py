@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.audio.vad import BargeInDetector, SileroVad, SpeechGate, VadFrameSizeError
-from neiro.config import Neiro
+from elizabeth.audio.vad import BargeInDetector, SileroVad, SpeechGate, VadFrameSizeError
+from elizabeth.config import Elizabeth
 
 MODEL = Path(__file__).resolve().parents[1] / "models" / "silero-vad" / "onnx" / "model.onnx"
 needs_model = pytest.mark.skipif(not MODEL.exists(), reason="silero-vad not downloaded")
@@ -47,7 +47,7 @@ class TestSileroVad:
                 vad.probability(np.zeros(bad, dtype=np.float32))
 
     def test_the_required_frame_is_32ms_at_16k(self) -> None:
-        assert Neiro().vad.frame_samples == 512
+        assert Elizabeth().vad.frame_samples == 512
 
     def test_state_is_carried_between_frames(self, vad: SileroVad) -> None:
         # It is a stateful RNN. Dropping the state makes every frame look
@@ -122,7 +122,7 @@ class TestSpeechGate:
     def test_leaving_is_slower_than_entering(self) -> None:
         # The same asymmetry as the expression blender, for the same
         # reason: the expensive mistake is the abrupt one.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.vad.min_silence_ms > cfg.vad.min_speech_ms
 
     def test_a_pause_inside_speech_does_not_split_the_turn(self) -> None:
@@ -170,7 +170,7 @@ class TestBargeIn:
     def test_it_is_stricter_than_the_ordinary_gate(self) -> None:
         # A false positive cuts her off mid-sentence; a false negative
         # just means he repeats himself. The costs are not symmetric.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.vad.bargein_probability > cfg.vad.threshold
         assert cfg.vad.bargein_speech_ms > cfg.vad.min_speech_ms
 
@@ -186,7 +186,7 @@ class TestBargeIn:
         b.start_speaking()
         for _ in range(8):
             b.update(0.0)
-        under = Neiro().vad.bargein_probability - 0.01
+        under = Elizabeth().vad.bargein_probability - 0.01
         assert not any(b.update(under) for _ in range(40))
 
     def test_starting_a_new_reply_re_arms_the_dead_zone(self) -> None:

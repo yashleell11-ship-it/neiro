@@ -1,6 +1,6 @@
 # Architecture
 
-How Neiro is put together, and — more usefully — *why* each piece is the
+How Elizabeth is put together, and — more usefully — *why* each piece is the
 shape it is. Almost every decision below was made or corrected by a
 measurement; those are linked to `DECISIONS.md`, which is dated.
 
@@ -10,10 +10,10 @@ Four, one machine, no network required on the local tier.
 
 | | What | Why separate |
 |---|---|---|
-| 1 | **Model server** — `llama-server` (target) or `ollama` (today) | A model server is a different lifecycle from a daemon: it starts slowly, holds GPU memory, and should survive a `neiro` restart. |
-| 2 | **`neiro`** — one asyncio daemon: capture, endpointing, STT, affect, LLM client, TTS, tools, WebSocket | Everything with a latency budget lives in one event loop, so there is one place to look when a turn is slow. |
+| 1 | **Model server** — `llama-server` (target) or `ollama` (today) | A model server is a different lifecycle from a daemon: it starts slowly, holds GPU memory, and should survive a `elizabeth` restart. |
+| 2 | **`elizabeth`** — one asyncio daemon: capture, endpointing, STT, affect, LLM client, TTS, tools, WebSocket | Everything with a latency budget lives in one event loop, so there is one place to look when a turn is slow. |
 | 3 | **The browser tab** — renders the face **and owns audio playback** | Whoever owns the audio clock owns the animation clock. Splitting them makes every viseme drift within a sentence. |
-| 4 | **`neiroctl`** — a one-byte writer to a socket, bound to a key | The compositor owns the keyboard. This must not be a Python entrypoint: interpreter start-up would be most of the press-to-record latency. |
+| 4 | **`elizabethctl`** — a one-byte writer to a socket, bound to a key | The compositor owns the keyboard. This must not be a Python entrypoint: interpreter start-up would be most of the press-to-record latency. |
 
 ## The Turn is the spine
 
@@ -23,7 +23,7 @@ class Turn:
     id: int; t0_speech_start: float; t_endpoint: float | None
     audio: np.ndarray | None; transcript: str | None; partial: str | None
     user_affect: UserAffect        # what she HEARD
-    neiro_state: NeiroState        # what she FEELS
+    elizabeth_state: ElizabethState        # what she FEELS
     tool_calls: list[ToolCall]
     tier: Tier                     # snapshotted at turn start, never mid-turn
     cancel: asyncio.Event          # checked at every await, from day one
@@ -33,7 +33,7 @@ class Turn:
 Every field exists from Stage 0, inert where unused. Two of them carry
 most of the design:
 
-**`user_affect` and `neiro_state` are never assigned to each other.** One
+**`user_affect` and `elizabeth_state` are never assigned to each other.** One
 is what we heard in his voice; the other is what she feels. Merging them
 is how an assistant ends up reading its own synthesised voice back as the
 user's mood. `labels.py` keeps them structurally apart: a Lane B model
@@ -88,7 +88,7 @@ machine is a Lua 5.5 eval with `os.execute` in scope, proven by
 experiment.
 
 1. **Shape, at registration time.** A bare `str` argument raises on
-   import. Arguments are an `int` index into a list Neiro produced *this
+   import. Arguments are an `int` index into a list Elizabeth produced *this
    turn*, or a `Literal` enum. `extra="forbid"` is mandatory.
 2. **Tier.** RED tools are not registered at all — the model cannot
    express what it cannot see. YELLOW needs a confirmation whose nonce is
@@ -113,7 +113,7 @@ the design over a tunnel. Only the LLM and TTS go anywhere.
 ## Where things live
 
 ```
-src/neiro/
+src/elizabeth/
   state.py protocols.py          the contracts, written before any implementation
   config.py                      every tunable, with the measurement that set it
   affect/    features baseline prosody fusion labels null

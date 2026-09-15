@@ -6,15 +6,15 @@
  * every handshake's path, query string included. It rides the
  * Sec-WebSocket-Protocol header instead, the one header a page can set
  * on a WebSocket. The prefix is TOKEN_SUBPROTOCOL_PREFIX in
- * src/neiro/server.py; the server selects this same subprotocol back,
+ * src/elizabeth/server.py; the server selects this same subprotocol back,
  * which is what lets the browser complete the handshake.
  *
- * It reconnects on its own. `neiro talk --browser` binds the port before
+ * It reconnects on its own. `elizabeth talk --browser` binds the port before
  * the models warm, so the tab may open seconds before anything listens,
  * and a restarted daemon should find the tab still there.
  */
 
-export const TOKEN_SUBPROTOCOL_PREFIX = 'neiro.token.';
+export const TOKEN_SUBPROTOCOL_PREFIX = 'elizabeth.token.';
 
 // Between attempts. A second is slow enough not to spam a daemon that is
 // still warming and fast enough that a restart is not noticed.
@@ -33,7 +33,7 @@ export class Transport {
   }
 
   connect() {
-    const socket = new WebSocket(`ws://${location.host}/neiro`, [TOKEN_SUBPROTOCOL_PREFIX + this.token]);
+    const socket = new WebSocket(`ws://${location.host}/elizabeth`, [TOKEN_SUBPROTOCOL_PREFIX + this.token]);
     socket.binaryType = 'arraybuffer';
     socket.onopen = () => this.handlers.onOpen?.();
     socket.onmessage = (event) => {

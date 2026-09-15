@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from neiro.training.manifest import Dataset
+from elizabeth.training.manifest import Dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import fetch_datasets as fd

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pull the models in src/neiro/modelspec.py.
+"""Pull the models in src/elizabeth/modelspec.py.
 
     uv run scripts/fetch_models.py --dry-run           # the plan, with REAL sizes re-read from HF
     uv run scripts/fetch_models.py --runs local        # what the laptop/hostel tier needs
@@ -8,7 +8,7 @@
     uv run scripts/fetch_models.py --only qwen3.5-4b-gguf
 
 Resumable — HF resumes partial files, and a finished model gets a
-`.neiro-complete` marker so a re-run skips it. `--dry-run` asks the Hub
+`.elizabeth-complete` marker so a re-run skips it. `--dry-run` asks the Hub
 for the real byte count of exactly the files that would be fetched,
 because modelspec's numbers are a record, not a promise.
 """
@@ -25,16 +25,16 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from neiro.modelspec import ModelSpec, select, total_gb
+from elizabeth.modelspec import ModelSpec, select, total_gb
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_DEST = REPO / "models"
-# Where the page looks for a VRM (`avatar_url` in src/neiro/server.py).
+# Where the page looks for a VRM (`avatar_url` in src/elizabeth/server.py).
 # An avatar is served to the browser, not loaded by the daemon, so it
 # lives with the page — gitignored there, see .gitignore — not under
 # models/ with the weights.
 AVATAR_DEST = REPO / "web" / "public" / "avatar"
-MARKER = ".neiro-complete"
+MARKER = ".elizabeth-complete"
 
 console = Console()
 
@@ -64,7 +64,7 @@ def real_size_gb(spec: ModelSpec) -> float | None:
 
 def dest_for(spec: ModelSpec, dest: Path = DEFAULT_DEST) -> Path:
     """`<dest>/<name>` — except an avatar, which goes where the page looks
-    for it, or `neiro fetch-models --component avatar` would download a
+    for it, or `elizabeth fetch-models --component avatar` would download a
     file the face never finds.
     """
     if spec.component == "avatar":

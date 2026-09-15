@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from neiro.training import text as prep
-from neiro.training.manifest import Manifest
-from neiro.training.text import (
+from elizabeth.training import text as prep
+from elizabeth.training.manifest import Manifest
+from elizabeth.training.text import (
     COMPREHENSION_SYSTEM,
     PERSONA_SYSTEM_PREFIX,
     READERS,

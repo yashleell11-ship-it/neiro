@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.affect.fusion import (
+from elizabeth.affect.fusion import (
     AGREEMENT_BONUS,
     DISAGREEMENT_PENALTY,
     LANE_A_WEIGHT,
@@ -19,8 +19,8 @@ from neiro.affect.fusion import (
     LaneBCalibration,
     fuse,
 )
-from neiro.config import Neiro
-from neiro.state import UserAffect
+from elizabeth.config import Elizabeth
+from elizabeth.state import UserAffect
 
 
 class TestLaneBCalibration:
@@ -86,7 +86,7 @@ class TestFusion:
     def test_agreement_raises_confidence(self) -> None:
         # Relative to the configured dead-band, so tuning it does not
         # silently turn this test into one about something else.
-        band = Neiro().affect.dead_band_z
+        band = Elizabeth().affect.dead_band_z
         a = UserAffect(arousal_z=band * 1.5, confidence=0.6)
         b = UserAffect(arousal_z=band * 1.2, confidence=0.6)
         fused = fuse(a, b)
@@ -97,18 +97,18 @@ class TestFusion:
         # Two independent measurements pointing opposite ways mean the
         # reading is unreliable — the prompt's "ignore it at low
         # confidence" rule is what should act on this.
-        band = Neiro().affect.dead_band_z
+        band = Elizabeth().affect.dead_band_z
         a = UserAffect(arousal_z=band * 1.5, confidence=0.8)
         b = UserAffect(arousal_z=-band * 1.5, confidence=0.8)
         fused = fuse(a, b)
         assert fused.confidence < 0.8 * DISAGREEMENT_PENALTY * 1.01
-        assert fused.confidence < Neiro().affect.confidence_floor
+        assert fused.confidence < Elizabeth().affect.confidence_floor
 
     def test_a_neutral_lane_is_not_a_disagreement(self) -> None:
         # Sitting inside the dead-band is declining to say, not
         # contradicting. Counting it as conflict would suppress every
         # reading where one lane is simply quiet.
-        a = UserAffect(arousal_z=Neiro().affect.dead_band_z * 1.5, confidence=0.8)
+        a = UserAffect(arousal_z=Elizabeth().affect.dead_band_z * 1.5, confidence=0.8)
         quiet = UserAffect(arousal_z=0.0, confidence=0.8)
         assert fuse(a, quiet).confidence > 0.8 * DISAGREEMENT_PENALTY * 1.5
 

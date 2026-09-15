@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.affect.labels import (
+from elizabeth.affect.labels import (
     ACTED_CORPORA,
     ALIASES,
     CIRCUMPLEX,

@@ -17,12 +17,12 @@ from pathlib import Path
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
-from neiro.llm.openai_compat import StreamAccumulator
-from neiro.orchestrator import CHUNK_QUEUE_DEPTH, MAX_TOOL_ROUNDS, Orchestrator, TurnResult
-from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState, UserAffect
-from neiro.tools.audit import DENIED, FAILED, AuditLog
-from neiro.tools.registry import ToolRegistry, ToolSpec
-from neiro.tools.tiers import Tier
+from elizabeth.llm.openai_compat import StreamAccumulator
+from elizabeth.orchestrator import CHUNK_QUEUE_DEPTH, MAX_TOOL_ROUNDS, Orchestrator, TurnResult
+from elizabeth.state import NEUTRAL_STATE, ElizabethState, EmotionLabel, UserAffect
+from elizabeth.tools.audit import DENIED, FAILED, AuditLog
+from elizabeth.tools.registry import ToolRegistry, ToolSpec
+from elizabeth.tools.tiers import Tier
 
 AUDIO = np.zeros(16000, dtype=np.float32)
 
@@ -267,7 +267,7 @@ class TestAffect:
         orch, _ = build(affect=affect)
 
         async def go():
-            from neiro.state import Turn
+            from elizabeth.state import Turn
 
             turn = Turn.new(0)
             for _ in range(4):
@@ -576,19 +576,19 @@ class TestStateSeparation:
         #
         # Drives both writers: observe_while_speaking() is the only thing
         # that sets user_affect, and run() the only thing that sets
-        # neiro_state. The previous version ran only run() and inspected
-        # the Turn's untouched defaults, so `neiro_state = user_affect`
+        # elizabeth_state. The previous version ran only run() and inspected
+        # the Turn's untouched defaults, so `elizabeth_state = user_affect`
         # inside observe_while_speaking() left the suite green.
         affect = FakeAffect()
         orch, _ = build(affect=affect)
 
-        async def go() -> tuple[TurnResult, UserAffect, NeiroState]:
+        async def go() -> tuple[TurnResult, UserAffect, ElizabethState]:
             turn = orch.begin_turn()
             for _ in range(3):
                 await orch.observe_while_speaking(turn, AUDIO)
             # Snapshot what the speaking phase wrote, before the reply
             # can overwrite either side.
-            heard, felt = turn.user_affect, turn.neiro_state
+            heard, felt = turn.user_affect, turn.elizabeth_state
             return await orch.run(AUDIO, turn=turn), heard, felt
 
         result, heard, felt = asyncio.run(go())
@@ -600,12 +600,12 @@ class TestStateSeparation:
         assert felt is NEUTRAL_STATE
 
         # The reply wrote what she feels and nothing else.
-        assert type(turn.neiro_state) is NeiroState
-        assert turn.neiro_state.label is EmotionLabel.HAPPY
+        assert type(turn.elizabeth_state) is ElizabethState
+        assert turn.elizabeth_state.label is EmotionLabel.HAPPY
         assert turn.user_affect is heard
 
         # The rule itself: two objects, never the same one.
-        assert turn.neiro_state is not turn.user_affect
+        assert turn.elizabeth_state is not turn.user_affect
 
 
 # -- tools ---------------------------------------------------------------
@@ -685,7 +685,7 @@ class Handlers:
     def battery(self) -> str:
         self.battery_calls += 1
         if self.turn is not None:
-            self.seen_state.append(self.turn.neiro_state.label)
+            self.seen_state.append(self.turn.elizabeth_state.label)
         self.started.set()
         if self.block is not None:
             self.block.wait(timeout=self.block_timeout_s)
@@ -794,7 +794,7 @@ class TestTools:
         assert handlers.seen_state == [EmotionLabel.RELAXED]
         assert [s.label for s in parts["tts"].states] == [EmotionLabel.SURPRISED]
         assert result.state.label is EmotionLabel.SURPRISED
-        assert turn.neiro_state.label is EmotionLabel.SURPRISED
+        assert turn.elizabeth_state.label is EmotionLabel.SURPRISED
         assert "emotion_resolved" in turn.timeline
 
     def test_narration_alongside_a_call_is_not_spoken_or_remembered(self) -> None:

@@ -19,8 +19,8 @@ decision is not made under pressure:
     3. llama-server -c 4096 instead of 8192
 
 GO is under 7.0 GB of the 7730 MiB usable, leaving headroom for the
-compositor and whatever else is open. There is also a "not Neiro" row:
-Steam and Rocket League share this card, which is what `neiro pause` is
+compositor and whatever else is open. There is also a "not Elizabeth" row:
+Steam and Rocket League share this card, which is what `elizabeth pause` is
 for.
 """
 
@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     # 1. STT — the first thing a turn needs, and the first thing the
     #    no-go ladder moves to CPU.
     try:
-        from neiro.stt.faster_whisper import FasterWhisperStt
+        from elizabeth.stt.faster_whisper import FasterWhisperStt
 
         stt = FasterWhisperStt()
         stt.warm()
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     #    proving it is the point, not assuming it.
     if not args.skip_tts:
         try:
-            from neiro.tts.kokoro import KokoroTts
+            from elizabeth.tts.kokoro import KokoroTts
 
             tts = KokoroTts()
             tts.warm()
@@ -137,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. VAD and endpointing — both CPU ONNX, both expected ~0.
     try:
-        from neiro.audio.endpoint import SmartTurnEndpointer
-        from neiro.audio.vad import SileroVad
+        from elizabeth.audio.endpoint import SmartTurnEndpointer
+        from elizabeth.audio.vad import SileroVad
 
         SileroVad().warm()
         SmartTurnEndpointer().warm()

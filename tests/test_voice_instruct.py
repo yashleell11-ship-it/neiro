@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.emotion.voice import exaggeration_for, instruct_for
-from neiro.state import EmotionLabel, NeiroState
+from elizabeth.emotion.voice import exaggeration_for, instruct_for
+from elizabeth.state import ElizabethState, EmotionLabel
 
 
-def state(label: EmotionLabel, intensity: float = 0.6) -> NeiroState:
-    return NeiroState.from_label(label, intensity)
+def state(label: EmotionLabel, intensity: float = 0.6) -> ElizabethState:
+    return ElizabethState.from_label(label, intensity)
 
 
 class TestInstruct:
@@ -95,7 +95,7 @@ class TestExaggeration:
         assert 0.25 <= value <= 0.8
 
     def test_both_engines_derive_from_the_state_not_from_each_other(self) -> None:
-        # Same NeiroState in, two independent outputs — so swapping TTS
+        # Same ElizabethState in, two independent outputs — so swapping TTS
         # at gate G5 changes one function, not the emotional contract.
         s = state(EmotionLabel.SAD, 0.8)
         assert isinstance(instruct_for(s), str)

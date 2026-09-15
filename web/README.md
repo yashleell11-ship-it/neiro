@@ -1,6 +1,6 @@
 # web/
 
-The face, and the audio clock. Served by `neiro talk --browser` at
+The face, and the audio clock. Served by `elizabeth talk --browser` at
 http://127.0.0.1:8760 — the page is `index.html`, the daemon injects the
 session token into it, and everything else here is fetched relative to it.
 
@@ -23,7 +23,7 @@ held back rather than sent early — the page shows a button saying so.
 
 ## What the daemon sends, and what the page does with it
 
-`src/neiro/server.py` freezes the message set; `src/neiro/audio/sink_ws.py`
+`src/elizabeth/server.py` freezes the message set; `src/elizabeth/audio/sink_ws.py`
 sends it. Per reply:
 
 | message | the page |
@@ -99,7 +99,7 @@ only ever speaks 1.0.
 
 ## Where the blending happens
 
-The *targets* are decided in Python (`src/neiro/emotion/blend.py`): one
+The *targets* are decided in Python (`src/elizabeth/emotion/blend.py`): one
 preset at the tag's intensity, redistributed to what the avatar reported
 it has. The *easing* toward them runs here, on the frame clock, with the
 same curve — asymmetric time constants, surprise releasing itself, the

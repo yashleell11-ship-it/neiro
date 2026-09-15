@@ -1,4 +1,4 @@
-# Working on Neiro
+# Working on Elizabeth
 
 This is currently a solo project, built by directing Claude Code through
 `docs/superpowers/specs/2026-09-10-lilt-design.md`'s plan, task by task.

@@ -1,4 +1,4 @@
-"""Regression tests for the Turn spine (src/neiro/state.py).
+"""Regression tests for the Turn spine (src/elizabeth/state.py).
 
 Promised in the Stage 0 Task 1 commit but never actually written — the
 whole reason this matters: VRM 1.0's expression preset names are exact
@@ -10,10 +10,10 @@ moves, with no error anywhere.
 
 from __future__ import annotations
 
-from neiro.state import (
+from elizabeth.state import (
+    ElizabethState,
     EmotionLabel,
     Locality,
-    NeiroState,
     Tier,
     Turn,
     UserAffect,
@@ -45,15 +45,15 @@ def test_emotion_labels_are_not_vrm_0_x_spelling() -> None:
     assert not values & {"A", "I", "U", "E", "O", "calm", "Happy", "Angry"}
 
 
-def test_neiro_state_defaults_to_neutral() -> None:
-    state = NeiroState()
+def test_elizabeth_state_defaults_to_neutral() -> None:
+    state = ElizabethState()
     assert state.label is EmotionLabel.NEUTRAL
     assert state.valence == 0.0
     assert state.arousal == 0.0
 
 
-def test_neiro_state_from_label_looks_up_valence_arousal() -> None:
-    state = NeiroState.from_label(EmotionLabel.HAPPY, intensity=0.8)
+def test_elizabeth_state_from_label_looks_up_valence_arousal() -> None:
+    state = ElizabethState.from_label(EmotionLabel.HAPPY, intensity=0.8)
     assert state.label is EmotionLabel.HAPPY
     assert state.intensity == 0.8
     assert state.valence > 0  # happy is positive valence...
@@ -67,14 +67,14 @@ def test_user_affect_none_is_inert() -> None:
     assert UserAffect.NONE.baseline_n == 0
 
 
-def test_user_affect_and_neiro_state_are_distinct_types() -> None:
+def test_user_affect_and_elizabeth_state_are_distinct_types() -> None:
     # The rule in CLAUDE.md: what she heard and what she feels must never
     # be assignable to each other. Enforced at the type level — this test
     # exists so nobody "simplifies" Turn into one shared field later.
-    assert UserAffect is not NeiroState
+    assert UserAffect is not ElizabethState
     turn = Turn.new()
     assert type(turn.user_affect) is UserAffect
-    assert type(turn.neiro_state) is NeiroState
+    assert type(turn.elizabeth_state) is ElizabethState
 
 
 def test_turn_starts_with_inert_defaults() -> None:

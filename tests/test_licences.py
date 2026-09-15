@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from neiro.training.licences import MANIFEST, licences_for
+from elizabeth.training.licences import MANIFEST, licences_for
 
 CLEAN = """
 schema_version = 1

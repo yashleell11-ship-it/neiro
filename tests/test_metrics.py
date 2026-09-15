@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.metrics import (
+from elizabeth.metrics import (
     STAGE_ORDER,
     TurnRecord,
     append_turn,
@@ -26,8 +26,8 @@ from neiro.metrics import (
     stage_durations_ms,
     summarise,
 )
-from neiro.orchestrator import Orchestrator
-from neiro.state import Turn
+from elizabeth.orchestrator import Orchestrator
+from elizabeth.state import Turn
 
 REPO = Path(__file__).resolve().parents[1]
 

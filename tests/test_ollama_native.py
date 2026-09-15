@@ -16,15 +16,15 @@ import json
 import httpx
 import pytest
 
-from neiro.llm.ollama_native import (
+from elizabeth.llm.ollama_native import (
     THINKING_FIELD,
     OllamaNativeLlm,
     check_chunk_not_thinking,
     ollama_message,
     parse_ndjson_line,
 )
-from neiro.llm.openai_compat import OpenAiCompatLlm, StreamAccumulator, ThinkingModeError
-from neiro.state import Locality
+from elizabeth.llm.openai_compat import OpenAiCompatLlm, StreamAccumulator, ThinkingModeError
+from elizabeth.state import Locality
 
 TOOLS = [{"type": "function", "function": {"name": "set_volume", "parameters": {}}}]
 
@@ -33,7 +33,7 @@ def _tool_message(name: str, arguments: dict) -> dict:
     """One NDJSON object as ollama emits a whole tool call: arguments
     are a JSON object, not the OpenAI path's partial string."""
     return {
-        "model": "neiro-4b",
+        "model": "elizabeth-4b",
         "message": {
             "role": "assistant",
             "content": "",
@@ -43,7 +43,7 @@ def _tool_message(name: str, arguments: dict) -> dict:
     }
 
 
-END = {"model": "neiro-4b", "message": {"role": "assistant", "content": ""}, "done": True}
+END = {"model": "elizabeth-4b", "message": {"role": "assistant", "content": ""}, "done": True}
 
 
 def _serving(lines: list[dict]) -> OllamaNativeLlm:
@@ -72,7 +72,9 @@ def _drain(llm: OllamaNativeLlm) -> StreamAccumulator:
 class TestNdjson:
     def test_parses_a_real_line(self) -> None:
         # Verbatim from ollama 0.33.2.
-        line = '{"model":"neiro-4b","message":{"role":"assistant","content":"Hello"},"done":false}'
+        line = (
+            '{"model":"elizabeth-4b","message":{"role":"assistant","content":"Hello"},"done":false}'
+        )
         chunk = parse_ndjson_line(line)
         assert chunk is not None
         assert chunk["message"]["content"] == "Hello"
@@ -193,13 +195,13 @@ ASKED = {
 }
 ANSWERED = {"role": "tool", "tool_call_id": "call_1_0_0", "content": "Volume 30 percent."}
 TOOL_TURN = [
-    {"role": "system", "content": "You are Neiro."},
+    {"role": "system", "content": "You are Elizabeth."},
     {"role": "user", "content": "volume thirty"},
     ASKED,
     ANSWERED,
 ]
 REPLY = {
-    "model": "neiro-4b",
+    "model": "elizabeth-4b",
     "message": {"role": "assistant", "content": "<e:happy:6> Done."},
     "done": False,
 }

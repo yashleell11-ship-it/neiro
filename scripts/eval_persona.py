@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Does the voice annotation actually change what she says?
 
-    uv run scripts/eval_persona.py --model neiro-4b
+    uv run scripts/eval_persona.py --model elizabeth-4b
 
 That is the differentiator's whole claim on the *text* side, and it is a
 prompt-engineering result rather than an SER result — which means it can
@@ -29,11 +29,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.config import Neiro
-from neiro.llm.emotion_tag import EmotionTagParser
-from neiro.llm.ollama_native import OllamaNativeLlm
-from neiro.llm.prompt import PROMPT_VERSION, system_message, user_message
-from neiro.state import NEUTRAL_STATE
+from elizabeth.config import Elizabeth
+from elizabeth.llm.emotion_tag import EmotionTagParser
+from elizabeth.llm.ollama_native import OllamaNativeLlm
+from elizabeth.llm.prompt import PROMPT_VERSION, system_message, user_message
+from elizabeth.state import NEUTRAL_STATE
 
 
 async def ask(llm: OllamaNativeLlm, transcript: str, voice: str | None) -> tuple[str, str]:
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=REPO / "docs" / "persona-eval.json")
     args = ap.parse_args(argv)
 
-    cfg = Neiro()
+    cfg = Elizabeth()
     if args.model:
         cfg.llm.model = args.model
     llm = OllamaNativeLlm(cfg)

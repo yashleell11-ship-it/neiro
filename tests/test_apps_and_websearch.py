@@ -16,7 +16,7 @@ import subprocess
 import httpx
 import pytest
 
-from neiro.tools import apps, websearch
+from elizabeth.tools import apps, websearch
 
 
 class TestOpenApp:
@@ -26,7 +26,9 @@ class TestOpenApp:
         # a silent asymmetry the schema doesn't advertise.
         assert set(apps._LOCAL_APPS) == set(apps._BOX_COMMANDS)
 
-    def test_local_launch_uses_argv_never_a_shell_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_local_launch_uses_argv_never_a_shell_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         calls = []
         monkeypatch.setattr(
             apps.subprocess, "Popen", lambda argv, **kw: calls.append((argv, kw)) or object()
@@ -66,7 +68,7 @@ class TestOpenApp:
         assert argv[0] == apps.SSH_EXE
         assert apps.BOX_HOST in argv
         assert apps.BOX_KEY in argv
-        # The command Neiro built is the fixed table entry — nothing
+        # The command Elizabeth built is the fixed table entry — nothing
         # about it came from the model, which only ever supplied the
         # Literal "vscode".
         assert apps._BOX_COMMANDS["vscode"] in argv[-1]
@@ -75,7 +77,9 @@ class TestOpenApp:
         monkeypatch.setattr(
             apps.subprocess,
             "run",
-            lambda argv, **kw: subprocess.CompletedProcess(argv, 255, stdout="", stderr="timed out"),
+            lambda argv, **kw: subprocess.CompletedProcess(
+                argv, 255, stdout="", stderr="timed out"
+            ),
         )
         with pytest.raises(apps.AppLaunchError):
             apps.open_on_box("vscode")
@@ -105,7 +109,11 @@ class TestWebSearch:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            httpx, "post", lambda *a, **k: httpx.Response(200, text=self._SAMPLE_HTML, request=httpx.Request("POST", websearch.SEARCH_URL))
+            httpx,
+            "post",
+            lambda *a, **k: httpx.Response(
+                200, text=self._SAMPLE_HTML, request=httpx.Request("POST", websearch.SEARCH_URL)
+            ),
         )
         results = websearch.search("anything")
         assert [r.title for r in results] == ["First Result Title", "Second &amp; Title"]
@@ -113,7 +121,13 @@ class TestWebSearch:
 
     def test_caps_at_max_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
         many = self._SAMPLE_HTML * 10
-        monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, text=many, request=httpx.Request("POST", websearch.SEARCH_URL)))
+        monkeypatch.setattr(
+            httpx,
+            "post",
+            lambda *a, **k: httpx.Response(
+                200, text=many, request=httpx.Request("POST", websearch.SEARCH_URL)
+            ),
+        )
         assert len(websearch.search("anything")) == websearch.MAX_RESULTS
 
     def test_a_failed_request_raises_rather_than_returning_nothing(
@@ -128,7 +142,11 @@ class TestWebSearch:
 
     def test_describe_reads_naturally(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            httpx, "post", lambda *a, **k: httpx.Response(200, text=self._SAMPLE_HTML, request=httpx.Request("POST", websearch.SEARCH_URL))
+            httpx,
+            "post",
+            lambda *a, **k: httpx.Response(
+                200, text=self._SAMPLE_HTML, request=httpx.Request("POST", websearch.SEARCH_URL)
+            ),
         )
         text = websearch.search_and_describe("anything")
         assert "First Result Title" in text
@@ -137,6 +155,12 @@ class TestWebSearch:
     def test_no_results_says_so_instead_of_an_empty_string(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, text="<html></html>", request=httpx.Request("POST", websearch.SEARCH_URL)))
+        monkeypatch.setattr(
+            httpx,
+            "post",
+            lambda *a, **k: httpx.Response(
+                200, text="<html></html>", request=httpx.Request("POST", websearch.SEARCH_URL)
+            ),
+        )
         text = websearch.search_and_describe("something obscure")
         assert "no results" in text.lower()

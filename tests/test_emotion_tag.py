@@ -1,6 +1,6 @@
 """Tests for the emotion-tag stream parser.
 
-This is the single channel carrying Neiro's emotional state to her
+This is the single channel carrying Elizabeth's emotional state to her
 voice, her face, and the next turn's prompt — the project's entire
 differentiator runs through these ~40 lines. The failure modes that
 matter are subtle: a tag split across stream chunks that never resolves,
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.llm.emotion_tag import FALLBACK_AFTER_CHARS, EmotionTagParser
-from neiro.state import EmotionLabel
+from elizabeth.llm.emotion_tag import FALLBACK_AFTER_CHARS, EmotionTagParser
+from elizabeth.state import EmotionLabel
 
 
 def feed_all(parser: EmotionTagParser, chunks: list[str]) -> tuple[list, str]:

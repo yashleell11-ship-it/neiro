@@ -22,17 +22,17 @@ import time
 import numpy as np
 import pytest
 
-from neiro.audio.sink_ws import FIRST_AUDIO_TIMEOUT_S, SEND_TIMEOUT_S, WsSink
-from neiro.config import Neiro
-from neiro.metrics import headline_latency_ms
-from neiro.server import (
+from elizabeth.audio.sink_ws import FIRST_AUDIO_TIMEOUT_S, SEND_TIMEOUT_S, WsSink
+from elizabeth.config import Elizabeth
+from elizabeth.metrics import headline_latency_ms
+from elizabeth.server import (
     TOKEN_SUBPROTOCOL_PREFIX,
     Face,
     Session,
     _pump,
     parse_audio_frame,
 )
-from neiro.state import NEUTRAL_STATE, EmotionLabel, NeiroState, Turn
+from elizabeth.state import NEUTRAL_STATE, ElizabethState, EmotionLabel, Turn
 
 # Nothing here waits on a model; a test that hangs is a deadlock, and a
 # deadlock must fail rather than stall the suite.
@@ -72,7 +72,7 @@ def _kinds(items: list) -> list[str]:
 
 def _turn(label: EmotionLabel = EmotionLabel.HAPPY, intensity: float = 7 / 9) -> Turn:
     turn = Turn.new(3)
-    turn.neiro_state = NeiroState.from_label(label, intensity)
+    turn.elizabeth_state = ElizabethState.from_label(label, intensity)
     return turn
 
 
@@ -86,7 +86,7 @@ def session() -> Session:
 
 class TestTwoChunkReply:
     def test_the_exact_frame_sequence(self, session: Session) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         sink = WsSink(session, cfg)
         turn = _turn()
 
@@ -170,7 +170,7 @@ class TestEmotionMidReply:
 
         async def go() -> None:
             await sink.play(turn, _pcm(240), seq=0)
-            turn.neiro_state = NeiroState.from_label(EmotionLabel.SAD, 0.5)
+            turn.elizabeth_state = ElizabethState.from_label(EmotionLabel.SAD, 0.5)
             await sink.play(turn, _pcm(240), seq=1)
             await sink.play(turn, _pcm(240), seq=2)  # unchanged: no frame
 
@@ -460,7 +460,7 @@ class TestPlayedEndsTheMetric:
 
 
 class TestEndToEnd:
-    """The whole path, on one event loop, the way `neiro talk --browser`
+    """The whole path, on one event loop, the way `elizabeth talk --browser`
     runs it: uvicorn as a task beside the caller, a real WebSocket
     client where the tab would be, the sink fed a fake turn, and the
     browser-side frames read back in order — then `played` sent from
@@ -473,7 +473,7 @@ class TestEndToEnd:
     def test_a_fake_turn_reaches_the_client_in_order_and_played_comes_back(self, tmp_path) -> None:
         import websockets
 
-        cfg = Neiro()
+        cfg = Elizabeth()
         # Port 0: whatever is free. tmp_path as web/: no page and no
         # avatar, so `hello` must say so rather than guess.
         face = Face(cfg, port=0, web_dir=tmp_path)
@@ -483,7 +483,7 @@ class TestEndToEnd:
             try:
                 await face.wait_started(DEADLINE_S)
                 async with websockets.connect(
-                    f"ws://127.0.0.1:{face.port}/neiro",
+                    f"ws://127.0.0.1:{face.port}/elizabeth",
                     subprotocols=[TOKEN_SUBPROTOCOL_PREFIX + face.session.token],
                 ) as ws:
                     hello = json.loads(await ws.recv())
@@ -541,10 +541,10 @@ class TestEndToEnd:
             socket.create_connection(("127.0.0.1", face.port), timeout=1.0).close()
 
     def test_a_taken_port_fails_at_bind_not_inside_the_server_task(self, tmp_path) -> None:
-        first = Face(Neiro(), port=0, web_dir=tmp_path)
+        first = Face(Elizabeth(), port=0, web_dir=tmp_path)
         first.bind()
         try:
-            second = Face(Neiro(), port=first.port, web_dir=tmp_path)
+            second = Face(Elizabeth(), port=first.port, web_dir=tmp_path)
             with pytest.raises(OSError):
                 second.bind()
         finally:

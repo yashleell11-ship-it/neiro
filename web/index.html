@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Neiro</title>
-<!-- neiro:token -->
+<title>Elizabeth</title>
+<!-- elizabeth:token -->
 <!--
   The libraries the avatar needs, served from web/vendor/ (copied out of
   node_modules by `bun add`, see README.md) — never a CDN. The demo has
@@ -135,7 +135,7 @@ function hud(weights) {
 requestAnimationFrame(frame);
 
 // --- messages ------------------------------------------------------------
-// Every server message in src/neiro/server.py's SERVER_MESSAGES.
+// Every server message in src/elizabeth/server.py's SERVER_MESSAGES.
 async function handle(msg) {
   switch (msg.t) {
     case 'hello': await hello(msg); break;
@@ -218,7 +218,7 @@ async function hello(msg) {
 }
 
 // --- transport -----------------------------------------------------------
-const token = window.NEIRO_TOKEN;
+const token = window.ELIZABETH_TOKEN;
 if (token) {
   transport = new Transport(token, {
     onOpen: () => setPhase('connected'),

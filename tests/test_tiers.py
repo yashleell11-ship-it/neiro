@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.state import Locality, Tier
-from neiro.tiers import FAILURES_TO_DEMOTE, SUCCESSES_TO_PROMOTE, TierResolver
+from elizabeth.state import Locality, Tier
+from elizabeth.tiers import FAILURES_TO_DEMOTE, SUCCESSES_TO_PROMOTE, TierResolver
 
 
 class TestHysteresis:

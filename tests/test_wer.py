@@ -1,4 +1,4 @@
-"""Tests for the WER implementation (src/neiro/evals/wer.py).
+"""Tests for the WER implementation (src/elizabeth/evals/wer.py).
 
 This number decides every future STT swap for the life of the project,
 so it's worth being sure it's actually right rather than plausible — a
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from neiro.config import Neiro
-from neiro.evals.wer import DatasetScore, edit_distance, normalize, score, wer
+from elizabeth.config import Elizabeth
+from elizabeth.evals.wer import DatasetScore, edit_distance, normalize, score, wer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -90,7 +90,7 @@ class TestDevanagari:
         assert wer("२० मिनट", "बीस मिनट") == pytest.approx(0.5)
 
     def test_code_switching_keeps_both_scripts(self) -> None:
-        assert normalize("Neiro, गाना play करो!") == ["neiro", "गाना", "play", "करो"]
+        assert normalize("Elizabeth, गाना play करो!") == ["elizabeth", "गाना", "play", "करो"]
 
     def test_reference_word_count_is_words_not_fragments(self) -> None:
         # The denominator of a corpus WER. Fragmenting the reference
@@ -409,7 +409,7 @@ class TestBenchmarkHarness:
     def test_language_flag_maps_onto_config_and_none_leaves_it_alone(self) -> None:
         from bench_stt import override_language
 
-        cfg = Neiro(stt={"language": "en"})
+        cfg = Elizabeth(stt={"language": "en"})
         assert override_language(cfg, "hi").stt.language == "hi"
         assert override_language(cfg, None).stt.language == "hi"
         with pytest.raises(ValueError):

@@ -34,12 +34,12 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.affect import features as feat
-from neiro.affect.baseline import SpeakerBaseline
-from neiro.affect.labels import CIRCUMPLEX
-from neiro.affect.prosody import AROUSAL_WEIGHTS, VALENCE_WEIGHTS, _composite
-from neiro.config import Neiro
-from neiro.training.corpora import Utterance, ensure_extracted, load
+from elizabeth.affect import features as feat
+from elizabeth.affect.baseline import SpeakerBaseline
+from elizabeth.affect.labels import CIRCUMPLEX
+from elizabeth.affect.prosody import AROUSAL_WEIGHTS, VALENCE_WEIGHTS, _composite
+from elizabeth.config import Elizabeth
+from elizabeth.training.corpora import Utterance, ensure_extracted, load
 
 SAMPLERATE = 16000
 
@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=REPO / "docs" / "spike-arousal.json")
     args = ap.parse_args(argv)
 
-    cfg = Neiro()
+    cfg = Elizabeth()
     print(f"warming librosa: {feat.warm(cfg) * 1000:.0f} ms")
 
     for name in args.corpora:
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             ensure_extracted(name)
     rows = [r for r in load(args.corpora) if not r.in_archive]
     if not rows:
-        print("No audio found. Run `neiro fetch-datasets --target ser_lane_b` first.")
+        print("No audio found. Run `elizabeth fetch-datasets --target ser_lane_b` first.")
         return 2
 
     by_speaker: dict[str, list[Utterance]] = defaultdict(list)

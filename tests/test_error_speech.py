@@ -1,4 +1,4 @@
-"""Tests for Neiro's error speech.
+"""Tests for Elizabeth's error speech.
 
 Mostly guarding the product rules rather than the logic: short, varied,
 never blaming the user, and complete (every failure kind has something
@@ -7,7 +7,7 @@ to say, so no code path can end in silence).
 
 from __future__ import annotations
 
-from neiro.speech.errors import ErrorSpeech, Failure, all_lines
+from elizabeth.speech.errors import ErrorSpeech, Failure, all_lines
 
 
 class TestCoverage:

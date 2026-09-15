@@ -49,9 +49,9 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.config import Neiro
-from neiro.metrics import percentile
-from neiro.state import EmotionLabel, NeiroState
+from elizabeth.config import Elizabeth
+from elizabeth.metrics import percentile
+from elizabeth.state import ElizabethState, EmotionLabel
 
 SAMPLERATE = 24000
 
@@ -72,7 +72,7 @@ assert len(CLAUSES) == len(_CLAUSE_TEXTS), "two clauses have the same word count
 # The state passed to every engine that can use one. Deliberately not
 # neutral: an expressive engine doing nothing is the failure G5 exists
 # to catch, and a flat state would hide it.
-STATE = NeiroState(label=EmotionLabel.HAPPY, intensity=0.7, valence=0.6, arousal=0.5)
+STATE = ElizabethState(label=EmotionLabel.HAPPY, intensity=0.7, valence=0.6, arousal=0.5)
 
 
 def vram_mb() -> float | None:
@@ -137,7 +137,7 @@ class EngineResult:
         return out
 
 
-async def time_one(engine, text: str, state: NeiroState | None) -> Run:
+async def time_one(engine, text: str, state: ElizabethState | None) -> Run:
     """TTFA is measured to the first chunk that carries samples.
 
     Some engines yield an empty leading chunk; counting that as "first
@@ -167,26 +167,26 @@ async def time_one(engine, text: str, state: NeiroState | None) -> Run:
     )
 
 
-def build(name: str, cfg: Neiro, device: str):
+def build(name: str, cfg: Elizabeth, device: str):
     """Import lazily and per engine: importing chatterbox or qwen3tts
     pulls a CUDA torch path that must not be loaded just to bench Kokoro.
     """
     if name == "kokoro":
-        from neiro.tts.kokoro import KokoroTts
+        from elizabeth.tts.kokoro import KokoroTts
 
         return KokoroTts(cfg), None
     if name == "chatterbox":
-        from neiro.tts.chatterbox import ChatterboxTts
+        from elizabeth.tts.chatterbox import ChatterboxTts
 
         return ChatterboxTts(cfg=cfg, device=device), STATE
     if name == "qwen3tts":
-        from neiro.tts.qwen3tts import Qwen3Tts
+        from elizabeth.tts.qwen3tts import Qwen3Tts
 
         return Qwen3Tts(cfg=cfg, device=device), STATE
     raise SystemExit(f"unknown engine {name!r}")
 
 
-async def bench(name: str, cfg: Neiro, repeats: int, device: str) -> EngineResult:
+async def bench(name: str, cfg: Elizabeth, repeats: int, device: str) -> EngineResult:
     result = EngineResult(name=name, available=False)
     try:
         engine, state = build(name, cfg, device)
@@ -284,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", type=Path, help="write the full result here")
     args = ap.parse_args(argv)
 
-    cfg = Neiro()
+    cfg = Elizabeth()
     engines = args.engine or ["kokoro", "chatterbox", "qwen3tts"]
     results = [asyncio.run(bench(name, cfg, args.repeats, args.device)) for name in engines]
 

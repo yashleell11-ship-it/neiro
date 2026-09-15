@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from neiro.training.corpora import (
+from elizabeth.training.corpora import (
     DATASETS_DIR,
     EMONET_INDEX,
     EMONET_INDEX_COLUMNS,

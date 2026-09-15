@@ -1,9 +1,8 @@
-# Neiro
+# Elizabeth
 
-**音色** — *timbre*: the quality that makes two voices saying the same word sound different.
-
-An anime character who lives on your laptop, hears *how* you sound and not just what you
-said, and answers with a voice and a face driven by one shared emotional state. Local by
+Elizabeth is an anime character who lives on your laptop, hears *how* you sound and not
+just what you said, and answers with a voice and a face driven by one shared emotional
+state. Local by
 default — no API keys for the voice loop itself — with two named, confirm-gated
 exceptions: opening an app on Yash's own second machine, and a web search. See
 `docs/PRIVACY.md`.
@@ -42,7 +41,7 @@ executed are negative tests in the suite.
 | STT, end of speech → transcript | **141 ms** | distil-large-v3.5 int8, GPU |
 | TTS time-to-first-audio | **281 ms** (1 word) → **1088 ms** (16 words) | `docs/gate-g6-kokoro-ttfa.json` |
 | Silero VAD | **0.08 ms** per 32 ms frame, CPU | `tests/test_vad.py` |
-| Hyprland socket read | **0.415 ms** vs ~3 ms for `hyprctl` | `src/neiro/tools/hyprland.py` |
+| Hyprland socket read | **0.415 ms** vs ~3 ms for `hyprctl` | `src/elizabeth/tools/hyprland.py` |
 
 The valence number is the useful one. It says in measurement what the literature says in
 prose: **how activated someone sounds is audible; whether they feel good or bad mostly is
@@ -59,7 +58,7 @@ mic ─► ring ─► VAD/endpoint ─► STT ──┐
                       so it costs 0 ms)
 ```
 
-`Turn.user_affect` is what she *heard*. `Turn.neiro_state` is what she *feels*. They never
+`Turn.user_affect` is what she *heard*. `Turn.elizabeth_state` is what she *feels*. They never
 share a variable — an assistant that merges them ends up reading its own synthesised voice
 back as your mood.
 
@@ -88,12 +87,12 @@ from choosing the best one.
 ```bash
 uv sync
 source env.sh                     # ctranslate2 needs cuBLAS on the path BEFORE python starts
-uv run neiro doctor               # checks every assumption, names the fix for each failure
-uv run neiro fetch-models --runs local --dry-run
-uv run neiro talk                 # SPACE, speak, SPACE, hear her; SPACE while she speaks interrupts her
+uv run elizabeth doctor          # checks every assumption, names the fix for each failure
+uv run elizabeth fetch-models --runs local --dry-run
+uv run elizabeth talk            # SPACE, speak, SPACE, hear her; SPACE while she speaks interrupts her
 ```
 
-`neiro affect <wav>` shows the whole emotional loop for one recording without a mic, a
+`elizabeth affect <wav>` shows the whole emotional loop for one recording without a mic, a
 model or a browser: the prosody features, each z-scored against your normal, the exact
 `[voice: …]` annotation the prompt would receive or why it was omitted — then the other
 direction, her tag becoming face weights and a voice instruction.
@@ -113,7 +112,7 @@ direction, her tag becoming face weights and a voice instruction.
 
 ## Licence
 
-Apache-2.0. Every model's licence is recorded in `src/neiro/modelspec.py`; every training
+Apache-2.0. Every model's licence is recorded in `src/elizabeth/modelspec.py`; every training
 corpus's in `data/datasets.toml`, where a dataset flagged NC / ND / research-only **cannot**
 claim its weights are publishable — that is a load-time error, not a release-day surprise.
 

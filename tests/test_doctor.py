@@ -1,4 +1,4 @@
-"""`neiro doctor` — every row can be driven red.
+"""`elizabeth doctor` — every row can be driven red.
 
 Each row is a pure function over facts; these tests hand each one a
 fake that should pass and a fake that should fail, and read the verdict
@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from neiro import doctor
-from neiro.doctor import (
+from elizabeth import doctor
+from elizabeth.doctor import (
     Check,
     Gpu,
     LlmProbe,
@@ -134,12 +134,12 @@ class TestLlm:
     BASE = "http://127.0.0.1:11434"
 
     def test_one_word_back_with_thinking_off_passes(self) -> None:
-        row = check_llm(LlmProbe("ollama", "neiro-4b", content="Hello"), self.BASE)
+        row = check_llm(LlmProbe("ollama", "elizabeth-4b", content="Hello"), self.BASE)
         assert row.ok
-        assert "ollama" in row.detail and "neiro-4b" in row.detail and "Hello" in row.detail
+        assert "ollama" in row.detail and "elizabeth-4b" in row.detail and "Hello" in row.detail
 
     def test_nothing_listening_fails_and_names_both_servers(self) -> None:
-        row = check_llm(LlmProbe(None, "neiro-4b"), self.BASE)
+        row = check_llm(LlmProbe(None, "elizabeth-4b"), self.BASE)
         assert not row.ok
         assert self.BASE in row.detail
         assert "ollama serve" in row.remedy and "llama-server" in row.remedy

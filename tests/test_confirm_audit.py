@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from neiro.config import SttConfig
-from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
-from neiro.tools.confirm import (
+from elizabeth.config import SttConfig
+from elizabeth.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+from elizabeth.tools.confirm import (
     HALLUCINATIONS,
     MAX_WORDS,
     NO,

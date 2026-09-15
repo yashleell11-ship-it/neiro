@@ -13,20 +13,20 @@ import inspect
 
 import pytest
 
-from neiro import protocols
-from neiro.affect.null import NullAffectProvider
-from neiro.affect.prosody import ProsodyAffectProvider
-from neiro.affect.ser import SerAffectProvider
-from neiro.audio.endpoint import SmartTurnEndpointer
-from neiro.audio.sink_local import LocalWavSink
-from neiro.llm.ollama_native import OllamaNativeLlm
-from neiro.llm.openai_compat import OpenAiCompatLlm
-from neiro.state import Locality
-from neiro.stt.faster_whisper import FasterWhisperStt
-from neiro.stt.moonshine import MoonshineStt
-from neiro.tts.chatterbox import ChatterboxTts
-from neiro.tts.kokoro import KokoroTts
-from neiro.tts.qwen3tts import Qwen3Tts
+from elizabeth import protocols
+from elizabeth.affect.null import NullAffectProvider
+from elizabeth.affect.prosody import ProsodyAffectProvider
+from elizabeth.affect.ser import SerAffectProvider
+from elizabeth.audio.endpoint import SmartTurnEndpointer
+from elizabeth.audio.sink_local import LocalWavSink
+from elizabeth.llm.ollama_native import OllamaNativeLlm
+from elizabeth.llm.openai_compat import OpenAiCompatLlm
+from elizabeth.state import Locality
+from elizabeth.stt.faster_whisper import FasterWhisperStt
+from elizabeth.stt.moonshine import MoonshineStt
+from elizabeth.tts.chatterbox import ChatterboxTts
+from elizabeth.tts.kokoro import KokoroTts
+from elizabeth.tts.qwen3tts import Qwen3Tts
 
 CASES = [
     (protocols.STT, FasterWhisperStt),

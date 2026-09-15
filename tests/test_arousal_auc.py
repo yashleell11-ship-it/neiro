@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from neiro.evals.arousal_auc import GO_THRESHOLD, MIN_PER_SPEAKER, auc, score
+from elizabeth.evals.arousal_auc import GO_THRESHOLD, MIN_PER_SPEAKER, auc, score
 
 
 class TestAuc:

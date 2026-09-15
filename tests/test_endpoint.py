@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.audio.endpoint import EndpointerUnavailable, SmartTurnEndpointer, log_mel
-from neiro.config import Neiro
+from elizabeth.audio.endpoint import EndpointerUnavailable, SmartTurnEndpointer, log_mel
+from elizabeth.config import Elizabeth
 
 MODEL = Path(__file__).resolve().parents[1] / "models/smart-turn-v3/smart-turn-v3.2-cpu.onnx"
 needs_model = pytest.mark.skipif(not MODEL.exists(), reason="smart-turn not downloaded")
@@ -20,7 +20,7 @@ needs_model = pytest.mark.skipif(not MODEL.exists(), reason="smart-turn not down
 
 class TestFeatures:
     def test_the_shape_is_exactly_what_the_onnx_wants(self) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         for seconds in (0.5, 3.0, 8.0, 20.0):
             pcm = np.zeros(int(seconds * 16000), dtype=np.float32)
             assert log_mel(pcm, cfg).shape == (1, cfg.endpoint.n_mels, cfg.endpoint.n_frames)
@@ -29,7 +29,7 @@ class TestFeatures:
         # The END of an utterance is what decides whether it ended, so
         # truncating from the front would throw away the only part that
         # matters.
-        cfg = Neiro()
+        cfg = Elizabeth()
         loud_tail = np.concatenate(
             [np.zeros(16000 * 20, dtype=np.float32), np.ones(16000 * 2, dtype=np.float32) * 0.5]
         )
@@ -41,7 +41,7 @@ class TestFeatures:
     def test_short_audio_is_padded_on_the_LEFT(self) -> None:
         # So the real speech still sits at the right-hand edge, where the
         # model expects the end of a turn to be.
-        cfg = Neiro()
+        cfg = Elizabeth()
         pcm = np.ones(16000, dtype=np.float32) * 0.5
         mel = log_mel(pcm, cfg)[0]
         assert mel[:, -1].mean() > mel[:, 0].mean()
@@ -52,13 +52,13 @@ class TestThresholdPolicy:
         # Cutting someone off mid-sentence costs the whole turn; being a
         # moment slow costs a moment. Measured: 0.70 halves false cuts
         # against 0.60 for one point of recall.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.endpoint.complete_threshold >= 0.65
 
     def test_there_is_a_hard_ceiling(self) -> None:
         # A model that never fires must not be able to hang the
         # conversation.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert 1.0 < cfg.endpoint.max_wait_s <= 4.0
 
     def test_max_wait_ends_the_turn_regardless(self) -> None:

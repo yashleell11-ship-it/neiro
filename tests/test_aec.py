@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from neiro.audio.aec import CLIPPED_FRACTION, DROP_IN, check_gain, print_config, suppression_db
+from elizabeth.audio.aec import CLIPPED_FRACTION, DROP_IN, check_gain, print_config, suppression_db
 
 
 class TestGainIsCheckedFirst:
@@ -78,7 +78,7 @@ class TestConfig:
         # It fights the level the canceller is trying to match.
         assert "webrtc.gain_control = false" in DROP_IN
 
-    def test_suspend_timeout_is_disabled_on_neiros_nodes(self) -> None:
+    def test_suspend_timeout_is_disabled_on_elizabeths_nodes(self) -> None:
         # PipeWire suspends idle nodes after 5 s, and a canceller that
         # has just resumed has not adapted -- so the first thing she says
         # after a pause echoes.
@@ -96,7 +96,7 @@ class TestRawAudioForAffect:
         # AEC's noise suppression destroys the prosody features Lane A
         # measures. Getting this backwards would make her emotionally
         # blind exactly when speakers are in use.
-        from neiro.audio import aec
+        from elizabeth.audio import aec
 
         assert "RAW" in aec.__doc__
         assert "prosody" in aec.__doc__

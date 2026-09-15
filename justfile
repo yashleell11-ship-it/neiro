@@ -1,4 +1,4 @@
-# Neiro's commands. `just` is not installed yet (needs sudo), so every
+# Elizabeth's commands. `just` is not installed yet (needs sudo), so every
 # recipe here is a plain command you can also paste directly — that is
 # deliberate: a task runner should save typing, not become a dependency
 # for running the project at all.
@@ -10,29 +10,29 @@ default:
 
 # Check every assumption, naming the fix for each failure.
 doctor:
-    uv run neiro doctor
+    uv run elizabeth doctor
 
 # The whole emotional loop for one recording: prosody, z-scores, the
 # annotation the prompt would get, her face weights, her voice.
 affect WAV:
-    uv run neiro affect {{WAV}}
+    uv run elizabeth affect {{WAV}}
 
 # Hear her say something. An <e:LABEL:D> tag is honoured.
 say TEXT:
-    uv run neiro say "{{TEXT}}"
+    uv run elizabeth say "{{TEXT}}"
 
 # The whole loop: SPACE, speak, SPACE, hear her. SPACE while she speaks interrupts.
 talk:
     #!/usr/bin/env bash
-    source env.sh && uv run neiro talk
+    source env.sh && uv run elizabeth talk
 
 # --- data -------------------------------------------------------------
 
 fetch-models:
-    uv run neiro fetch-models --runs local --purpose runtime
+    uv run elizabeth fetch-models --runs local --purpose runtime
 
 fetch-datasets TIER="1":
-    uv run neiro fetch-datasets --tier {{TIER}}
+    uv run elizabeth fetch-datasets --tier {{TIER}}
 
 # Can this token actually pull the gated corpora? Downloads a real data
 # file, because dataset_info() and README.md both succeed on a gated repo.
@@ -58,10 +58,10 @@ gate-tags N="100":
 persona:
     uv run scripts/eval_persona.py
 
-# G3a: WER on Yash's own recordings. Needs `neiro record-set` first.
+# G3a: WER on Yash's own recordings. Needs `elizabeth record-set` first.
 wer:
     #!/usr/bin/env bash
-    source env.sh && uv run neiro wer
+    source env.sh && uv run elizabeth wer
 
 # Replay fixture turns through fakes: measures the PIPELINE, not the GPU.
 bench:

@@ -95,5 +95,5 @@ as of 2026-09-10) under "What the verification changed". Summary:
 15. **Blackwell (sm_120) support is real but conditional**, not a given:
     torch's default PyPI wheel and onnxruntime-gpu ≥1.27 have native
     sm_120 kernels; CTranslate2 does not (PTX-JIT from sm_86) and needs
-    ≥4.7.0 for int8 to work at all. `neiro doctor` asserts the CUDA
+    ≥4.7.0 for int8 to work at all. `elizabeth doctor` asserts the CUDA
     provider is actually *used*, never just listed as available.

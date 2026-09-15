@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pull Neiro's training datasets per data/datasets.toml.
+"""Pull Elizabeth's training datasets per data/datasets.toml.
 
     uv run scripts/fetch_datasets.py --dry-run            # what tier-1 would pull, and how much
     uv run scripts/fetch_datasets.py                      # pull tier 1 (essentials)
@@ -8,7 +8,7 @@
     uv run scripts/fetch_datasets.py --only svarah --only crema_d
 
 Resumable: HF downloads resume natively, URL downloads use aria2c -c /
-wget -c. A finished dataset gets a `.neiro-complete` marker and is
+wget -c. A finished dataset gets a `.elizabeth-complete` marker and is
 skipped next time (unless --force). Gated datasets are never fetched
 silently — the script prints the exact URL where the terms must be
 accepted, because that acceptance is a licence decision a person makes.
@@ -29,12 +29,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from neiro.training.manifest import TARGETS, Dataset, Manifest
+from elizabeth.training.manifest import TARGETS, Dataset, Manifest
 
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "data" / "datasets.toml"
 DEFAULT_DEST = REPO / "data" / "datasets"
-MARKER = ".neiro-complete"
+MARKER = ".elizabeth-complete"
 
 console = Console()
 

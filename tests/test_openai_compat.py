@@ -13,7 +13,7 @@ from typing import ClassVar
 
 import pytest
 
-from neiro.llm.openai_compat import (
+from elizabeth.llm.openai_compat import (
     StreamAccumulator,
     ThinkingModeError,
     check_delta_not_thinking,
@@ -146,10 +146,10 @@ class TestThinkingModeDetection:
 
 class TestBuildRequest:
     def _client(self):
-        from neiro.config import Neiro
-        from neiro.llm.openai_compat import OpenAiCompatLlm
+        from elizabeth.config import Elizabeth
+        from elizabeth.llm.openai_compat import OpenAiCompatLlm
 
-        return OpenAiCompatLlm(Neiro())
+        return OpenAiCompatLlm(Elizabeth())
 
     def test_thinking_is_disabled_both_ways(self) -> None:
         body = self._client().build_request([{"role": "user", "content": "hi"}])

@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.affect.labels import normalise
+from elizabeth.affect.labels import normalise
 
 # Rasa's six emotion styles. The other ten are reading registers.
 EMOTION_STYLES = {"ANGER", "FEAR", "HAPPY", "SAD", "DISGUST", "SURPRISE"}
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
 
     shards = sorted(args.src.glob("*.parquet"))
     if not shards:
-        print(f"No parquet under {args.src} — run `neiro fetch-datasets --only rasa`.")
+        print(f"No parquet under {args.src} — run `elizabeth fetch-datasets --only rasa`.")
         return 2
 
     args.out.mkdir(parents=True, exist_ok=True)

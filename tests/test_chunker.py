@@ -8,7 +8,7 @@ every turn), and no chunk should ever split mid-word or mid-number
 
 from __future__ import annotations
 
-from neiro.llm.chunker import SentenceChunker
+from elizabeth.llm.chunker import SentenceChunker
 
 
 def stream(chunker: SentenceChunker, text: str, chunk_size: int = 3) -> list[str]:

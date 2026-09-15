@@ -1,5 +1,5 @@
 [project]
-name = "neiro-voice"
+name = "elizabeth-voice"
 version = "0.1.0"
 description = "An anime character who lives on your machine, hears how you sound, and can drive your Linux desktop."
 readme = "README.md"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-neiro = "neiro.cli:app"
+elizabeth = "elizabeth.cli:app"
 
 [dependency-groups]
 dev = ["pytest>=9.1.1", "ruff>=0.16.6"]
@@ -42,7 +42,7 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.uv.build-backend]
-module-name = "neiro"
+module-name = "elizabeth"
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]

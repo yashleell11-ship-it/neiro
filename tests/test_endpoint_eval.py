@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from neiro.evals.endpoint import MAX_FALSE_CUT_RATE, TARGET_P50_MS, percentile, score
+from elizabeth.evals.endpoint import MAX_FALSE_CUT_RATE, TARGET_P50_MS, percentile, score
 
 
 def ends(delays: list[float]) -> list[tuple[bool, bool, float]]:
@@ -59,7 +59,7 @@ class TestPercentiles:
     def test_the_definition_matches_the_latency_eval(self) -> None:
         # One definition of a percentile across the project, or two
         # numbers stop being comparable.
-        from neiro.evals import latency
+        from elizabeth.evals import latency
 
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
         assert percentile(values, 0.5) == latency.percentile(values, 0.5)

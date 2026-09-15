@@ -9,7 +9,7 @@
 **Why this run exists.** The same checkpoint, on the same machine, in
 the same week: 6.2% WER on Svarah (Indian-accented English) and **29.6%
 on Kathbath Hindi** — `docs/svarah-auto-turbo.json` and
-`docs/kathbath-hi-turbo.json`. Neiro is meant to answer in both
+`docs/kathbath-hi-turbo.json`. Elizabeth is meant to answer in both
 languages, and a recogniser that is five times worse in one of them is
 not bilingual, it is an English assistant that tolerates Hindi. The
 worst Kathbath utterances are not near-misses either: they are the model
@@ -43,20 +43,20 @@ utterances reaches 7.05 GB of 7.73 usable, which fits only if nothing
 else is on the card. At 8 the same batch costs 3.82 GB and leaves room
 for the rest of the machine.
 
-**Why the adapter is not the product.** `neiro` loads CTranslate2 from
+**Why the adapter is not the product.** `elizabeth` loads CTranslate2 from
 `models/large-v3-turbo-ct2` through faster-whisper. A LoRA adapter — and
 even a merged safetensors model — is invisible to it. The run ends by
 printing the exact `ct2-transformers-converter` command, and until that
 is run and `config.toml` points at the new directory, nothing the user
 hears has changed.
 
-**What the numbers mean.** Corpus-level WER from `neiro.evals.wer` —
+**What the numbers mean.** Corpus-level WER from `elizabeth.evals.wer` —
 total errors over total reference words, never the mean of per-utterance
 rates — on the same held-out utterances before and after, so "did this
 help" has an answer. Latency percentiles are nearest-rank p50/p95 via
-`neiro.evals.latency.percentile`; there are no means in this file.
+`elizabeth.evals.latency.percentile`; there are no means in this file.
 Kathbath's `valid` split is NOT speaker-disjoint from its train shards
-(see `neiro.training.stt_data`), so its speakers are struck from the
+(see `elizabeth.training.stt_data`), so its speakers are struck from the
 training side and the count is printed.
 """
 
@@ -79,10 +79,10 @@ from torch.utils.data import DataLoader, IterableDataset
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from neiro.evals.latency import percentile
-from neiro.evals.wer import UtteranceScore, edit_distance, normalize, score
-from neiro.training.licences import licences_for
-from neiro.training.stt_data import (
+from elizabeth.evals.latency import percentile
+from elizabeth.evals.wer import UtteranceScore, edit_distance, normalize, score
+from elizabeth.training.licences import licences_for
+from elizabeth.training.stt_data import (
     CORPORA,
     EVAL_SETS,
     SAMPLERATE,
@@ -425,7 +425,7 @@ def transcribe(
 def wer_table(triples, corpora, latencies) -> dict:
     """Corpus-level WER overall and per corpus, plus the worst utterances.
 
-    `neiro.evals.wer.score` computes total errors over total reference
+    `elizabeth.evals.wer.score` computes total errors over total reference
     words. Never the mean of per-utterance rates: a three-word command
     with one error scores 33% and would outweigh a thirty-word sentence
     with one error ten to one. Latency is nearest-rank p50/p95 for the
@@ -719,7 +719,7 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         print(
             f"No rows indexed under {args.data_root}. Run "
-            "`neiro fetch-datasets --target hindi_stt` first, or pass --data-root.",
+            "`elizabeth fetch-datasets --target hindi_stt` first, or pass --data-root.",
             file=sys.stderr,
         )
         for shard, reason in log.shards.items():
@@ -731,7 +731,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"NOTE: {plan.leak_rows} training rows dropped because their speaker is in an "
             f"eval set ({len(plan.leak_speakers)} speakers). Kathbath's `valid` split shares "
-            "every one of its speakers with `train` — see neiro/training/stt_data.py."
+            "every one of its speakers with `train` — see elizabeth/training/stt_data.py."
         )
     if not plan.train.rows and not args.eval_only:
         print("Split left no training rows. Widen --max-hours or --corpora.", file=sys.stderr)

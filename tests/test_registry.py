@@ -14,15 +14,15 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from neiro.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
-from neiro.tools.registry import (
+from elizabeth.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
+from elizabeth.tools.registry import (
     RateLimited,
     ToolNotConfirmed,
     ToolRegistry,
     ToolRejected,
     ToolSpec,
 )
-from neiro.tools.tiers import Tier
+from elizabeth.tools.tiers import Tier
 
 
 class NoArgs(BaseModel):

@@ -9,7 +9,7 @@ different rules.
 - **Default avatar** (ships in this repo): a CC0 model, to be sourced from
   opensourceavatars.com or a similar CC0 registry. Fill in the source URL
   and CC0 confirmation here once T13/Stage 1 picks one.
-- **Original "Neiro" avatar** (optional, separate download): if authored in
+- **Original "Elizabeth" avatar** (optional, separate download): if authored in
   VRoid Studio, its base body mesh, clothing meshes, and preset items are
   pixiv content under the VRoid Studio Guidelines
   (https://vroid.com/en/studio/guidelines) and are explicitly **not CC0**.

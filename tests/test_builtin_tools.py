@@ -12,10 +12,10 @@ from typing import Literal, get_args, get_origin
 
 import pytest
 
-from neiro.tools import apps, media, system, websearch
-from neiro.tools.builtin import build_registry
-from neiro.tools.registry import ToolRegistry, ToolRejected
-from neiro.tools.tiers import Tier
+from elizabeth.tools import apps, media, system, websearch
+from elizabeth.tools.builtin import build_registry
+from elizabeth.tools.registry import ToolRegistry, ToolRejected
+from elizabeth.tools.tiers import Tier
 
 GREEN_TOOLS = ("system_stats", "audio_state", "now_playing", "list_windows", "active_window")
 YELLOW_TOOLS = (
@@ -108,7 +108,7 @@ class TestAuditPassthrough:
         # The daemon hands the registry its audit log; a registry that
         # quietly made its own would write to ~/.local/state from a test
         # and record nothing where the daemon looks.
-        from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+        from elizabeth.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
 
         log = AuditLog(path=tmp_path / "audit.jsonl")
         build_registry(confirm=None, audit=log).call("audio_state", {}, turn_id=2)
@@ -162,7 +162,7 @@ class TestRejections:
                 registry.call(name, {key: payload})
 
     def test_a_valid_yellow_call_still_needs_confirmation(self, registry: ToolRegistry) -> None:
-        from neiro.tools.registry import ToolNotConfirmed
+        from elizabeth.tools.registry import ToolNotConfirmed
 
         # Perfectly well-formed and still must not run unasked.
         with pytest.raises(ToolNotConfirmed):

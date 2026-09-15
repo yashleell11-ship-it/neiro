@@ -13,10 +13,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from neiro.config import Neiro
-from neiro.state import Locality, Tier
-from neiro.stt.faster_whisper import FasterWhisperStt
-from neiro.stt.moonshine import MoonshineEnglishOnly, MoonshineStt, MoonshineUnavailable
+from elizabeth.config import Elizabeth
+from elizabeth.state import Locality, Tier
+from elizabeth.stt.faster_whisper import FasterWhisperStt
+from elizabeth.stt.moonshine import MoonshineEnglishOnly, MoonshineStt, MoonshineUnavailable
 
 _SILENCE = np.zeros(16000, dtype=np.float32)
 
@@ -37,7 +37,7 @@ class TestLanguage:
                 seen.update(kw)
                 return iter([]), SimpleNamespace(language=passed or "hi", language_probability=0.9)
 
-        stt = FasterWhisperStt(Neiro(stt={"language": configured}))
+        stt = FasterWhisperStt(Elizabeth(stt={"language": configured}))
         stt._model = FakeWhisperModel()
         asyncio.run(stt.transcribe(_SILENCE))
         assert "language" in seen
@@ -48,7 +48,7 @@ class TestLanguage:
             def transcribe(self, pcm, **kw):
                 return iter([]), SimpleNamespace(language="hi", language_probability=0.7)
 
-        stt = FasterWhisperStt(Neiro(stt={"language": "auto"}))
+        stt = FasterWhisperStt(Elizabeth(stt={"language": "auto"}))
         assert stt.last_detected_language is None
         stt._model = FakeWhisperModel()
         asyncio.run(stt.transcribe(_SILENCE))
@@ -59,7 +59,7 @@ class TestLanguage:
             def transcribe(self, pcm, **kw):
                 return iter([]), None
 
-        stt = FasterWhisperStt(Neiro(stt={"language": "auto"}))
+        stt = FasterWhisperStt(Elizabeth(stt={"language": "auto"}))
         stt._model = FakeWhisperModel()
         assert asyncio.run(stt.transcribe(_SILENCE)) == ""
         assert stt.last_detected_language is None
@@ -68,7 +68,7 @@ class TestLanguage:
         # Loudly, at construction: a daemon configured for Hindi with
         # Moonshine selected fails at startup, not on his first sentence.
         with pytest.raises(MoonshineEnglishOnly, match="English-only"):
-            MoonshineStt(cfg=Neiro(stt={"language": "hi"}))
+            MoonshineStt(cfg=Elizabeth(stt={"language": "hi"}))
 
     def test_the_refusal_is_one_transcribe_lets_through(self) -> None:
         # transcribe() re-raises MoonshineUnavailable and swallows every
@@ -78,7 +78,7 @@ class TestLanguage:
 
     @pytest.mark.parametrize("language", ["auto", "en"])
     def test_moonshine_accepts_its_one_language(self, language) -> None:
-        assert MoonshineStt(cfg=Neiro(stt={"language": language}))._model is None
+        assert MoonshineStt(cfg=Elizabeth(stt={"language": language}))._model is None
 
 
 class TestInterchangeable:
@@ -118,7 +118,7 @@ class TestMoonshine:
         # "Thank you". Moonshine is a different architecture trained on
         # similar data, so the floor applies to it too rather than being
         # assumed unnecessary.
-        from neiro.stt.moonshine import _HALLUCINATIONS
+        from elizabeth.stt.moonshine import _HALLUCINATIONS
 
         for phrase in ("thank you", "you", "okay", "uh"):
             assert phrase in _HALLUCINATIONS
@@ -140,7 +140,7 @@ class TestTheTradeIsRecorded:
         # Moonshine is not a free win: ~269 ms after endpointing,
         # additive, traded for zero VRAM. A module that only listed the
         # upside would get chosen for the wrong reason.
-        import neiro.stt.moonshine as m
+        import elizabeth.stt.moonshine as m
 
         assert "VRAM" in m.__doc__
         assert "269" in m.__doc__

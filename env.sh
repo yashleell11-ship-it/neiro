@@ -22,12 +22,12 @@
 # instead; `os.path.dirname(l.__file__)` looks plausible and fails with
 # a TypeError every time.
 
-_neiro_cublas_dir="$(uv run python -c 'import nvidia.cublas.lib as l; print(l.__path__[0])' 2>/dev/null)"
+_elizabeth_cublas_dir="$(uv run python -c 'import nvidia.cublas.lib as l; print(l.__path__[0])' 2>/dev/null)"
 
-if [ -n "${_neiro_cublas_dir}" ]; then
-    export LD_LIBRARY_PATH="${_neiro_cublas_dir}:${LD_LIBRARY_PATH:-}"
+if [ -n "${_elizabeth_cublas_dir}" ]; then
+    export LD_LIBRARY_PATH="${_elizabeth_cublas_dir}:${LD_LIBRARY_PATH:-}"
 else
     echo "env.sh: could not resolve nvidia-cublas-cu12's lib dir — is it installed? (uv sync)" >&2
 fi
 
-unset _neiro_cublas_dir
+unset _elizabeth_cublas_dir

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
-from neiro.llm.prompt import (
+from elizabeth.llm.prompt import (
     PROMPT_VERSION,
     PROMPTS_DIR,
     load_prompt,
@@ -133,7 +133,7 @@ class TestCharacterRules:
         # PROMPT_VERSION is logged with every turn so a behaviour change
         # can be traced to the prompt that produced it — which only
         # works if the old prompt is still there to compare against.
-        previous = load_prompt("neiro.v4")
+        previous = load_prompt("elizabeth.v4")
         assert previous.strip()
         assert previous != load_prompt()
-        assert prompt_fingerprint("neiro.v4") != prompt_fingerprint()
+        assert prompt_fingerprint("elizabeth.v4") != prompt_fingerprint()

@@ -1,8 +1,8 @@
-"""Tests for the `neiro` command surface (src/neiro/cli.py).
+"""Tests for the `elizabeth` command surface (src/elizabeth/cli.py).
 
 Nothing here loads a model. cli.py imports only typer at module level
 and every command imports its own dependencies inside its body, so
-importing `neiro.cli` costs nothing -- and these tests keep it that way
+importing `elizabeth.cli` costs nothing -- and these tests keep it that way
 by stubbing the one heavy import a command makes rather than paying for
 it.
 """
@@ -23,7 +23,7 @@ import typer
 from typer.main import get_command
 from typer.testing import CliRunner
 
-from neiro import cli
+from elizabeth import cli
 
 
 def _commands_in_source() -> set[str]:
@@ -56,7 +56,7 @@ def _commands_in_source() -> set[str]:
 
 class TestEveryCommandIsRegistered:
     def test_the_source_and_the_app_agree(self) -> None:
-        # The set `neiro --help` shows is the set of decorators that ran.
+        # The set `elizabeth --help` shows is the set of decorators that ran.
         # One pasted under a different Typer, or under something that
         # exits the process, reads as present in the file and is absent
         # from the command line.
@@ -64,7 +64,7 @@ class TestEveryCommandIsRegistered:
         assert set(get_command(cli.app).commands) == _commands_in_source()
 
     def test_running_the_module_directly_registers_every_command(self, monkeypatch) -> None:
-        # `python -m neiro.cli`. The console script imports the module,
+        # `python -m elizabeth.cli`. The console script imports the module,
         # so every decorator runs before anything is parsed; the direct
         # path calls `app()` at whatever line the __main__ guard sits on,
         # and a command defined below that line does not exist. For a
@@ -86,7 +86,7 @@ class TestEveryCommandIsRegistered:
 
 
 class TestWerReportsPercentiles:
-    """`neiro wer` is the command every STT swap is scored with, so its
+    """`elizabeth wer` is the command every STT swap is scored with, so its
     transcribe time is the one place a mean would do the most damage.
     """
 
@@ -98,13 +98,13 @@ class TestWerReportsPercentiles:
     def test_transcribe_time_is_p50_and_p95_never_a_mean(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from neiro import recordset
-        from neiro.config import Neiro
+        from elizabeth import recordset
+        from elizabeth.config import Elizabeth
 
         # A dataset the command will accept: refs.jsonl plus silent WAVs
         # at the configured input rate, so nothing is skipped as a rate
         # mismatch.
-        samplerate = Neiro().audio.input_samplerate
+        samplerate = Elizabeth().audio.input_samplerate
         dataset = tmp_path / "wer"
         dataset.mkdir()
         with (dataset / "refs.jsonl").open("w") as refs:
@@ -137,9 +137,9 @@ class TestWerReportsPercentiles:
 
         # Stubbed at the module level: the real one imports faster-whisper
         # and loads a model, and the output format is what is under test.
-        stub = types.ModuleType("neiro.stt.faster_whisper")
+        stub = types.ModuleType("elizabeth.stt.faster_whisper")
         stub.FasterWhisperStt = FakeStt  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "neiro.stt.faster_whisper", stub)
+        monkeypatch.setitem(sys.modules, "elizabeth.stt.faster_whisper", stub)
 
         result = CliRunner().invoke(cli.app, ["wer", "--name", "wer"])
 

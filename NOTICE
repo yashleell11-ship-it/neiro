@@ -1,7 +1,7 @@
 # NOTICE
 
-Neiro downloads model weights at runtime — none are vendored in this repository.
-This file is updated by `neiro licences` and lists every model in use, its
+Elizabeth downloads model weights at runtime — none are vendored in this repository.
+This file is updated by `elizabeth licences` and lists every model in use, its
 source, and its licence. Nothing here has been fetched yet (Stage 0 in
 progress); entries are added as `modelspec.py` gains them.
 

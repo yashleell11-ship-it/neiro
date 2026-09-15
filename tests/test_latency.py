@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from neiro.evals.latency import (
+from elizabeth.evals.latency import (
     HEADLINE_END,
     headline_ms,
     percentile,
@@ -157,7 +157,7 @@ class TestPipelineRegressionBench:
         b = self._bench()
         assert 'turn.stamp("sink_played")' in inspect.getsource(b.FakeSink.play)
 
-        from neiro.audio.sink_local import LocalWavSink
+        from elizabeth.audio.sink_local import LocalWavSink
 
         assert "sink_played" not in inspect.getsource(LocalWavSink.play)
 
@@ -198,8 +198,8 @@ class TestPercentileIsNearestRank:
         # metrics.py, evals/latency.py and evals/endpoint.py each carry a
         # percentile. Two numbers computed by different ones must be
         # comparable or the budget table is meaningless.
-        from neiro import metrics
-        from neiro.evals import endpoint
+        from elizabeth import metrics
+        from elizabeth.evals import endpoint
 
         for n in (5, 10, 20, 33):
             values = [float(i) for i in range(1, n + 1)]

@@ -10,14 +10,14 @@ compositor-level code-execution hole.
 The dispatcher-name cases are the other half. `hl.dsp.exec({cmd="x"})`
 is a perfectly well-formed payload by shape, and `exec` runs through
 `sh -c`; the filter used to let it through. The name is now pinned to
-what Neiro's tools generate, so these pin that pin.
+what Elizabeth's tools generate, so these pin that pin.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from neiro.tools.egress import ALLOWED_DISPATCHERS, EgressRejected, check
+from elizabeth.tools.egress import ALLOWED_DISPATCHERS, EgressRejected, check
 
 
 class TestAcceptsLegitimatePayloads:
@@ -108,7 +108,7 @@ class TestProvenInjectionPayloads:
             check(payload)
 
     def test_global_call_injection(self) -> None:
-        payload = "hl.dsp.no_op()) and (NEIRO_MARKER() and hl.dsp.no_op("
+        payload = "hl.dsp.no_op()) and (ELIZABETH_MARKER() and hl.dsp.no_op("
         with pytest.raises(EgressRejected):
             check(payload)
 

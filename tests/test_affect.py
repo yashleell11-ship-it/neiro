@@ -19,19 +19,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from neiro.affect import features as feat
-from neiro.affect.baseline import BASELINE_SCHEMA, BaselineStore, SpeakerBaseline
-from neiro.affect.labels import CIRCUMPLEX
-from neiro.affect.null import NullAffectProvider
-from neiro.affect.prosody import (
+from elizabeth.affect import features as feat
+from elizabeth.affect.baseline import BASELINE_SCHEMA, BaselineStore, SpeakerBaseline
+from elizabeth.affect.labels import CIRCUMPLEX
+from elizabeth.affect.null import NullAffectProvider
+from elizabeth.affect.prosody import (
     AROUSAL_WEIGHTS,
     ProsodyAffectProvider,
     band_for,
     describe,
 )
-from neiro.config import Neiro
-from neiro.state import Locality, Tier, UserAffect
-from neiro.training.corpora import Utterance
+from elizabeth.config import Elizabeth
+from elizabeth.state import Locality, Tier, UserAffect
+from elizabeth.training.corpora import Utterance
 
 SR = 16000
 
@@ -177,7 +177,7 @@ class TestBaseline:
         assert b.n == 5
 
     def test_z_is_clamped(self) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         b = SpeakerBaseline(device="x")
         quiet = feat.extract(speech_like(130, 0.05, 2.0))
         loud = feat.extract(speech_like(380, 0.95, 9.0))
@@ -204,7 +204,7 @@ class TestBaseline:
 
 class TestDrift:
     def test_a_sustained_new_voice_resets_the_baseline(self) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         b = SpeakerBaseline(device="earbuds")
         calm_f = feat.extract(CALM)
         assert calm_f is not None
@@ -219,7 +219,7 @@ class TestDrift:
         # The case the original rule missed. A different person mostly
         # shifts PITCH; pausing and voiced ratio stay similar. Requiring
         # every feature to be extreme meant drift never fired at all.
-        cfg = Neiro()
+        cfg = Elizabeth()
         b = SpeakerBaseline(device="earbuds")
         mine = feat.extract(speech_like(f0=120, amp=0.30, rate=3.0))
         theirs = feat.extract(speech_like(f0=250, amp=0.32, rate=3.0))  # only pitch differs
@@ -230,7 +230,7 @@ class TestDrift:
         assert any(resets)
 
     def test_one_loud_utterance_does_not_reset(self) -> None:
-        cfg = Neiro()
+        cfg = Elizabeth()
         b = SpeakerBaseline(device="earbuds")
         calm_f = feat.extract(CALM)
         loud = feat.extract(speech_like(380, 0.95, 9.0))
@@ -355,7 +355,7 @@ class TestBands:
 
 class TestDescribe:
     def test_low_confidence_is_omitted_entirely(self) -> None:
-        # Omitted, not softened — see prompts/neiro.v1.md.
+        # Omitted, not softened — see prompts/elizabeth.v1.md.
         assert describe(UserAffect(arousal_z=2.0, confidence=0.1)) is None
 
     def test_inside_the_dead_band_is_omitted_entirely(self) -> None:
@@ -379,7 +379,7 @@ class TestDescribe:
 class TestProvider:
     def _provider(self, tmp_path) -> ProsodyAffectProvider:
         return ProsodyAffectProvider(
-            cfg=Neiro(), device="earbuds", store=BaselineStore(path=tmp_path / "b.json")
+            cfg=Elizabeth(), device="earbuds", store=BaselineStore(path=tmp_path / "b.json")
         )
 
     def test_is_local_pinned(self) -> None:
@@ -503,7 +503,7 @@ class TestLaneBProvider:
     def test_it_is_local_pinned(self) -> None:
         # It reads the microphone, and audio is the one thing not worth
         # sending over a link.
-        from neiro.affect.ser import SerAffectProvider
+        from elizabeth.affect.ser import SerAffectProvider
 
         assert SerAffectProvider.locality is Locality.LOCAL_PINNED
         assert not SerAffectProvider.locality.allows(Tier.LAN)
@@ -511,7 +511,7 @@ class TestLaneBProvider:
     def test_a_missing_checkpoint_says_how_to_train_one(self, tmp_path) -> None:
         # At construction time, not at the first utterance: a model that
         # cannot load should stop start-up, not fail mid-conversation.
-        from neiro.affect.ser import SerAffectProvider, SerUnavailable
+        from elizabeth.affect.ser import SerAffectProvider, SerUnavailable
 
         p = SerAffectProvider(checkpoint=tmp_path / "nope.pt")
         with pytest.raises(SerUnavailable, match="ser_train"):
@@ -519,7 +519,7 @@ class TestLaneBProvider:
 
     def test_it_is_interchangeable_with_the_other_providers(self) -> None:
         # Turning Lane B on must be a config flip, not a code path.
-        from neiro.affect.ser import SerAffectProvider
+        from elizabeth.affect.ser import SerAffectProvider
 
         for name in ("observe", "commit_utterance", "warm", "locality"):
             assert hasattr(SerAffectProvider, name), name
@@ -527,7 +527,7 @@ class TestLaneBProvider:
     def test_it_is_off_by_default_and_paced_slower_than_lane_a(self) -> None:
         # Measured: ~590 ms per window against Lane A's ~10 ms, on a
         # 750 ms cadence with STT and a browser also running.
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.affect.lane_b_enabled is False
         assert cfg.affect.lane_b_interval_s > 0.75
 
@@ -537,7 +537,7 @@ class TestLaneBProvider:
         # nothing about him, and reporting it would be worse than silence.
         import asyncio
 
-        from neiro.affect.ser import SerAffectProvider
+        from elizabeth.affect.ser import SerAffectProvider
 
         p = SerAffectProvider()
         assert p.calibration.n == 0
@@ -680,12 +680,12 @@ class TestTrainAndServeAgree:
         import soundfile as sf
         import torch
 
-        from neiro.affect import ser
+        from elizabeth.affect import ser
 
         assert recipe.SAMPLERATE == ser.SAMPLERATE == SR
         seconds = recipe.build_parser().parse_args([]).seconds  # what a checkpoint records
         length = int(seconds * SR)
-        cfg = Neiro()
+        cfg = Elizabeth()
         assert cfg.affect.window_seconds < seconds, "the live window is shorter than a clip"
 
         # Training side: a CREMA-D-length clip through the dataset. Not
@@ -720,7 +720,7 @@ class TestTrainAndServeAgree:
         assert not served[len(window) :].any(), "and so must serving"
 
     def test_the_checkpoint_says_how_long_and_a_mute_one_is_refused(self) -> None:
-        from neiro.affect.ser import SerUnavailable, clip_seconds_from
+        from elizabeth.affect.ser import SerUnavailable, clip_seconds_from
 
         assert clip_seconds_from({"args": {"seconds": 4.0, "unfreeze": 4}}) == 4.0
         # No config fallback, on purpose: the length is a property of the
@@ -729,7 +729,7 @@ class TestTrainAndServeAgree:
             clip_seconds_from({"args": {"unfreeze": 4}})
 
     def test_predicting_before_load_is_refused_rather_than_unpadded(self) -> None:
-        from neiro.affect.ser import SerAffectProvider, SerUnavailable
+        from elizabeth.affect.ser import SerAffectProvider, SerUnavailable
 
         p = SerAffectProvider(_model=lambda f: f, _processor=lambda *a, **k: None)
         with pytest.raises(SerUnavailable):

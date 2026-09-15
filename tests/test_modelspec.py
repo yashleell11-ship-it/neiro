@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from neiro.modelspec import MODELS, ModelSpec, by_name, select, total_gb
+from elizabeth.modelspec import MODELS, ModelSpec, by_name, select, total_gb
 
 
 def _spec(**overrides: object) -> ModelSpec:
@@ -101,7 +101,7 @@ class TestTheRealSpec:
         assert len(names) == len(set(names))
 
     def test_every_licence_is_one_we_can_ship(self) -> None:
-        # `neiro licences` (T18) enforces this at runtime; this catches it
+        # `elizabeth licences` (T18) enforces this at runtime; this catches it
         # the moment a model is added instead.
         allowed = {"apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "cc0-1.0", "cc-by-4.0"}
         for m in MODELS:
@@ -122,7 +122,7 @@ class TestTheRealSpec:
 
 
 def _fetch_models():
-    """The script, imported the way `neiro fetch-models` imports it."""
+    """The script, imported the way `elizabeth fetch-models` imports it."""
     import importlib
     import sys
     from pathlib import Path
@@ -140,13 +140,13 @@ class TestWhereAModelLands:
         # The daemon serves the avatar to the browser; the page finds it
         # under web/public/avatar. A VRM downloaded anywhere else is a
         # download the face never sees.
-        from neiro.server import avatar_url
+        from elizabeth.server import avatar_url
 
         fetch_models = _fetch_models()
         web_dir = tmp_path / "web"
         monkeypatch.setattr(fetch_models, "AVATAR_DEST", web_dir / "public" / "avatar")
-        landed = fetch_models.dest_for(_spec(name="neiro-vrm", component="avatar"), tmp_path)
-        assert landed != tmp_path / "neiro-vrm"
+        landed = fetch_models.dest_for(_spec(name="elizabeth-vrm", component="avatar"), tmp_path)
+        assert landed != tmp_path / "elizabeth-vrm"
         landed.mkdir(parents=True)
-        (landed / "neiro.vrm").write_bytes(b"glTF")
-        assert avatar_url(web_dir) == "public/avatar/neiro-vrm/neiro.vrm"
+        (landed / "elizabeth.vrm").write_bytes(b"glTF")
+        assert avatar_url(web_dir) == "public/avatar/elizabeth-vrm/elizabeth.vrm"

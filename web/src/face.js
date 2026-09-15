@@ -22,7 +22,7 @@ const zeros = () => Object.fromEntries(EXPRESSIONS.map((e) => [e, 0]));
 /**
  * Smoothing her expression so the face reads as alive, not as a mask.
  *
- * The same curve as src/neiro/emotion/blend.py, run on the browser's
+ * The same curve as src/elizabeth/emotion/blend.py, run on the browser's
  * frame clock: an exponential approach with asymmetric time constants —
  * expressions arrive faster than they leave, like real faces do.
  *

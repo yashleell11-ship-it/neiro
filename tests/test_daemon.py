@@ -21,18 +21,18 @@ import numpy as np
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from neiro.config import Neiro
-from neiro.daemon import Daemon
-from neiro.llm.ollama_native import OllamaNativeLlm
-from neiro.llm.openai_compat import StreamAccumulator
-from neiro.orchestrator import TurnResult
-from neiro.speech.errors import ErrorSpeech, Failure
-from neiro.state import Turn, UserAffect
-from neiro.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
-from neiro.tools.builtin import build_registry
-from neiro.tools.confirm import NotificationConfirmer
-from neiro.tools.registry import ToolNotConfirmed, ToolRegistry, ToolSpec
-from neiro.tools.tiers import Tier
+from elizabeth.config import Elizabeth
+from elizabeth.daemon import Daemon
+from elizabeth.llm.ollama_native import OllamaNativeLlm
+from elizabeth.llm.openai_compat import StreamAccumulator
+from elizabeth.orchestrator import TurnResult
+from elizabeth.speech.errors import ErrorSpeech, Failure
+from elizabeth.state import Turn, UserAffect
+from elizabeth.tools.audit import ATTEMPTED, SUCCEEDED, AuditLog
+from elizabeth.tools.builtin import build_registry
+from elizabeth.tools.confirm import NotificationConfirmer
+from elizabeth.tools.registry import ToolNotConfirmed, ToolRegistry, ToolSpec
+from elizabeth.tools.tiers import Tier
 
 AUDIO = np.zeros(16000, dtype=np.float32)
 
@@ -71,7 +71,7 @@ class Recorder:
 
     async def stream(self, messages, tools=None):
         yield {"text": "<e:happy:6> Hey."}
-        from neiro.llm.openai_compat import StreamAccumulator
+        from elizabeth.llm.openai_compat import StreamAccumulator
 
         yield {"done": StreamAccumulator(text="<e:happy:6> Hey.")}
 
@@ -155,7 +155,7 @@ class Gate:
 
 def build_daemon(order: list[str] | None = None) -> Daemon:
     order = order if order is not None else []
-    d = Daemon(cfg=Neiro())
+    d = Daemon(cfg=Elizabeth())
     stt = Recorder(order, "stt")
     llm = Recorder(order, "llm")
     tts = Recorder(order, "tts")
@@ -165,7 +165,7 @@ def build_daemon(order: list[str] | None = None) -> Daemon:
 
 
 def gated_daemon(gate: Gate) -> Daemon:
-    d = Daemon(cfg=Neiro())
+    d = Daemon(cfg=Elizabeth())
     d.orchestrator = gate
     return d
 
@@ -189,7 +189,7 @@ class TestWarmUp:
     def test_a_component_that_fails_to_warm_does_not_stop_start_up(self) -> None:
         # A cold component still works, just slowly. Refusing to start
         # would turn a slow first turn into no turns at all.
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt", fail=True),
@@ -203,11 +203,11 @@ class TestWarmUp:
     def test_the_null_affect_provider_is_used_until_the_gate_passes(self) -> None:
         # affect.enabled flips to true only after G3b passes on HIS
         # recordings, and the two providers are interchangeable.
-        from neiro.affect.null import NullAffectProvider
+        from elizabeth.affect.null import NullAffectProvider
 
         d = build_daemon()
         assert isinstance(d.affect, NullAffectProvider)
-        assert not Neiro().affect.enabled
+        assert not Elizabeth().affect.enabled
 
 
 class TestTurns:
@@ -502,7 +502,7 @@ class TestTools:
 
     def test_an_injected_registry_is_the_one_used(self, tmp_path) -> None:
         r, _, _ = fake_registry(tmp_path)
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt"),
@@ -519,7 +519,7 @@ class TestTools:
         # builtins` handed the orchestrator every builtin tool when the
         # caller had asked for none.
         empty = ToolRegistry()
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt"),
@@ -536,7 +536,7 @@ class TestTools:
         # offered and the notification asks. GREEN-only is the registry's
         # own property, decided where it is built and handed in whole.
         order: list[str] = []
-        asks = Daemon(cfg=Neiro())
+        asks = Daemon(cfg=Elizabeth())
         asks.build(
             stt=Recorder(order, "stt"),
             llm=Recorder(order, "llm"),
@@ -547,7 +547,7 @@ class TestTools:
         assert asks.tools.can_confirm
         assert "set_volume" in [t["function"]["name"] for t in asks.orchestrator.tool_schemas()]
 
-        quiet = Daemon(cfg=Neiro())
+        quiet = Daemon(cfg=Elizabeth())
         quiet.build(
             stt=Recorder(order, "stt"),
             llm=Recorder(order, "llm"),
@@ -564,7 +564,7 @@ class TestTools:
         # model calls, the tool runs, the result comes back, she answers.
         r, audit, ran = fake_registry(tmp_path)
         llm = CallingLlm()
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt"),
@@ -611,7 +611,7 @@ class TestTools:
             ]
             return httpx.Response(200, content="".join(json.dumps(l) + "\n" for l in lines))
 
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt"),
@@ -633,7 +633,7 @@ class TestTools:
         # builtin registry, so a test can deny everything and log to a
         # temporary file while the tools themselves stay real.
         audit = AuditLog(path=tmp_path / "audit.jsonl")
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         order: list[str] = []
         d.build(
             stt=Recorder(order, "stt"),
@@ -649,7 +649,7 @@ class TestTools:
 
 
 class TestConfirmation:
-    """The default gate for `neiro talk`: a clickable notification."""
+    """The default gate for `elizabeth talk`: a clickable notification."""
 
     def _ask(self, chosen: str, tool: str = "set_volume", args=None) -> tuple[bool, FakeNotify]:
         notify = FakeNotify(chosen)
@@ -684,10 +684,10 @@ class TestConfirmation:
         # built actually calls it. A registry built with `confirm=None`
         # refuses every YELLOW tool with the same exception, so this
         # checks the yes path: the notifier is asked and the tool runs.
-        from neiro.tools import system
+        from elizabeth.tools import system
 
         notify = FakeNotify("yes\n")
-        d = Daemon(cfg=Neiro())
+        d = Daemon(cfg=Elizabeth())
         d.notifier = NotificationConfirmer(runner=notify)
         order: list[str] = []
         d.build(

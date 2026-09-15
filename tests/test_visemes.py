@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from neiro.tts.visemes import SILENCE, VISEMES, timeline, viseme_for
+from elizabeth.tts.visemes import SILENCE, VISEMES, timeline, viseme_for
 
 # misaki/en.py `US_VOCAB`: every symbol its American-English G2P can
 # emit inside a word. Copied, not imported — importing misaki drags in
