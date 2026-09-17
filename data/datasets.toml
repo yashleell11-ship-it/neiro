@@ -1043,7 +1043,7 @@ target = "stt_english"
 priority = 3
 hf_id = "edinburghcstr/edacc"
 license = "CC BY-SA 4.0 (Edinburgh, Sanabria et al. ICASSP 2023, arXiv:2303.18110). Ungated and public: HF API reports gated=false, private=false."
-flags = ["permissive", "SA", "eval-only"]
+flags = ["permissive", "SA"]
 access = "direct"
 size_gb = 6.95
 hours = 40.0
