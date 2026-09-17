@@ -34,6 +34,7 @@ Target = Literal[
     "hinglish_llm",  # code-switching + Indian context
     # --- the rest of the pipeline ---
     "stt_indian_english",  # whisper fine-tune on his accent
+    "stt_english",  # British + American English ASR — NOT Indian-accented
     "tts_voice",  # her voice, with emotion
     "persona_lora",  # her character, the <e:> tag, tool-calling
     "wakeword_speaker_noise",  # wake word, speaker verification, augmentation

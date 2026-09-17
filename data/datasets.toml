@@ -1,5 +1,5 @@
 # Neiro's training-data manifest. Read by scripts/fetch_datasets.py and
-# validated by src/neiro/training/manifest.py -- a licence flag that
+# validated by src/elizabeth/training/manifest.py -- a licence flag that
 # contradicts weights_publishable is a load error, on purpose.
 #
 # Every entry was proposed by a researcher and then checked by a separate
@@ -997,3 +997,42 @@ size_gb = 2.6
 hours = 23.9
 weights_publishable = "yes"
 note = "HER VOICE BASE. The only corpus that is single-speaker AND verified American AND 20+ h AND public domain at once -- 13,100 clips from one woman (Linda Johnson), 22.05 kHz. Flat, no emotion labels: expression comes from Qwen3-TTS's instruct string, which is what it exists for. Accent is established by arXiv 2209.08000, not by the dataset page. NOTE the HF repo is a loader script holding no audio; the tarball comes from keithito.com."
+
+# ---------- stt_english: British + American English ASR ----------
+# Added 2026-09-17 after a 15-agent verification sweep (43 candidates
+# discovered, 9 adversarially verified). The sweep's blunt finding: only
+# ONE genuinely British corpus exists in the verified pool, and British
+# English is the real gap -- not disk space. Two traps it caught, both of
+# which a tag-reading scraper would have swallowed: GigaSpeech's
+# `apache-2.0` tag is wrong about the audio (its gated terms say
+# non-commercial research/education only, bind your employer, and are
+# revocable), and facebook/multilingual_librispeech has no English at all
+# despite tagging language:en.
+
+[[dataset]]
+name = "english-dialects-uk"
+target = "stt_english"
+priority = 1
+hf_id = "ylacombe/english_dialects"
+license = "CC BY-SA 4.0 -- agrees at five points: HF cardData.license, the license:cc-by-sa-4.0 tag, README YAML front-matter, README 'Licensing Information', and the verbatim CC BY-SA legal text at openslr.org/resources/83/LICENSE (grep for noncommercial/research-only: 0 hits). Upstream Google Inc 2018-2019, OpenSLR SLR83, Demirsahin et al. LREC 2020."
+flags = ["permissive", "SA"]
+access = "direct"
+size_gb = 8.78
+hours = 30.64
+allow = ["southern_male/*", "southern_female/*", "northern_male/*", "northern_female/*", "midlands_male/*", "midlands_female/*", "scottish_male/*", "scottish_female/*", "welsh_male/*", "welsh_female/*", "*.md"]
+weights_publishable = "yes"
+note = "THE ONLY GENUINELY BRITISH CORPUS in the whole verified sweep, and the only one anywhere in this manifest carrying a real accent label you can filter on. 30.64 h, 17,427 clips, ~120 volunteers who SELF-IDENTIFIED their variety: Southern England 14.66 h, Northern 4.98 h, Welsh 5.44 h, Scottish 4.36 h, Midlands 1.20 h. Zero Indian-accented content. PARTIAL PULL: `allow` takes the ten UK configs and drops irish_male (0.20 GB) -- Irish English is British Isles but not British, and the point of this entry is a label that is true. UNADVERTISED VALUE: OpenSLR's dialect_info.txt says the elicitation script includes 'lines to perform tasks on a virtual assistant', and sampled rows are literally that ('Choose the voice your assistant will use to talk to you') -- in-domain text for Elizabeth, not generic read prose. THREE WARNINGS. (1) Speaker counts per config are tiny -- midlands_female is 2 women, midlands_male 3 -- and every speaker gave ~150 clips; real diversity is concentrated in southern_male + southern_female + northern_male (~18.3 h, ~71 of 120 speakers). Down-weight the small configs or the model overfits three voices. (2) There is only a train split: carve your own eval and make it SPEAKER-DISJOINT or the number is fiction. (3) 48 kHz studio-clean read speech, acoustically like VCTK -- pair with noisy/spontaneous data for real-room robustness. ShareAlike is viral over the corpus and attribution to Google + Demirsahin et al. is mandatory; whether trained weights are an adaptation is legally unsettled, and NON_PUBLISHABLE_FLAGS deliberately omits SA, so this reads 'yes' by this repo's own policy -- flip to 'unclear' for the stricter reading."
+
+[[dataset]]
+name = "mls-english"
+target = "stt_english"
+priority = 2
+hf_id = "parler-tts/mls_eng"
+license = "CC BY 4.0 -- verified at four independent points: HF API cardData.license, the license:cc-by-4.0 tag, README YAML front-matter, and README 'Licensing Information' ('Public Domain, Creative Commons Attribution 4.0 International'). Full-body grep for non-commercial/research only/restrict/prohibit: ZERO hits. Upstream OpenSLR 94, Pratap et al. 2020 (arXiv:2012.03411); underlying LibriVox recordings are public domain."
+flags = ["permissive"]
+access = "direct"
+size_gb = 70.9
+hours = 4504.0
+allow = ["data/train-*0-of-01416.parquet", "data/dev-*", "data/test-*", "*.md"]
+weights_publishable = "yes"
+note = "PARTIAL PULL: the repo is 705.18 GB (byte-confirmed three ways; note a naive single-page tree call returns only 999 of 1,420 files and undercounts to 496 GB). `allow` takes every TENTH train shard (142 of 1,416) plus dev and test. Shards are uniform at 0.496 GB / ~31.5 h, so the pattern is the budget dial: each extra 100 shards is +49.6 GB / +3,150 h. SHARD ORDER IS SPEAKER-CLUSTERED (sampled rows 0-4 were all speaker 4800, book 10003), which is why this samples ACROSS 0..1415 rather than taking a prefix -- a prefix pull is a speaker-biased subset. WHAT IT IS NOT: accent coverage. 'Predominantly American' is inference, not documentation -- README Discussion of Biases is '[More Information Needed]', there is no accent/nationality/nativeness field anywhere, and MLS applied no accent filter. It is also the SAME LibriVox pool and same read-audiobook domain as the 1,000 h librispeech-asr-corpus already on disk: 44x more of what we have, depth not breadth. Take it as permissive bulk and the budget shock absorber, not as US/UK accent data. TWO INGEST TRAPS. (1) The README 'Data Fields' section is STALE and will raise KeyError: it documents file/text/id/chapter_id, but the real schema is audio, original_path, begin_time, end_time, transcript, audio_duration, speaker_id, book_id -- the column is `transcript`, NOT `text`. (2) Audio is LOSSY OPUS, not FLAC: magic-byte scan of dev-00000 found 1,077 OggS pages, 64 OpusHead headers, zero fLaC, vendor 'libopus 1.1.2', ~35 kbps. The FLAC distribution of MLS English is ~2.4 TB and is not what this repo serves -- fine for ASR, but do not use it for vocoder or high-fidelity TTS training. CC-BY obligation: carry the Pratap et al. 2020 citation, plus the README's no-speaker-re-identification clause. DO NOT substitute facebook/multilingual_librispeech: it tags language:en but has no english config and no english directory."
