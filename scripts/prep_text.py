@@ -5,6 +5,8 @@
     cd training && uv run python ../scripts/prep_text.py --only goemotions --limit 200
     cd training && uv run python ../scripts/prep_text.py --publishable-only
     cd training && uv run python ../scripts/prep_text.py --dry-run       # the plan, nothing written
+    cd training && uv run python ../scripts/prep_text.py \
+        --cap glaive-function-calling-v2=20000 --cap xlam-function-calling-60k=15000   # rebalance
 
 Reads data/datasets/<name>/ for every text corpus in data/datasets.toml
 that has a `.elizabeth-complete` marker and a reader in
@@ -97,7 +99,8 @@ def print_table(stats: dict) -> None:
     for name, why in stats["refused"].items():
         print(f"refused  {name}: {why}")
     for name in stats["missing"]:
-        print(f"missing  {name}: no {prep.COMPLETE_MARKER} marker — run scripts/fetch_datasets.py")
+        markers = " or ".join(prep.COMPLETE_MARKERS)
+        print(f"missing  {name}: no {markers} marker — run scripts/fetch_datasets.py")
     for name in stats["unreadable"]:
         print(f"no reader  {name}")
 
@@ -108,6 +111,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--only", action="append", help="manifest name(s); repeatable")
     ap.add_argument("--limit", type=int, help="records per source, for a smoke run")
+    ap.add_argument(
+        "--cap",
+        action="append",
+        default=[],
+        metavar="NAME=N",
+        # Why this exists, measured rather than assumed: the first
+        # English persona mix was 58.0% tool_call by record, and 73.8%
+        # of every example came from a function-calling corpus (glaive
+        # 40.0%, xlam 23.1%, when2call 8.2%, hermes 2.5%). The one
+        # source that teaches her to talk like a person,
+        # synthetic-persona-chat, was 8.5%. At step 3925 she answered
+        # "I want to throw my laptop out the window" with "I'm sorry,
+        # but I'm here to help you with the bug" — which is not a
+        # failure to learn, it is a faithful reproduction of what she
+        # was shown. `--limit` caps every source to the same number,
+        # which is a smoke-run switch; rebalancing needs a cap per
+        # source, and it is the one fix that costs no new data.
+        help="cap one source: --cap glaive-function-calling-v2=20000 (repeatable)",
+    )
     ap.add_argument(
         "--publishable-only",
         action="store_true",
@@ -120,6 +142,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=prep.PREPARED_DIR)
     ap.add_argument("--dry-run", action="store_true", help="print the plan and write nothing")
     args = ap.parse_args(argv)
+
+    caps: dict[str, int] = {}
+    for entry in args.cap:
+        name, _, value = entry.partition("=")
+        if not value or not value.isdigit():
+            ap.error(f"--cap must be NAME=N, got {entry!r}")
+        caps[name] = int(value)
 
     manifest = Manifest.load(args.manifest)
     try:
@@ -176,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
                 "flags": ds.flags,
                 "publishable": prep.publishable(ds),
             }
-            for rec in prep.load(ds, args.datasets_dir, limit=args.limit):
+            for rec in prep.load(ds, args.datasets_dir, limit=caps.get(ds.name, args.limit)):
                 canonical = rec.canonical()
                 digest = hashlib.sha256(canonical.encode()).digest()
                 if digest in seen:

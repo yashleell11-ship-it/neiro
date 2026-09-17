@@ -52,7 +52,12 @@ from elizabeth.training.manifest import NON_PUBLISHABLE_FLAGS, Dataset, Manifest
 REPO = Path(__file__).resolve().parents[3]
 DATASETS_DIR = REPO / "data" / "datasets"
 PREPARED_DIR = REPO / "data" / "prepared" / "text"
-COMPLETE_MARKER = ".elizabeth-complete"  # written by scripts/fetch_datasets.py
+# Written by scripts/fetch_datasets.py. Both accepted: every corpus
+# fetched before the 2026-09-15 rename (this laptop's and the box's
+# original English-persona pulls included) carries the old name, and
+# bench_stt.py hit the same thing — see docs/DECISIONS.md, 2026-09-17.
+COMPLETE_MARKER = ".elizabeth-complete"
+COMPLETE_MARKERS = (".elizabeth-complete", ".neiro-complete")
 
 Lang = Literal["en", "hi", "hinglish"]
 Kind = Literal["chat", "tool_call", "emotion_text"]
@@ -1138,7 +1143,7 @@ def publishable(ds: Dataset) -> bool:
 
 
 def is_complete(root: Path) -> bool:
-    return (root / COMPLETE_MARKER).exists()
+    return any((root / m).exists() for m in COMPLETE_MARKERS)
 
 
 @dataclass
