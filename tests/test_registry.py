@@ -15,14 +15,16 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from elizabeth.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
+from elizabeth.state import Tier as StateTier
 from elizabeth.tools.registry import (
     RateLimited,
+    ReachRefused,
     ToolNotConfirmed,
     ToolRegistry,
     ToolRejected,
     ToolSpec,
 )
-from elizabeth.tools.tiers import Tier
+from elizabeth.tools.tiers import Reach, Tier
 
 
 class NoArgs(BaseModel):
@@ -378,3 +380,117 @@ class TestCanConfirm:
     def test_reports_whether_a_yellow_tool_could_ever_run(self) -> None:
         assert ToolRegistry(confirm=lambda *_: True).can_confirm
         assert not ToolRegistry().can_confirm
+
+
+class TestReachGate:
+    """A tool that leaves the machine, on a turn that is already remote.
+
+    The gap this closes was flagged in docs/DECISIONS.md rather than
+    silently skipped: `open_app(target="pc")` and `web_search` were
+    added on Yash's direct request and consulted only their permission
+    tier, never the turn's NETWORK tier — so nothing stopped the model
+    reaching the box again, or the internet, through a tunnel.
+    """
+
+    def _registry(self, tier: StateTier, reach: Reach, calls: list) -> ToolRegistry:
+        reg = ToolRegistry(
+            confirm=lambda *a: calls.append("confirmed") or True,
+            network_tier=lambda: tier,
+        )
+        reg.register(
+            ToolSpec(
+                name="reaching",
+                description="d",
+                tier=Tier.YELLOW,
+                args_model=NoArgs,
+                handler=lambda: calls.append("ran") or "done",
+                reach=reach,
+            )
+        )
+        return reg
+
+    def test_an_off_machine_tool_runs_at_home(self) -> None:
+        for tier in (StateTier.LOCAL, StateTier.LAN):
+            calls: list = []
+            reg = self._registry(tier, Reach.INTERNET, calls)
+            assert reg.call("reaching", {}) == "done"
+            assert "ran" in calls, tier
+
+    def test_an_off_machine_tool_is_refused_through_the_tunnel(self) -> None:
+        calls: list = []
+        reg = self._registry(StateTier.TUNNEL, Reach.INTERNET, calls)
+        with pytest.raises(ReachRefused):
+            reg.call("reaching", {})
+        assert "ran" not in calls, "the handler must not have run"
+
+    def test_a_local_tool_is_unaffected_by_the_tunnel(self) -> None:
+        # The regression that would matter most: gating network reach
+        # must not quietly disable every ordinary tool away from home.
+        calls: list = []
+        reg = self._registry(StateTier.TUNNEL, Reach.LOCAL, calls)
+        assert reg.call("reaching", {}) == "done"
+        assert "ran" in calls
+
+    def test_refusal_does_not_ask_yash_to_confirm(self) -> None:
+        # Putting a confirmation in front of him for a call that can
+        # never complete trains him to dismiss confirmations.
+        calls: list = []
+        reg = self._registry(StateTier.TUNNEL, Reach.OWN_MACHINES, calls)
+        with pytest.raises(ReachRefused):
+            reg.call("reaching", {})
+        assert "confirmed" not in calls
+
+    def test_refusal_does_not_spend_the_rate_limit(self) -> None:
+        calls: list = []
+        reg = self._registry(StateTier.TUNNEL, Reach.INTERNET, calls)
+        for _ in range(20):
+            with pytest.raises(ReachRefused):
+                reg.call("reaching", {})
+        # Had refusals consumed bucket slots, this would now be
+        # RateLimited instead — a misleading reason for the real cause.
+        with pytest.raises(ReachRefused):
+            reg.call("reaching", {})
+
+    def test_the_tier_is_read_per_call_not_frozen_at_construction(self) -> None:
+        # The turn's tier is snapshotted at turn start, so a registry
+        # built once at boot must ask again every call.
+        current = StateTier.TUNNEL
+        calls: list = []
+        reg = ToolRegistry(confirm=lambda *a: True, network_tier=lambda: current)
+        reg.register(
+            ToolSpec(
+                name="reaching",
+                description="d",
+                tier=Tier.YELLOW,
+                args_model=NoArgs,
+                handler=lambda: calls.append("ran") or "done",
+                reach=Reach.INTERNET,
+            )
+        )
+        with pytest.raises(ReachRefused):
+            reg.call("reaching", {})
+        current = StateTier.LOCAL
+        assert reg.call("reaching", {}) == "done"
+
+    def test_refusal_is_audited_with_the_real_reason(self, tmp_path) -> None:
+        calls: list = []
+        reg = ToolRegistry(
+            confirm=lambda *a: True,
+            network_tier=lambda: StateTier.TUNNEL,
+            audit=AuditLog(tmp_path / "audit.jsonl"),
+        )
+        reg.register(
+            ToolSpec(
+                name="reaching",
+                description="d",
+                tier=Tier.YELLOW,
+                args_model=NoArgs,
+                handler=lambda: calls.append("ran") or "done",
+                reach=Reach.INTERNET,
+            )
+        )
+        with pytest.raises(ReachRefused):
+            reg.call("reaching", {})
+        written = (tmp_path / "audit.jsonl").read_text()
+        assert DENIED in written
+        assert "internet" in written and "tunnel" in written

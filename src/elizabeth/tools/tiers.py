@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from elizabeth.state import Tier as StateTier
+
 
 class Tier(StrEnum):
     GREEN = "green"
@@ -39,3 +41,50 @@ class Tier(StrEnum):
     credential exfiltration primitive), input synthesis, git push,
     sending anything off-machine the user didn't name.
     """
+
+
+class Reach(StrEnum):
+    """How far a tool's side effect travels.
+
+    Separate from `Tier`, which asks "how bad is this if it goes wrong?".
+    This asks "whose network does it cross?" — and the two are genuinely
+    independent: `open_app` is YELLOW whether it opens Firefox here or
+    Edge on the box, but only one of those leaves the machine.
+
+    It exists because docs/PRIVACY.md makes a claim this code has to be
+    able to keep. `open_app(target="pc")` and `web_search` were added on
+    Yash's direct request and deliberately break "fully local"; what was
+    left undone, and flagged rather than skipped, was that neither
+    consulted the turn's NETWORK tier (state.Tier: LOCAL/LAN/TUNNEL). So
+    nothing stopped the model reaching the box again, or the open
+    internet, on a turn that was *already* routing through a tunnel —
+    the compounding-exposure question PRIVACY.md exists to be honest
+    about.
+
+    The policy is deliberately asymmetric: it can only ever refuse more
+    than before, never allow more. At home (LOCAL, or LAN over his own
+    ethernet) both tools behave exactly as they did. Over the hostel
+    TUNNEL, anything that leaves the machine is refused — issuing
+    desktop commands to the house, or putting a spoken query onto the
+    open internet through an extra hop, is a materially different act
+    from doing it while sitting in front of the machine.
+    """
+
+    LOCAL = "local"
+    """Never leaves the machine Yash is sitting at. Every tool but two."""
+
+    OWN_MACHINES = "own_machines"
+    """Reaches his other machine — today only `open_app(target="pc")`."""
+
+    INTERNET = "internet"
+    """Crosses onto the open internet — today only `web_search`."""
+
+    def allows(self, tier: "StateTier") -> bool:
+        """May a tool with this reach run on `tier`?
+
+        Mirrors `state.Locality.allows()` on purpose: the rule lives in
+        code the registry calls, not in a comment someone reads once.
+        """
+        if self is Reach.LOCAL:
+            return True
+        return tier is not StateTier.TUNNEL

@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from elizabeth.tools import apps, hyprland, media, system, websearch
 from elizabeth.tools.audit import AuditLog
 from elizabeth.tools.registry import ToolRegistry, ToolSpec
-from elizabeth.tools.tiers import Tier
+from elizabeth.tools.tiers import Reach, Tier
 
 
 class NoArgs(BaseModel):
@@ -225,6 +225,8 @@ def build_registry(confirm=None, *, audit: AuditLog | None = None) -> ToolRegist
             tier=Tier.YELLOW,
             args_model=OpenAppArgs,
             handler=lambda target, app: apps.open_app(target, app),
+            # target="pc" crosses to the box over Tailscale SSH.
+            reach=Reach.OWN_MACHINES,
         ),
         ToolSpec(
             name="web_search",
@@ -236,6 +238,8 @@ def build_registry(confirm=None, *, audit: AuditLog | None = None) -> ToolRegist
             args_model=WebSearchArgs,
             handler=lambda query: websearch.search_and_describe(query),
             spoken_text_fields=frozenset({"query"}),
+            # The only tool that puts his words onto the open internet.
+            reach=Reach.INTERNET,
         ),
     ]
 

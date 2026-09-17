@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from elizabeth.state import Locality, Tier
+from elizabeth.tools.tiers import Reach
 from elizabeth.tiers import FAILURES_TO_DEMOTE, SUCCESSES_TO_PROMOTE, TierResolver
 
 
@@ -162,3 +163,31 @@ class TestLocalityRouting:
         for locality in Locality:
             for tier in Tier:
                 assert TierResolver.allowed(locality, tier) == locality.allows(tier)
+
+
+class TestReach:
+    """`Reach` answers "whose network does this cross?", which is a
+    different question from `tools.tiers.Tier`'s "how bad if it goes
+    wrong?". docs/PRIVACY.md depends on the distinction holding.
+    """
+
+    def test_local_reach_runs_on_every_tier(self) -> None:
+        # The overwhelming majority of tools. If this ever tightens,
+        # every GREEN tool stops working away from home for no reason.
+        for tier in Tier:
+            assert Reach.LOCAL.allows(tier), tier
+
+    def test_off_machine_reach_is_refused_only_on_the_tunnel(self) -> None:
+        for reach in (Reach.OWN_MACHINES, Reach.INTERNET):
+            assert reach.allows(Tier.LOCAL), reach
+            assert reach.allows(Tier.LAN), reach
+            assert not reach.allows(Tier.TUNNEL), reach
+
+    def test_the_policy_can_only_ever_refuse_more_than_local_reach(self) -> None:
+        # The asymmetry is the safety property: adding `reach` to a tool
+        # must never let it run somewhere it could not run before.
+        for reach in Reach:
+            for tier in Tier:
+                if reach is Reach.LOCAL:
+                    continue
+                assert reach.allows(tier) <= Reach.LOCAL.allows(tier), (reach, tier)

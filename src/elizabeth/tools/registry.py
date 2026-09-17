@@ -46,8 +46,9 @@ from typing import Any, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
+from elizabeth.state import Tier as StateTier
 from elizabeth.tools.audit import AuditLog
-from elizabeth.tools.tiers import Tier
+from elizabeth.tools.tiers import Reach, Tier
 
 # Types an argument may legally be. `str` is deliberately absent — see
 # the module docstring. A tool that genuinely needs free text opts in
@@ -71,6 +72,13 @@ class ToolNotConfirmed(ToolError):
 
 class RateLimited(ToolError):
     """Per-tool bucket or the global side-effect budget is exhausted."""
+
+
+class ReachRefused(ToolError):
+    """A tool that leaves the machine, on a turn that is already remote.
+
+    Not a failure — a policy. See `tiers.Reach`.
+    """
 
 
 def _field_is_safe(annotation: Any, name: str, spoken: frozenset[str]) -> str | None:
@@ -104,6 +112,10 @@ class ToolSpec:
     # Opt-in and explicit, so `str` can never slip in by accident.
     spoken_text_fields: frozenset[str] = frozenset()
     max_per_minute: int = 6
+    # How far this tool's effect travels. Defaults to LOCAL so a tool
+    # that leaves the machine has to say so — the safe direction for a
+    # field that gates network exposure.
+    reach: Reach = Reach.LOCAL
 
     def to_openai_schema(self) -> dict:
         """The tool definition the model sees — generated from the same
@@ -158,12 +170,17 @@ class ToolRegistry:
         clock: Callable[[], float] = time.monotonic,
         *,
         audit: AuditLog | None = None,
+        network_tier: Callable[[], StateTier] = lambda: StateTier.LOCAL,
     ) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._buckets: dict[str, _Bucket] = {}
         self._global = _Bucket(self.SIDE_EFFECT_BUDGET_PER_MIN)
         self._confirm = confirm
         self._clock = clock
+        # Injected, and read per call rather than stored: the turn's tier
+        # is snapshotted at turn start, so a registry built once at boot
+        # must ask again each time or it enforces a stale answer.
+        self._network_tier = network_tier
         # Optional so a registry built for a unit test writes nothing to
         # ~/.local/state. The daemon always passes one.
         self._audit = audit
@@ -271,6 +288,18 @@ class ToolRegistry:
         audit = self._audit
         attempt = audit.attempt(spec.name, args, spec.tier.value, turn_id) if audit else None
         call_no = attempt["call"] if attempt else 0
+
+        # Checked before the rate limit and before confirmation: a call
+        # this turn can never complete should not spend a bucket slot,
+        # and must not put a confirmation in front of Yash either.
+        tier = self._network_tier()
+        if not spec.reach.allows(tier):
+            if audit:
+                audit.denied(spec.name, turn_id, f"reach {spec.reach.value} on tier {tier.value}", call=call_no)
+            raise ReachRefused(
+                f"Not running {name} from here — this turn is already going through "
+                f"the {tier.value}, and that would send it off the machine twice."
+            )
 
         if not self._buckets[spec.name].allow(now):
             if audit:
