@@ -60,7 +60,10 @@ DATASETS_DIR = REPO / "data" / "datasets"
 # Its absence is not fatal here — a half-downloaded corpus still yields
 # rows — but it is worth one line on stderr, because a WER on a partial
 # corpus is a WER on whichever shards happened to arrive first.
-COMPLETE_MARKER = ".elizabeth-complete"
+# The box still runs the pre-rename fetch script, so a corpus it
+# downloaded carries the old marker. Accepting both beats warning
+# "partial download" about 6.5 GB that is demonstrably complete.
+COMPLETE_MARKERS = (".elizabeth-complete", ".neiro-complete")
 LANGUAGES = ("auto", "en", "hi")
 
 # Corpora that ship transcripts, and where each keeps them. Adding one is
@@ -95,6 +98,23 @@ CORPORA = {
         "audio": "audio_filepath",
         "split": "valid",
     },
+    # The only corpus here carrying a per-utterance ACCENT label, which
+    # is the entire reason it is on disk: it can answer "does she
+    # understand a British speaker as well as an American one", and no
+    # other English corpus we hold can. `group` turns that column into
+    # stratified WER — see docs/DECISIONS.md, 2026-09-17. It has no
+    # train split by design (it is a benchmark), so `validation` is the
+    # larger of the two it ships.
+    "edacc": {
+        "dir": "edacc",
+        "text": "text",
+        "audio": "audio",
+        "split": "validation",
+        "group": "accent",
+        # Scoring sentinels, not speech. Left in, they are counted as
+        # reference words and wreck the WER they were meant to protect.
+        "drop_refs": ("IGNORE_TIME_SEGMENT_IN_SCORING",),
+    },
 }
 
 # Column names tried, in order, when a corpus's own is absent from a
@@ -126,13 +146,22 @@ for shard in job["shards"]:
     if not text_col or not audio_col:
         skipped.append(f"{shard}: no transcript/audio column in {names}")
         continue
+    # Optional. A corpus without one still yields rows; its group is
+    # None and the report simply has no stratification to show.
+    group_col = job.get("group_col") if job.get("group_col") in names else None
+    if job.get("group_col") and not group_col:
+        skipped.append(f"{shard}: no {job['group_col']!r} column in {names}")
+    drop = set(job.get("drop_refs") or ())
     try:
-        for batch in pf.iter_batches(columns=[audio_col, text_col]):
+        cols = [audio_col, text_col] + ([group_col] if group_col else [])
+        for batch in pf.iter_batches(columns=cols):
             for r in batch.to_pylist():
                 a = r[audio_col]
                 b = a.get("bytes") if isinstance(a, dict) else None
-                if b and r[text_col]:
-                    rows.append((b, str(r[text_col])))
+                text = str(r[text_col]) if r[text_col] else ""
+                if b and text and text.strip() not in drop:
+                    g = str(r[group_col]) if group_col and r[group_col] else None
+                    rows.append((b, text, g))
                 if len(rows) >= job["limit"]:
                     break
             if len(rows) >= job["limit"]:
@@ -164,7 +193,7 @@ def load_rows(
     limit: int,
     data_root: Path = DATASETS_DIR,
     reader_python: Path | None = None,
-) -> tuple[list[tuple[bytes, str]], list[str]]:
+) -> tuple[list[tuple[bytes, str, str | None]], list[str]]:
     """`(audio_bytes, reference_text)` rows from the corpus's parquet
     shards, plus a note per shard that could not be used.
 
@@ -178,9 +207,9 @@ def load_rows(
     root = data_root / spec["dir"]
     if not root.is_dir():
         return [], [f"{root}: not downloaded"]
-    if not (root / COMPLETE_MARKER).exists():
+    if not any((root / m).exists() for m in COMPLETE_MARKERS):
         print(
-            f"  {root.name}: no {COMPLETE_MARKER} marker — scoring a partial download",
+            f"  {root.name}: no completion marker — scoring a partial download",
             file=sys.stderr,
         )
     shards = select_shards(root, spec)
@@ -191,6 +220,8 @@ def load_rows(
         "text_cols": [spec["text"], *TEXT_FALLBACKS],
         "audio_cols": [spec["audio"], *AUDIO_FALLBACKS],
         "limit": limit,
+        "group_col": spec.get("group"),
+        "drop_refs": list(spec.get("drop_refs") or ()),
     }
     interpreter = (
         [str(reader_python)] if reader_python else ["uv", "run", "--project", "training", "python"]
@@ -298,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     pairs: list[tuple[str, str, str]] = []
     latencies: list[float] = []
     detected: Counter[str] = Counter()
-    for i, (blob, reference) in enumerate(rows, 1):
+    groups: dict[str, str | None] = {}
+    for i, (blob, reference, group) in enumerate(rows, 1):
         try:
             audio, sr = sf.read(io.BytesIO(blob), dtype="float32", always_2d=False)
         except Exception as exc:  # noqa: BLE001 — one unreadable clip skips the row
@@ -313,7 +345,9 @@ def main(argv: list[str] | None = None) -> int:
         started = time.perf_counter()
         hypothesis = asyncio.run(stt.transcribe(audio))
         latencies.append((time.perf_counter() - started) * 1000)
-        pairs.append((f"{args.corpus}-{i:04d}", reference, hypothesis))
+        name = f"{args.corpus}-{i:04d}"
+        groups[name] = group
+        pairs.append((name, reference, hypothesis))
         language = getattr(stt, "last_detected_language", None)
         if language:
             detected[language] += 1
@@ -334,6 +368,21 @@ def main(argv: list[str] | None = None) -> int:
         ),
         key=lambda u: -(u.errors / max(1, u.ref_words)),
     )
+
+    by_group: dict[str, dict[str, float | int]] = {}
+    if any(groups.values()):
+        buckets: dict[str, list[UtteranceScore]] = {}
+        for u in per_utterance:
+            buckets.setdefault(groups.get(u.name) or "(unlabelled)", []).append(u)
+        for label, us in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+            errors = sum(u.errors for u in us)
+            words = sum(u.ref_words for u in us)
+            by_group[label] = {
+                "n": len(us),
+                "wer": round(errors / words, 4) if words else None,
+                "errors": errors,
+                "ref_words": words,
+            }
 
     report = {
         "corpus": args.corpus,
@@ -358,6 +407,13 @@ def main(argv: list[str] | None = None) -> int:
         # is the number that explains a bad Hindi WER — or exonerates it.
         "detected_languages": dict(detected.most_common()),
         "skipped_shards": skipped,
+        # Stratified, never pooled. A single WER over a corpus that is
+        # 23% British, 23% American and the rest a long L2 tail is a
+        # number about none of those groups — and the question EdACC
+        # exists to answer is precisely whether the two differ.
+        # Same rule as the corpus-level figure: total errors over total
+        # reference words per group, not a mean of per-utterance rates.
+        "by_group": by_group,
         "worst": [
             {"name": u.name, "ref": u.reference[:90], "hyp": u.hypothesis[:90], "errors": u.errors}
             for u in per_utterance[:5]
@@ -373,6 +429,19 @@ def main(argv: list[str] | None = None) -> int:
     print("\nworst utterances — where the useful information is:")
     for w in report["worst"]:
         print(f"  {w['errors']:>3} err  ref {w['ref']!r}\n            hyp {w['hyp']!r}")
+    if by_group:
+        print("\nWER by accent — the question this corpus exists to answer:")
+        for label, g in by_group.items():
+            rate = f"{g['wer']:.1%}" if g["wer"] is not None else "n/a"
+            print(f"  {rate:>7}  n={g['n']:<5} {label}")
+        targets = [k for k in by_group if "British" in k or "US English" in k]
+        if len(targets) == 2:
+            a, b = (by_group[k]["wer"] for k in targets)
+            if a is not None and b is not None:
+                print(
+                    f"\n  gap {abs(a - b):.1%} between {targets[0]} and {targets[1]} — "
+                    "the accent goal is that this stays small, not that either is low."
+                )
     print(
         f"\nWER {result.wer:.1%} on {args.corpus} (language={cfg.stt.language}). "
         "Gate G3a is < 10% on HIS voice, not this."

@@ -370,7 +370,7 @@ class TestBenchmarkHarness:
             },
             tmp_path,
         )
-        assert [text for _, text in out["rows"]] == [
+        assert [text for _, text, _g in out["rows"]] == [
             "namaste good-0.parquet",
             "namaste good-2.parquet",
         ]
