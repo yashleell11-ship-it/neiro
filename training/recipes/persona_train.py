@@ -663,6 +663,17 @@ def build_parser() -> argparse.ArgumentParser:
             "power cut, not the whole run, only if it is asked to look for it"
         ),
     )
+    ap.add_argument(
+        "--skip-before-eval",
+        action="store_true",
+        help=(
+            "don't run the BEFORE baseline pass — for a --resume relaunch after "
+            "a crash or restart, where the baseline was already captured by the "
+            "run that crashed and re-running it just repeats the slowest, least "
+            "stable part of the whole recipe for no new information. Same fix "
+            "as stt_train.py's flag of the same name, same reasoning."
+        ),
+    )
 
     ap.add_argument(
         "--max-length", type=int, default=None, help="override; skips the measurement below"
@@ -893,32 +904,39 @@ def main(argv: list[str] | None = None) -> int:
     val_by_kind = load_val_by_kind(args.val, KINDS)
     eval_log = SkipLog()
     before: dict[str, dict] = {}
-    with model.disable_adapter():
-        model.eval()
-        for kind in ("chat", "emotion_text"):
-            sample_rows = sample_records(val_by_kind[kind], args.eval_limit, args.eval_seed)
-            before[kind] = evaluate_perplexity(
+    if args.skip_before_eval:
+        print("skipping BEFORE eval (--skip-before-eval): baseline was captured earlier")
+    else:
+        # The BEFORE number is the BASE model (adapter disabled), so it is the
+        # same value on every fresh launch regardless of --resume. A relaunch
+        # after a crash gains nothing from re-measuring it and pays the
+        # slowest, least stable part of the whole recipe to do so.
+        with model.disable_adapter():
+            model.eval()
+            for kind in ("chat", "emotion_text"):
+                sample_rows = sample_records(val_by_kind[kind], args.eval_limit, args.eval_seed)
+                before[kind] = evaluate_perplexity(
+                    model,
+                    tokenizer,
+                    chat_template,
+                    sample_rows,
+                    max_length,
+                    device,
+                    eval_log,
+                    args.loss_chunk_size,
+                )
+                print(f"BEFORE {kind}: {json.dumps(before[kind])}")
+            sample_rows = sample_records(val_by_kind["tool_call"], args.eval_limit, args.eval_seed)
+            before["tool_call"] = evaluate_tool_calls(
                 model,
                 tokenizer,
-                chat_template,
                 sample_rows,
-                max_length,
                 device,
+                args.max_new_tokens,
                 eval_log,
-                args.loss_chunk_size,
+                args.no_repeat_ngram_size,
             )
-            print(f"BEFORE {kind}: {json.dumps(before[kind])}")
-        sample_rows = sample_records(val_by_kind["tool_call"], args.eval_limit, args.eval_seed)
-        before["tool_call"] = evaluate_tool_calls(
-            model,
-            tokenizer,
-            sample_rows,
-            device,
-            args.max_new_tokens,
-            eval_log,
-            args.no_repeat_ngram_size,
-        )
-        print(f"BEFORE tool_call: well_formed_rate={before['tool_call']['well_formed_rate']}")
+            print(f"BEFORE tool_call: well_formed_rate={before['tool_call']['well_formed_rate']}")
 
     # ---------------- train ----------------
     loader = DataLoader(stream, batch_size=args.batch, num_workers=args.workers, collate_fn=collate)
