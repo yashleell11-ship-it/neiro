@@ -63,6 +63,14 @@ def main() -> int:
         # check gets to run at all: slow, but it never touches training.
         help="auto follows cuda availability; cpu forces it off a busy GPU",
     )
+    ap.add_argument(
+        "--tools",
+        action="store_true",
+        # Without this the transcript shows her SAYING she will open the
+        # browser rather than calling open_app — which reads exactly like
+        # a training defect and is not one: no tool was ever offered.
+        help="offer the real tool schemas, so tool-calling is actually testable",
+    )
     args = ap.parse_args()
 
     if not args.checkpoint.exists():
@@ -118,6 +126,20 @@ def main() -> int:
 
     print(f"\n{'=' * 60}\nprompt: {system_message().get('content', '')[:80]}...\n{'=' * 60}\n")
 
+    tool_schemas = None
+    if args.tools:
+        try:
+            from elizabeth.tools.builtin import build_registry
+        except ModuleNotFoundError:  # pragma: no cover - pre-rename box
+            from neiro.tools.builtin import build_registry  # type: ignore[no-redef]
+
+        # A confirmer that says yes: nothing is executed here, but
+        # without one the registry serves GREEN schemas only and the
+        # YELLOW tools this is meant to exercise never appear.
+        registry = build_registry(confirm=lambda *a: True)
+        tool_schemas = registry.schemas()
+        print(f"offering {len(tool_schemas)} tools: {', '.join(t['function']['name'] for t in tool_schemas)}\n")
+
     for turn in SAMPLE_TURNS:
         messages = [system_message(), {"role": "user", "content": turn}]
         rendered = tokenizer.apply_chat_template(
@@ -127,6 +149,7 @@ def main() -> int:
             enable_thinking=False,
             return_tensors="pt",
             return_dict=True,
+            **({"tools": tool_schemas} if tool_schemas else {}),
         )
         input_ids = rendered["input_ids"].to(model.device)
         attention_mask = rendered["attention_mask"].to(model.device)
