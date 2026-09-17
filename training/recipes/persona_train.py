@@ -982,7 +982,14 @@ def main(argv: list[str] | None = None) -> int:
             peak = max(peak, peak_vram_gb() or 0.0)
             if step == 1 or step % args.log_every == 0:
                 elapsed = time.perf_counter() - started
-                rate = step / max(elapsed, 1e-9)
+                # Steps done SINCE RESUME over time since resume. Using
+                # `step` here credits every pre-resume step against this
+                # process's clock, which inflates the rate and then decays
+                # it monotonically toward the truth as elapsed grows — a
+                # resumed run reported 60.5 steps/min falling to 27.8 while
+                # actually doing about 7.5, and every ETA built on it was
+                # wrong by the same factor.
+                rate = (step - resumed_step) / max(elapsed, 1e-9)
                 mean_loss = running_loss / max(running_tokens, 1)
                 print(
                     f"  step {step}{f'/{total_steps}' if total_steps else ''} "

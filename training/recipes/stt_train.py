@@ -917,7 +917,11 @@ def main(argv: list[str] | None = None) -> int:
             step += 1
             peak = max(peak, peak_vram_gb() or 0.0)
             if step % 10 == 0 or step == 1:
-                rate = step / max(time.perf_counter() - started, 1e-9)
+                # Since resume, not since step 0 — see the same fix in
+                # persona_train.py: crediting pre-resume steps against
+                # this process's clock inflates the rate and decays it
+                # toward the truth, so every ETA built on it is wrong.
+                rate = (step - resumed_step) / max(time.perf_counter() - started, 1e-9)
                 print(
                     f"  step {step}/{total_steps} loss {running / max(seen, 1):.4f} "
                     f"lr {schedule.get_last_lr()[0]:.2e} {rate * 60:.1f} steps/min "
