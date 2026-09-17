@@ -1,4 +1,5 @@
-"""Indexing Kathbath and IndicVoices for the Hindi fine-tune — everything
+"""Indexing the STT fine-tune corpora — Kathbath and IndicVoices for
+Hindi, mls-english and english-dialects-uk for English — everything
 about the data that can be decided without torch.
 
 `training/recipes/stt_train.py` needs CUDA torch and lives in the
@@ -71,7 +72,11 @@ SAMPLERATE = 16000
 # The marker scripts/fetch_datasets.py leaves when a download finished.
 # Its absence is not fatal — a partial corpus still yields rows — but a
 # WER over whichever shards happened to arrive first deserves a line.
+# Both accepted: mls-english and english-dialects-uk were fetched on the
+# box under its pre-rename package name, same as every other corpus that
+# has hit this — see docs/DECISIONS.md, 2026-09-17.
 COMPLETE_MARKER = ".elizabeth-complete"
+COMPLETE_MARKERS = (".elizabeth-complete", ".neiro-complete")
 
 # Must match `_bucket`'s own default: the split is a hash bucket out of
 # this many, and changing one without the other silently reshuffles
@@ -125,6 +130,15 @@ class CorpusSpec:
 
     name: str
     directory: str
+    # The spoken language this corpus's audio actually is — not a label,
+    # a fact the recipe depends on. `--language` forces ONE Whisper
+    # decoder token onto every row it trains on regardless of source
+    # corpus (`set_prefix_tokens(language=..., task="transcribe")`), so
+    # mixing a Hindi and an English corpus in one run would silently
+    # teach the model to associate the wrong language token with real
+    # audio. `stt_train.py.main()` asserts every selected corpus agrees
+    # with every other and with `--language` before training starts.
+    language: str
     text_column: str
     audio_column: str
     speaker_column: str
@@ -134,12 +148,23 @@ class CorpusSpec:
     # Empty means the corpus ships only training shards and any eval has
     # to be carved out by speaker.
     held_out_splits: tuple[str, ...] = ()
+    # "" means the corpus has no cheap duration column at all (checked:
+    # english-dialects-uk ships line_id/audio/text/speaker_id and
+    # nothing else). `index_corpus` then reads `audio_column` too and
+    # computes duration from the file header via `sf.info()` — real, not
+    # guessed, but real I/O against every row's audio bytes rather than
+    # the ~200 MB of pure metadata the column path costs. Bounded to
+    # small corpora on purpose: this is 8.78 GB total, not the 63 GB the
+    # module docstring's "without decoding a single frame" claim is
+    # about, and that claim still holds for every corpus that keeps its
+    # duration_column set.
 
 
 CORPORA: dict[str, CorpusSpec] = {
     "kathbath": CorpusSpec(
         name="kathbath",
         directory="kathbath/hindi",
+        language="hi",
         text_column="text",
         audio_column="audio_filepath",
         speaker_column="speaker_id",
@@ -149,6 +174,7 @@ CORPORA: dict[str, CorpusSpec] = {
     "indicvoices": CorpusSpec(
         name="indicvoices",
         directory="indicvoices/hindi",
+        language="hi",
         # See the module docstring. NOT `text`/`normalized` (identical to
         # each other, and both correct the speaker's pronunciation), and
         # NOT the `unsanitized_*` pair (annotator event markup).
@@ -158,13 +184,61 @@ CORPORA: dict[str, CorpusSpec] = {
         duration_column="duration",
         text_fallbacks=("text", "normalized"),
     ),
+    "mls-english": CorpusSpec(
+        name="mls-english",
+        directory="mls-english/data",
+        language="en",
+        # See data/datasets.toml's entry for this corpus: the README's
+        # Data Fields section is stale and names `text`, which does not
+        # exist — the real column, verified against the actual parquet
+        # schema, is `transcript`.
+        text_column="transcript",
+        audio_column="audio",
+        speaker_column="speaker_id",
+        duration_column="audio_duration",
+        held_out_splits=("dev", "test"),
+    ),
+    "english-dialects-uk": CorpusSpec(
+        name="english-dialects-uk",
+        directory="english-dialects-uk",
+        language="en",
+        text_column="text",
+        audio_column="audio",
+        speaker_column="speaker_id",
+        # No duration column at all — checked against the live schema
+        # (line_id, audio, text, speaker_id) rather than assumed. See the
+        # CorpusSpec field docstring for what an empty string triggers.
+        duration_column="",
+        # "There is only a train split: carve your own eval and make it
+        # SPEAKER-DISJOINT or the number is fiction" — the manifest's own
+        # note on this corpus. Same mechanism as indicvoices-heldout.
+    ),
 }
 
 # The two ways to be held out. `kathbath-valid` is the corpus's own
 # shard (with its speakers removed from training, see the module
 # docstring); `indicvoices-heldout` is a speaker-hash slice, because
 # IndicVoices ships train shards only.
-EVAL_SETS: tuple[str, ...] = ("kathbath-valid", "indicvoices-heldout")
+EVAL_SETS: tuple[str, ...] = (
+    "kathbath-valid",
+    "indicvoices-heldout",
+    "mls-english-dev",
+    "english-dialects-uk-heldout",
+)
+
+# Which corpus each eval set belongs to. Explicit, not derived by
+# splitting the name on "-" and taking the first piece — that worked by
+# accident while every corpus name was one word ("kathbath",
+# "indicvoices") and silently breaks for "mls-english-dev" (splits to
+# "mls", which is not a corpus) and "english-dialects-uk-heldout"
+# (splits to "english"). `stt_train.py` uses this to decide which eval
+# sets a given `--corpora` selection can actually produce.
+EVAL_SET_CORPUS: dict[str, str] = {
+    "kathbath-valid": "kathbath",
+    "indicvoices-heldout": "indicvoices",
+    "mls-english-dev": "mls-english",
+    "english-dialects-uk-heldout": "english-dialects-uk",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +354,34 @@ def text_for(record: Mapping[str, object], spec: CorpusSpec) -> str:
     return ""
 
 
+def _duration_from_header(blob: bytes | None, log: SkipLog) -> float | None:
+    """Seconds, read from the audio file's own header — no PCM decode.
+
+    Only called for a corpus whose `CorpusSpec.duration_column` is "",
+    i.e. one with no cheap duration column at all. `sf.info()` reads
+    just enough of the container (WAV/FLAC/OGG headers all carry a frame
+    count) to answer `frames / samplerate`, not the full waveform, so
+    this is far cheaper than `decode_audio` — but it does touch every
+    row's audio bytes, which is real I/O the column-based path avoids
+    entirely. See the CorpusSpec field docstring for why that trade only
+    happens for a small corpus.
+    """
+    if not blob:
+        log.skip("no_audio")
+        return None
+    import soundfile as sf
+
+    try:
+        info = sf.info(io.BytesIO(blob))
+    except Exception:  # noqa: BLE001 — one unreadable clip skips the row
+        log.skip("decode_failed")
+        return None
+    if info.samplerate <= 0:
+        log.skip("decode_failed")
+        return None
+    return info.frames / info.samplerate
+
+
 def index_shard(
     spec: CorpusSpec,
     shard: str | Path,
@@ -295,20 +397,35 @@ def index_shard(
     `row_groups[g]` is row group `g` as a list of dicts — whatever the
     parquet reader handed back. Keeping the pyarrow call outside means
     every rule below (which column, which rows are unusable, how a
-    speaker is named) is testable in a venv with no pyarrow and no torch.
+    speaker is named) is testable in a venv with no pyarrow and no torch
+    — except duration for a corpus with no duration column, which by
+    construction needs the audio bytes and therefore needs soundfile;
+    that import is local to the one branch that takes it.
     """
     split = shard_split(shard)
     rows: list[Row] = []
     for group_index, group in enumerate(row_groups):
         for offset, record in enumerate(group):
             speaker = record.get(spec.speaker_column)
-            duration = record.get(spec.duration_column)
-            if speaker is None or spec.duration_column not in record:
+            if speaker is None:
                 log.skip("missing_column")
                 continue
-            if duration is None:
-                log.skip("no_duration")
-                continue
+            if spec.duration_column:
+                if spec.duration_column not in record:
+                    log.skip("missing_column")
+                    continue
+                duration = record.get(spec.duration_column)
+                if duration is None:
+                    log.skip("no_duration")
+                    continue
+                seconds = float(duration)
+            else:
+                audio = record.get(spec.audio_column)
+                blob = audio.get("bytes") if isinstance(audio, dict) else None
+                duration = _duration_from_header(blob, log)
+                if duration is None:
+                    continue
+                seconds = duration
             text = text_for(record, spec)
             if not text:
                 log.skip("empty_text")
@@ -316,7 +433,6 @@ def index_shard(
             if drop_tagged and has_annotator_tag(text):
                 log.skip("annotator_tag")
                 continue
-            seconds = float(duration)
             if seconds > max_seconds:
                 log.skip("too_long")
                 continue
@@ -377,12 +493,23 @@ def index_corpus(spec: CorpusSpec, data_root: Path, log: SkipLog, **limits) -> l
 
     import pyarrow.parquet as pq
 
-    if not (root.parent / COMPLETE_MARKER).exists():
-        print(
-            f"  {root}: no {COMPLETE_MARKER} marker — indexing a partial download", file=sys.stderr
-        )
+    # The marker sits at the corpus's own root, which is not always
+    # `root.parent` -- kathbath/indicvoices/mls-english nest one level
+    # under a language or split subdirectory, but english-dialects-uk's
+    # `directory` IS its root (its ten accent configs sit directly under
+    # it, no shared subfolder). `data_root / spec.name` is right either
+    # way.
+    if not any((Path(data_root) / spec.name / m).exists() for m in COMPLETE_MARKERS):
+        print(f"  {root}: no completion marker — indexing a partial download", file=sys.stderr)
 
-    wanted = [spec.speaker_column, spec.duration_column, spec.text_column, *spec.text_fallbacks]
+    wanted = [spec.speaker_column, spec.text_column, *spec.text_fallbacks]
+    if spec.duration_column:
+        wanted.append(spec.duration_column)
+    else:
+        # No cheap duration column: the audio bytes themselves have to
+        # be pulled so `index_shard` can read a header. See the
+        # CorpusSpec field docstring for the size this is bounded to.
+        wanted.append(spec.audio_column)
     rows: list[Row] = []
     for shard in select_shards(root):
         try:
@@ -578,13 +705,19 @@ def plan_split(
     """Partition indexed rows into training and one or more eval sets.
 
     Two kinds of held-out set, because the corpora are not the same
-    shape. `kathbath-valid` is the shard Kathbath itself publishes —
-    genuinely unseen *recordings*, but its speakers are also in `train`
-    (see the module docstring), so every one of them is struck from the
-    training side. `indicvoices-heldout` is a speaker-hash slice: buckets
-    below `eval_fraction * BUCKETS`, using the same sha256 bucketing as
-    `corpora.split`, so the same speaker lands on the same side on every
-    machine and every run.
+    shape, and each English corpus uses whichever kind matches its own.
+    `kathbath-valid` and `mls-english-dev` are the shard the corpus
+    itself publishes — genuinely unseen *recordings*, but their speakers
+    may also be in `train` (Kathbath's definitely are, see the module
+    docstring; MLS's shard order is speaker-clustered so its dev/test
+    speakers likely are not, but nothing here assumes that), so every
+    one of them is struck from the training side regardless.
+    `indicvoices-heldout` and `english-dialects-uk-heldout` are a
+    speaker-hash slice: buckets below `eval_fraction * BUCKETS`, using
+    the same sha256 bucketing as `corpora.split`, so the same speaker
+    lands on the same side on every machine and every run — the only
+    option for english-dialects-uk, which ships no split of its own at
+    all.
 
     The assertion at the end is the point of the function.
     """
@@ -611,6 +744,20 @@ def plan_split(
             and bucket_of(row.speaker) < edge
         ):
             selected["indicvoices-heldout"].append(row)
+            eval_ids.add(row.locator)
+        elif (
+            "mls-english-dev" in selected
+            and row.corpus == "mls-english"
+            and row.declared_split in CORPORA["mls-english"].held_out_splits
+        ):
+            selected["mls-english-dev"].append(row)
+            eval_ids.add(row.locator)
+        elif (
+            "english-dialects-uk-heldout" in selected
+            and row.corpus == "english-dialects-uk"
+            and bucket_of(row.speaker) < edge
+        ):
+            selected["english-dialects-uk-heldout"].append(row)
             eval_ids.add(row.locator)
 
     # The held-out SPEAKERS are the split; `eval_limit` only decides how

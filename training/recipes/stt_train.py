@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Fine-tune Whisper large-v3-turbo on Hindi — Kathbath + IndicVoices.
+"""Fine-tune Whisper large-v3-turbo — Hindi by default, English on request.
 
     cd training
     uv run python recipes/stt_train.py --dry-run            # shapes, params, peak VRAM
     uv run python recipes/stt_train.py --eval-only          # the BEFORE number
     uv run python recipes/stt_train.py --max-hours 8 --batch 4 --accum 8
+
+    # English: mls-english (bulk) + english-dialects-uk (the only corpus
+    # anywhere in this project with a real accent label). --corpora,
+    # --eval-sets, --language and --out must ALL be passed together —
+    # see CorpusSpec.language's docstring in elizabeth.training.stt_data
+    # for why a partial switch trains something silently wrong rather
+    # than failing loudly.
+    uv run python recipes/stt_train.py --corpora mls-english english-dialects-uk \
+        --eval-sets mls-english-dev english-dialects-uk-heldout --language en \
+        --out ../models/stt-english-lora   # --ct2-out defaults to <--out>/ct2
 
 **Why this run exists.** The same checkpoint, on the same machine, in
 the same week: 6.2% WER on Svarah (Indian-accented English) and **29.6%
@@ -84,6 +94,7 @@ from elizabeth.evals.wer import UtteranceScore, edit_distance, normalize, score
 from elizabeth.training.licences import licences_for
 from elizabeth.training.stt_data import (
     CORPORA,
+    EVAL_SET_CORPUS,
     EVAL_SETS,
     SAMPLERATE,
     Row,
@@ -506,14 +517,27 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--corpora", nargs="+", default=sorted(CORPORA), choices=sorted(CORPORA))
+    ap.add_argument(
+        "--corpora",
+        nargs="+",
+        # NOT sorted(CORPORA): CORPORA now spans two languages, and "all
+        # of them" would silently mix Hindi and English audio under one
+        # --language token. The default stays exactly what it was before
+        # English corpora existed; asking for the English ones is always
+        # explicit.
+        default=["kathbath", "indicvoices"],
+        choices=sorted(CORPORA),
+    )
     ap.add_argument(
         "--eval-sets",
         nargs="+",
-        default=list(EVAL_SETS),
+        # Same reasoning as --corpora's default, and for the same reason
+        # it does not track EVAL_SETS either.
+        default=["kathbath-valid", "indicvoices-heldout"],
         choices=list(EVAL_SETS),
         help="kathbath-valid is the corpus's own held-out shard; indicvoices-heldout "
-        "is a speaker-hash slice, because IndicVoices ships train shards only",
+        "is a speaker-hash slice, because IndicVoices ships train shards only; "
+        "mls-english-dev and english-dialects-uk-heldout are their English analogues",
     )
     ap.add_argument(
         "--eval-fraction",
@@ -687,7 +711,7 @@ def build_split(args, log: SkipLog) -> tuple[list[Row], SplitPlan]:
     plan = plan_split(
         rows,
         log,
-        eval_sets=[s for s in args.eval_sets if s.split("-")[0] in args.corpora],
+        eval_sets=[s for s in args.eval_sets if EVAL_SET_CORPUS[s] in args.corpora],
         eval_fraction=args.eval_fraction,
         eval_limit=args.eval_limit,
         max_train_hours=args.max_hours,
@@ -700,6 +724,31 @@ def build_split(args, log: SkipLog) -> tuple[list[Row], SplitPlan]:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     torch.manual_seed(args.seed)
+
+    # Every selected corpus's real spoken language must agree with every
+    # other and with --language: the decoder is forced onto ONE language
+    # token for every row regardless of source corpus (see CorpusSpec's
+    # `language` field docstring), so a Hindi/English mix here is not a
+    # slower run, it is a silently corrupted one.
+    corpus_languages = {CORPORA[name].language for name in args.corpora}
+    if len(corpus_languages) > 1:
+        by_lang = {
+            lang: sorted(n for n in args.corpora if CORPORA[n].language == lang)
+            for lang in sorted(corpus_languages)
+        }
+        print(
+            f"--corpora mixes languages: {by_lang}. --language forces one decoder "
+            "token onto every row regardless of source corpus, so this is not "
+            "supported — pick corpora that are all one language."
+        )
+        return 2
+    (declared_language,) = corpus_languages
+    if declared_language != args.language:
+        print(
+            f"--language {args.language!r} does not match the selected corpora's "
+            f"real language {declared_language!r} ({', '.join(args.corpora)})."
+        )
+        return 2
 
     # What the weights this run produces may be used for, decided from
     # the corpora actually indexed rather than from what was asked for.
@@ -717,9 +766,10 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     rows, plan = build_split(args, log)
     if not rows:
+        fetch_target = "hindi_stt" if declared_language == "hi" else "stt_english"
         print(
             f"No rows indexed under {args.data_root}. Run "
-            "`elizabeth fetch-datasets --target hindi_stt` first, or pass --data-root.",
+            f"`elizabeth fetch-datasets --target {fetch_target}` first, or pass --data-root.",
             file=sys.stderr,
         )
         for shard, reason in log.shards.items():

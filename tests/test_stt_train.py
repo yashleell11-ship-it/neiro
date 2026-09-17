@@ -1,4 +1,5 @@
-"""The rules the Hindi STT fine-tune's data path is built on.
+"""The rules the STT fine-tune's data path is built on — Hindi and
+English both, since both spend the same corpus/eval-set registry.
 
 `training/recipes/stt_train.py` needs CUDA torch and cannot be imported
 in this venv, which is exactly why everything worth asserting lives in
@@ -29,6 +30,8 @@ from elizabeth.training.corpora import _bucket
 from elizabeth.training.stt_data import (
     BUCKETS,
     CORPORA,
+    EVAL_SET_CORPUS,
+    EVAL_SETS,
     IGNORE_INDEX,
     Row,
     SkipLog,
@@ -53,6 +56,19 @@ from elizabeth.training.stt_data import (
 
 KATHBATH = CORPORA["kathbath"]
 INDICVOICES = CORPORA["indicvoices"]
+MLS_ENGLISH = CORPORA["mls-english"]
+ENGLISH_DIALECTS_UK = CORPORA["english-dialects-uk"]
+
+
+def _wav_bytes(seconds: float, samplerate: int = 16000) -> bytes:
+    """A real, tiny WAV file of an exact known duration — for testing
+    the header-duration path against actual audio, not a fake struct.
+    """
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, np.zeros(int(seconds * samplerate), dtype=np.float32), samplerate, format="WAV")
+    return buf.getvalue()
 
 
 def make_row(
@@ -233,6 +249,67 @@ class TestIndexShard:
             INDICVOICES, "train-0.parquet", groups, kept, min_seconds=0.3, drop_tagged=False
         )
         assert len(rows) == 1 and kept.total == 0
+
+
+class TestDurationFromHeader:
+    """english-dialects-uk ships no duration column at all (checked
+    against the live schema: line_id, audio, text, speaker_id) — the
+    only corpus here that needs one. This is the path that makes it
+    usable anyway: real seconds read from the WAV header, not guessed
+    and not requiring a full PCM decode.
+    """
+
+    def test_duration_is_read_from_the_audio_header_not_a_column(self) -> None:
+        groups = [
+            [
+                {
+                    "speaker_id": "9799",
+                    "text": "hello there",
+                    "audio": {"bytes": _wav_bytes(2.0), "path": "a.wav"},
+                }
+            ]
+        ]
+        log = SkipLog()
+        rows = index_shard(ENGLISH_DIALECTS_UK, "train-0.parquet", groups, log, min_seconds=0.3)
+        assert len(rows) == 1
+        assert rows[0].seconds == pytest.approx(2.0, abs=0.01)
+        assert log.total == 0
+
+    def test_the_whisper_window_and_min_seconds_rules_still_apply(self) -> None:
+        groups = [
+            [{"speaker_id": "1", "text": "long", "audio": {"bytes": _wav_bytes(35.0)}}],
+            [{"speaker_id": "1", "text": "short", "audio": {"bytes": _wav_bytes(0.05)}}],
+        ]
+        log = SkipLog()
+        assert index_shard(ENGLISH_DIALECTS_UK, "train-0.parquet", groups, log, min_seconds=0.3) == []
+        assert log.counts["too_long"] == 1
+        assert log.counts["too_short"] == 1
+
+    def test_no_audio_bytes_is_counted_not_crashed_on(self) -> None:
+        groups = [
+            [{"speaker_id": "1", "text": "x", "audio": {"bytes": None}}],
+            [{"speaker_id": "1", "text": "x", "audio": None}],
+            [{"speaker_id": "1", "text": "x"}],  # column entirely absent from this row
+        ]
+        log = SkipLog()
+        assert index_shard(ENGLISH_DIALECTS_UK, "train-0.parquet", groups, log, min_seconds=0.3) == []
+        assert log.counts["no_audio"] == 3
+
+    def test_unreadable_audio_bytes_are_counted_not_guessed(self) -> None:
+        groups = [[{"speaker_id": "1", "text": "x", "audio": {"bytes": b"not a wav file"}}]]
+        log = SkipLog()
+        assert index_shard(ENGLISH_DIALECTS_UK, "train-0.parquet", groups, log, min_seconds=0.3) == []
+        assert log.counts["decode_failed"] == 1
+
+    def test_a_corpus_with_a_real_duration_column_never_touches_audio(self) -> None:
+        # mls-english has `audio_duration` -- the column path must be
+        # taken, and a row missing `audio` entirely must still index
+        # fine, proving the audio column was never consulted.
+        groups = [[{"speaker_id": "1", "audio_duration": 4.0, "transcript": "hi"}]]
+        log = SkipLog()
+        rows = index_shard(MLS_ENGLISH, "train-0.parquet", groups, log, min_seconds=0.3)
+        assert len(rows) == 1
+        assert rows[0].seconds == 4.0
 
 
 class TestCapByHours:
@@ -720,3 +797,29 @@ class TestCheckpointing:
         assert read_checkpoint_step(ckpt) == 300
         assert {p.name for p in ckpt.iterdir()} == {"s300", "step.json"}
         assert not (tmp_path / "checkpoint.tmp").exists()
+
+
+class TestCorpusRegistry:
+    """Consistency checks on the corpus/eval-set registry itself — the
+    kind of thing that goes stale silently when a name is added in one
+    place and not the other, exactly like the `EVAL_SET_CORPUS` bug this
+    file's English-corpus addition found (see stt_train.py's history).
+    """
+
+    def test_every_eval_set_is_mapped_to_a_real_corpus(self) -> None:
+        assert set(EVAL_SET_CORPUS) == set(EVAL_SETS)
+        for eval_set, corpus in EVAL_SET_CORPUS.items():
+            assert corpus in CORPORA, f"{eval_set} maps to {corpus!r}, not a real corpus"
+
+    def test_every_corpus_declares_a_language(self) -> None:
+        for name, spec in CORPORA.items():
+            assert spec.language in ("hi", "en"), f"{name}: {spec.language!r}"
+
+    def test_a_corpus_without_a_duration_column_still_declares_an_audio_column(self) -> None:
+        # The header-duration fallback needs `audio_column` to exist
+        # even when `duration_column` is "" — a corpus that forgot both
+        # would fail confusingly deep inside `_duration_from_header`
+        # rather than here, where the mistake actually is.
+        for name, spec in CORPORA.items():
+            if not spec.duration_column:
+                assert spec.audio_column, f"{name}: no duration_column and no audio_column"
