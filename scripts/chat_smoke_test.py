@@ -27,18 +27,25 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from elizabeth.llm.prompt import system_message  # noqa: E402
+try:
+    from elizabeth.llm.prompt import system_message  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - the box still runs the pre-rename package
+    from neiro.llm.prompt import system_message  # type: ignore[no-redef]  # noqa: E402
 
 DEFAULT_MODEL = REPO / "models" / "qwen3.5-4b-safetensors"
 DEFAULT_CHECKPOINT = REPO / "models" / "persona-lora-bilingual" / "checkpoint"
 
-# A handful of turns picked to actually exercise the thing this persona
-# was trained for: plain chat, an emotional beat, and Hinglish — not
-# just "hello" three times.
+# Turns picked to exercise what v1 is actually for, which is English only
+# — Hindi is paused, so a Hinglish probe here would be testing a thing we
+# deliberately stopped training. Plain chat, an emotional beat that should
+# draw warmth rather than a fix-it list, a British-idiom turn (the accent
+# work is the whole point of the stt_english corpora), and one that invites
+# a tool call so we can see whether she stays in character while acting.
 SAMPLE_TURNS = [
     "hey, how's it going?",
     "I've been staring at this bug for three hours and I want to throw my laptop out the window",
-    "yaar aaj bohot thak gaya hoon, kal exam hai aur kuch pada nahi",
+    "bit knackered today, couldn't be bothered with any of it honestly",
+    "can you open my browser and look up what's on at the cinema tonight?",
 ]
 
 
@@ -47,6 +54,15 @@ def main() -> int:
     ap.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     ap.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     ap.add_argument("--max-new-tokens", type=int, default=200)
+    ap.add_argument(
+        "--device",
+        choices=("auto", "cuda", "cpu"),
+        default="auto",
+        # Both GPUs are meant to stay pinned at 100%, so "wait for a free
+        # card" means "never run". --device cpu is how the periodic quality
+        # check gets to run at all: slow, but it never touches training.
+        help="auto follows cuda availability; cpu forces it off a busy GPU",
+    )
     args = ap.parse_args()
 
     if not args.checkpoint.exists():
@@ -66,7 +82,16 @@ def main() -> int:
 
         step = json.loads(step_file.read_text())["step"]
 
-    print(f"loading base model from {args.model} ...")
+    use_cuda = torch.cuda.is_available() if args.device == "auto" else args.device == "cuda"
+    if use_cuda and not torch.cuda.is_available():
+        print("--device cuda asked for, but no CUDA device is visible", file=sys.stderr)
+        return 1
+
+    print(f"loading base model from {args.model} on {'cuda' if use_cuda else 'cpu'} ...")
+    if not use_cuda:
+        # bf16 on CPU is punishingly slow on most x86; fp32 is the honest
+        # default here, and the 4B backbone fits in ~17 GB of RAM.
+        print("cpu run: expect minutes per reply, not seconds")
     tokenizer = AutoTokenizer.from_pretrained(str(args.model))
     # Same NF4 load persona_train.py uses: the bf16 backbone alone is
     # 8.41 GB, more than the ~7.73 GB usable on an 8 GB card — this
@@ -78,14 +103,14 @@ def main() -> int:
             bnb_4bit_quant_type="nf4",
             bnb_4bit_use_double_quant=True,
         )
-        if torch.cuda.is_available()
+        if use_cuda
         else None
     )
     base = AutoModelForCausalLM.from_pretrained(
         str(args.model),
         quantization_config=quant_config,
-        dtype=torch.bfloat16,
-        device_map={"": 0} if torch.cuda.is_available() else None,
+        dtype=torch.bfloat16 if use_cuda else torch.float32,
+        device_map={"": 0} if use_cuda else None,
     )
     print(f"applying checkpoint {args.checkpoint}" + (f" (step {step})" if step is not None else ""))
     model = PeftModel.from_pretrained(base, str(args.checkpoint))
