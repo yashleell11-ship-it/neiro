@@ -555,6 +555,144 @@ def read_synthetic_persona_chat(root: Path) -> Iterator[Record]:
             )
 
 
+# Added 2026-09-17, in direct response to the measured failure: at step
+# 3925 she answered "I've been staring at this bug for three hours and I
+# want to throw my laptop out the window" with "I'm sorry, but I'm here
+# to help you with the bug." A 13-agent verify-then-refute sweep of six
+# candidate persona-text corpora found the English mix was 58.0%
+# tool_call by record and the one source that teaches warmth,
+# synthetic-persona-chat, was 8.5% -- see docs/DECISIONS.md, 2026-09-17.
+# SODA is that sweep's anchor recommendation.
+_SODA_ROLE_WORDS: frozenset[str] = frozenset(
+    {
+        "priest",
+        "agent",
+        "client",
+        "customer",
+        "doctor",
+        "waiter",
+        "waitress",
+        "teacher",
+        "officer",
+        "manager",
+        "clerk",
+        "receptionist",
+        "salesman",
+        "saleswoman",
+        "cashier",
+        "driver",
+        "nurse",
+        "bartender",
+        "pharmacist",
+        "lawyer",
+        "judge",
+        "mechanic",
+        "barber",
+        "hairdresser",
+        "chef",
+        "vendor",
+    }
+)
+
+
+def read_soda(root: Path) -> Iterator[Record]:
+    """allenai/soda: 1.49M PersonX-centred narratives, each carrying a
+    short two-person dialogue. Kept to `relation == "xReact"` only --
+    PersonX's own emotional reaction to the narrative is the one
+    relation type here actually framed around how someone FEELS, as
+    opposed to xNeed/xIntent/xWant (measured at a combined 63% of a
+    100-row sample), which are goal-directed and read exactly like the
+    failure being fixed. This alone lands close to the sweep's ~300-400K
+    target without a fuzzier sentiment filter on top.
+    #
+    # Rows where either speaker is a generic role word rather than a
+    # name (Priest, Agent, Doctor...) are also dropped: those are
+    # transactional exchanges wearing a person's name, the shape SODA is
+    # valuable specifically for NOT having, since the schema carries no
+    # assistant role at all for a role-word speaker to imitate.
+    """
+    for table in _tables(root, prefix="train"):
+        for row in _rows(table):
+            if row.get("relation") != "xReact":
+                continue
+            speakers = row.get("speakers")
+            dialogue = row.get("dialogue")
+            if not isinstance(speakers, list) or not isinstance(dialogue, list):
+                continue
+            if len(dialogue) != len(speakers) or len(set(speakers)) != 2:
+                continue
+            if any(str(s).strip().lower() in _SODA_ROLE_WORDS for s in speakers):
+                continue
+            messages = _dialogue(zip(speakers, dialogue, strict=True))
+            if messages is None:
+                drop("soda: no assistant turn after dedup")
+                continue
+            yield Record(
+                messages=messages, tools=None, source="soda", licence="", lang="en", kind="chat"
+            )
+
+
+_DAILYDIALOG_EMOTION: tuple[str, ...] = (
+    "no emotion",
+    "anger",
+    "disgust",
+    "fear",
+    "happiness",
+    "sadness",
+    "surprise",
+)
+# The parallel int-coded arrays this corpus ships (dialog/act/emotion)
+# have no speaker field at all -- DailyDialog is scripted as strict
+# turn-taking, first line always the same role as every other
+# odd-indexed line. `_dialogue` needs (speaker, text) pairs, so the
+# index parity stands in for a name.
+_DAILYDIALOG_SPEAKERS: tuple[str, str] = ("a", "b")
+
+
+def read_daily_dialog(root: Path) -> Iterator[Record]:
+    """li2017dailydialog/daily_dialog, via the OpenRL/daily_dialog mirror
+    -- the canonical HF repo is script-loading only (snapshot_download
+    returns no data; see docs/DECISIONS.md, the same trap as
+    facebook/empathetic_dialogues). The manifest's `license` field is
+    independently verified from the original paper and upstream source,
+    not from this mirror's tag, which carries none. Content checked to
+    match: `dialog`/`act`/`emotion` parallel arrays, the same schema and
+    the same 7-class emotion set the manifest already documents.
+
+    Lowest-priority of the sweep's three additions -- only a few hundred
+    rows here are actually on-target once filtered to a negative emotion
+    with a non-clarifying reply, out of 11,118 dialogues -- but it is
+    the only corpus in this manifest that labels the RESPONDER's own
+    turn, which is exactly what `<e:LABEL:D>` needs a source for.
+    """
+    for table in _tables(root / "data", prefix="train"):
+        for row in _rows(table):
+            turns = row.get("dialog")
+            emotions = row.get("emotion")
+            if not isinstance(turns, list) or not isinstance(emotions, list):
+                continue
+            if len(turns) != len(emotions) or len(turns) < 2:
+                continue
+            # Negative-emotion rows only: the corpus is mostly "no
+            # emotion" small talk, and the point of pulling it at all is
+            # the labelled-distress turns the sweep found underweighted.
+            if not any(_DAILYDIALOG_EMOTION[e] in ("sadness", "fear", "anger") for e in emotions if 0 <= e < 7):
+                continue
+            speakers = [_DAILYDIALOG_SPEAKERS[i % 2] for i in range(len(turns))]
+            messages = _dialogue(zip(speakers, turns, strict=True))
+            if messages is None:
+                drop("daily-dialog: no assistant turn after dedup")
+                continue
+            yield Record(
+                messages=messages,
+                tools=None,
+                source="daily-dialog",
+                licence="",
+                lang="en",
+                kind="chat",
+            )
+
+
 def _xlam_tool(tool: dict[str, Any]) -> dict[str, Any]:
     """xLAM's `{name: {description, type, default}}` parameter map into a
     JSON-schema object. A parameter is required unless it says
@@ -1109,6 +1247,8 @@ READERS: dict[str, Callable[[Path], Iterator[Record]]] = {
     "openassistant-oasst2": read_oasst2,
     "hinglish-top": read_hinglish_top,
     "synthetic-persona-chat": read_synthetic_persona_chat,
+    "soda": read_soda,
+    "dailydialog": read_daily_dialog,
     "xlam-function-calling-60k": read_xlam,
     "hermes-function-calling-v1": read_hermes,
     "glaive-function-calling-v2": read_glaive,

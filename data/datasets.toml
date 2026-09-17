@@ -141,6 +141,20 @@ weights_publishable = "yes"
 note = "~22k persona-grounded two-party conversations: 10,906 conversations over the Persona-Chat profile pairs (train 8,938 / val 1,000 / test 968) plus 11,001 conversations over 5,648 new synthetic personas (New-Persona-New-Conversations.csv). Each speaker has a persona sentence list and stays consiste..."
 
 [[dataset]]
+name = "soda"
+target = "persona_lora"
+priority = 1
+hf_id = "allenai/soda"
+license = "cc-by-4.0 -- confirmed at the HF cardData/tag/YAML family AND independently at the upstream peer-reviewed paper (Kim et al. 2023, EMNLP main conference, DOI 10.18653/v1/2023.emnlp-main.799, Section 1: 'we plan to publicly release SODA ... under a permissive license (i.e., CC-BY-4.0)') and the upstream GitHub (skywalker023/sodaverse, LICENSE = MIT, covering the pipeline code)."
+flags = ["permissive"]
+access = "direct"
+size_gb = 0.69
+hours = 0.0
+allow = ["train.parquet", "*.md"]
+weights_publishable = "yes"
+note = "Added 2026-09-17 as the anchor of a 13-agent verify-then-refute sweep for the measured help-desk-deflection failure (docs/DECISIONS.md). 1.49M PersonX-centred narratives across train+valid+test (0.86 GB full repo, but `allow` takes train.parquet only -- 0.69 GB, byte-confirmed); the reader keeps `relation == \"xReact\"` only -- PersonX's own emotional reaction, the one relation type actually framed around how someone FEELS rather than what they need/intend/want (xNeed+xIntent+xWant were 63% of a 100-row sample and read exactly like the failure being fixed). Structurally the right shape for this: the schema has NO assistant role at all, every dialogue is two named peers, so there is no help-desk voice sitting in the source to be learned by accident. Rows where a speaker name is a generic role word (Priest, Agent, Doctor, Client...) are dropped since those are transactional exchanges wearing a person's name. VERIFIED against the real download, not just estimated: 288,550 records survive the filter (within the sweep's ~300-400K target), and sampled rows read exactly like the fix -- 'I don't really understand this material and it's making me feel frustrated' answered with 'Let's take a look at it together then', a coach reassuring a player after a dropped catch, a friend explaining a sibling relationship. Only obligation under CC-BY-4.0 is attribution to Kim et al. 2023 / AI2."
+
+[[dataset]]
 name = "glaive-function-calling-v2"
 target = "persona_lora"
 priority = 1
@@ -208,15 +222,16 @@ note = "135,174 human-written messages in 13,854 ranked conversation trees (read
 [[dataset]]
 name = "dailydialog"
 target = "persona_lora"
-priority = 2
-hf_id = "li2017dailydialog/daily_dialog"
-license = "cc-by-nc-sa-4.0"
-flags = ["unclear"]
-access = "unavailable"
-size_gb = 0.0
+priority = 3
+hf_id = "OpenRL/daily_dialog"
+license = "cc-by-nc-sa-4.0 -- from the ORIGINAL source (Li et al. 2017 paper + li2017dailydialog/daily_dialog card), NOT from this mirror's own tag, which carries none. The mirror is bytes only; the manifest's licence verdict does not defer to it."
+flags = ["NC", "SA"]
+access = "direct"
+size_gb = 0.01
 hours = 0.0
-weights_publishable = "unclear"
-note = "SCRIPT-BASED HF dataset: the repo holds only a loader .py and a README, so snapshot_download gets no data. It needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo -- a decision for a person, not a fetch script, in a project whose threat model is about exactly that. Marked unavailable until a parquet mirror is found or the risk is accepted deliberately. 13,118 dialogues (train 11,118 / val 1,000 / test 1,000), ~103k utterances with a per-utterance emotion label {no emotion, anger, disgust, fear, happiness, sadness, surprise} plus dialogue act; the only widely used dialogue set that labels the responder's own turn, which is precisely the <e:LABEL..."
+allow = ["data/train-*.parquet", "*.md"]
+weights_publishable = "no"
+note = "UNBLOCKED 2026-09-17 (see docs/DECISIONS.md): the canonical li2017dailydialog/daily_dialog repo is script-loading only -- snapshot_download gets no data, real access needs datasets.load_dataset(trust_remote_code=True), which executes code from the dataset repo and this project's threat model refuses that in an automated fetch script. Same trap as facebook/empathetic_dialogues, below. OpenRL/daily_dialog is bytes-identical content in parquet, verified against the original: `dialog`/`act`/`emotion` parallel arrays, 11,118/1,000/1,000 train/val/test dialogues, the same 7-class emotion set {no emotion, anger, disgust, fear, happiness, sadness, surprise} documented here originally. SA is stricter than plain NC: the ShareAlike clause means a derivative adapter plausibly has to be released under the same copyleft terms if released at all, not just withheld from sale -- weights_publishable is 'no' for that reason even before v5/v6. Lowest priority of the three corpora added in the 2026-09-17 persona-text sweep: only a few hundred rows are on-target (negative-emotion turn, non-clarifying reply) out of 11,118 dialogues, but it is still the only corpus here that labels the RESPONDER's own turn rather than the speaker's stated feeling."
 
 [[dataset]]
 name = "massive-1-1"
@@ -251,12 +266,12 @@ target = "persona_lora"
 priority = 3
 hf_id = "facebook/empathetic_dialogues"
 license = "cc-by-nc-4.0"
-flags = ["NC"]
-access = "direct"
+flags = ["NC", "unclear"]
+access = "unavailable"
 size_gb = 0.01
 hours = 0.0
 weights_publishable = "no"
-note = "~25k crowd-sourced conversations (utterance rows: train 76,673 / val 12,030 / test 10,943) grounded in one of 32 emotion labels (surprised, angry, sad, joyful, content, afraid, annoyed, grateful ...), where the listener responds to the speaker's stated feeling. Teaches Neiro to react to the user'..."
+note = "CORRECTED 2026-09-17: this entry was marked `access = \"direct\"`, which is wrong and was never actually exercised -- confirmed by the fact that the only thing ever downloaded locally is the loader script and the README, zero rows. The HF repo is SCRIPT-LOADING (datasets-server returns 'Not found', the parquet endpoint explicitly says it \"runs arbitrary Python code\"), the exact same trap dailydialog carried until this same pass fixed it with a mirror -- but no safe mirror exists here. Checked and rejected: `pixelsandpointers/empathetic_dialogues_for_lm` carries NO licence tag at all AND strips the schema down to a bare `conv` list, losing the emotion label and context that are the entire reason to want this corpus. `Estwld/empathetic_dialogues_llm` tags itself apache-2.0, which is almost certainly a mis-relicense by a third party who does not hold that right over Meta's CC-BY-NC-4.0 corpus -- using it would launder NC data as permissive, exactly backwards from the gigaspeech trap and more dangerous, since it would make the manifest's own automation mark weights 'publishable' when they legally are not. GitHub direct (facebookresearch/EmpatheticDialogues) was not used either -- this project's own rule (CLAUDE.md #3) is that no install path may depend on a GitHub asset, this network has a known history of blocking github.com hosts, and `trust_remote_code=True` on the canonical loader remains the one thing this project's threat model explicitly refuses to automate. Marked `unavailable` until a real data-only, correctly-licensed mirror turns up or Yash accepts the trust_remote_code risk himself. ~25k crowd-sourced conversations grounded in one of 32 emotion labels, where the listener responds to the speaker's stated feeling -- the single most concentrated warmth signal any candidate in the 2026-09-17 sweep found (0.03% help-desk phrasing vs. 16.9% acknowledgment phrasing across 36,657 sampled turns), which is exactly why it is worth revisiting rather than deleting."
 
 [[dataset]]
 name = "hinglish-everyday-conversations-1m"

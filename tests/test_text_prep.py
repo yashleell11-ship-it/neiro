@@ -40,8 +40,10 @@ from elizabeth.training.text import (
     read_hermes,
     read_hinglish_top,
     read_indictalk_hindi,
+    read_daily_dialog,
     read_oasst2,
     read_phinc,
+    read_soda,
     read_synthetic_persona_chat,
     read_when2call,
     read_xlam,
@@ -254,6 +256,121 @@ class TestSyntheticPersonaChat:
         assert prep.drops() == {"synthetic-persona-chat: no speaker marker": 1}, (
             "a transcript with no marker is dropped with a number, not silently"
         )
+
+
+class TestSoda:
+    def _row(self, **over: object) -> dict:
+        base: dict[str, object] = {
+            "relation": "xReact",
+            "speakers": ["Veda", "Marcus"],
+            "dialogue": ["Hi, how are you?", "I'm good, thanks!"],
+        }
+        return base | over
+
+    def test_only_xreact_survives(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "train.jsonl",
+            [self._row(), self._row(relation="xNeed"), self._row(relation="xIntent")],
+        )
+        recs = list(read_soda(tmp_path))
+        assert len(recs) == 1, "xNeed and xIntent are goal-directed, not an emotional reaction"
+        _assert_alternates(recs[0])
+
+    def test_a_role_word_speaker_is_dropped(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "train.jsonl",
+            [
+                self._row(),
+                self._row(speakers=["Veda", "Priest"]),
+                self._row(speakers=["PRIEST", "Veda"]),  # case-insensitive
+            ],
+        )
+        recs = list(read_soda(tmp_path))
+        assert len(recs) == 1, "a role-word speaker means no real assistant voice to imitate"
+
+    def test_a_three_speaker_row_is_dropped(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "train.jsonl",
+            [self._row(speakers=["Veda", "Marcus", "Elena"], dialogue=["a", "b", "c"])],
+        )
+        assert list(read_soda(tmp_path)) == []
+
+    def test_mismatched_speaker_and_dialogue_lengths_are_dropped(self, tmp_path: Path) -> None:
+        _jsonl(tmp_path / "train.jsonl", [self._row(dialogue=["only one line"])])
+        assert list(read_soda(tmp_path)) == []
+
+    def test_valid_and_test_splits_are_not_read(self, tmp_path: Path) -> None:
+        # This is TRAINING data; valid/test exist for a benchmark this
+        # reader has no business touching.
+        _jsonl(tmp_path / "valid.jsonl", [self._row()])
+        _jsonl(tmp_path / "test.jsonl", [self._row()])
+        assert list(read_soda(tmp_path)) == []
+
+    def test_kind_is_chat_not_emotion_text(self, tmp_path: Path) -> None:
+        # SODA has no assistant role and no per-message label -- it
+        # teaches register through a real exchange, not a
+        # (sentence -> label word) pair like goemotions.
+        _jsonl(tmp_path / "train.jsonl", [self._row()])
+        rec = list(read_soda(tmp_path))[0]
+        assert rec.kind == "chat"
+        assert rec.lang == "en"
+
+
+class TestDailyDialog:
+    def _row(self, **over: object) -> dict:
+        base: dict[str, object] = {
+            "dialog": ["I got the job!", "Congratulations! That's wonderful.", "Thank you!"],
+            "act": [1, 1, 1],
+            "emotion": [4, 4, 0],  # happiness, happiness, no emotion
+        }
+        return base | over
+
+    def test_only_negative_emotion_rows_survive(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "data" / "train-00000.jsonl",
+            [
+                self._row(),  # happiness only -- no sadness/fear/anger anywhere
+                self._row(emotion=[0, 5, 0]),  # sadness present
+                self._row(emotion=[1, 0, 0]),  # anger present
+                self._row(emotion=[0, 3, 0]),  # fear present
+            ],
+        )
+        recs = list(read_daily_dialog(tmp_path))
+        assert len(recs) == 3, "only rows containing sadness, fear, or anger are on-target"
+
+    def test_speakers_alternate_by_position_not_a_real_field(self, tmp_path: Path) -> None:
+        # Index parity assigns the roles (0,2,4.. = first speaker = user;
+        # 1,3,5.. = assistant) -- a trailing turn by the first speaker is
+        # a dangling user line, and _dialogue trims it same as everywhere
+        # else, which is why this fixture ends on the odd index.
+        _jsonl(
+            tmp_path / "data" / "train-00000.jsonl",
+            [self._row(emotion=[5, 0], dialog=["I lost my job.", "I'm so sorry."])],
+        )
+        rec = list(read_daily_dialog(tmp_path))[0]
+        _assert_alternates(rec)
+        assert [m["content"] for m in rec.messages] == ["I lost my job.", "I'm so sorry."]
+
+    def test_a_single_turn_row_is_dropped(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "data" / "train-00000.jsonl",
+            [self._row(dialog=["I'm sad."], emotion=[5])],
+        )
+        assert list(read_daily_dialog(tmp_path)) == [], "one line is not a dialogue"
+
+    def test_val_and_test_splits_are_not_read(self, tmp_path: Path) -> None:
+        _jsonl(
+            tmp_path / "data" / "validation-00000.jsonl",
+            [self._row(emotion=[5, 0, 0])],
+        )
+        _jsonl(tmp_path / "data" / "test-00000.jsonl", [self._row(emotion=[5, 0, 0])])
+        assert list(read_daily_dialog(tmp_path)) == []
+
+    def test_kind_and_lang(self, tmp_path: Path) -> None:
+        _jsonl(tmp_path / "data" / "train-00000.jsonl", [self._row(emotion=[5, 0, 0])])
+        rec = list(read_daily_dialog(tmp_path))[0]
+        assert rec.kind == "chat"
+        assert rec.lang == "en"
 
 
 class TestIndicTalk:
@@ -808,7 +925,7 @@ class TestRegistry:
         text_targets = {"persona_lora", "hinglish_llm", "hindi_emotion_text"}
         in_manifest = {d.name for d in manifest.dataset if d.target in text_targets}
         assert set(READERS) <= in_manifest, "a reader for a corpus the manifest does not list"
-        assert len(READERS) == 13
+        assert len(READERS) == 15
 
 
 # --- split ----------------------------------------------------------------
