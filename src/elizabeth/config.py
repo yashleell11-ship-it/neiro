@@ -259,6 +259,43 @@ class ExpressionConfig(BaseModel):
     epsilon: float = 0.01
 
 
+class CameraConfig(BaseModel):
+    """The camera, for v2's hand tracking. Off by default: this is the
+    one sensor in the system that can see the room, and it does not turn
+    itself on because a config file was merely present.
+    """
+
+    enabled: bool = False
+
+    # v4l2 device index. The ASUS FHD webcam on this laptop enumerates
+    # /dev/video0-3 and only video0 is a capture node.
+    device_index: int = 0
+
+    # 640x480 measured as the right working size: hand landmarks do not
+    # need more pixels, and it is the cheapest path to the ~28 fps below.
+    # The device also offers 1280x720 and 1920x1080 at the same cost per
+    # frame, because the cost is not bandwidth (see docs/DECISIONS.md,
+    # 2026-09-19).
+    width: int = 640
+    height: int = 480
+    fps: int = 30
+
+    # MEASURED, not guessed. This v4l2 control defaults to 1 on this
+    # webcam and lets the driver lengthen exposure in low light by
+    # dropping the frame rate — a dark room pins capture to exactly
+    # 1/10 s, i.e. 100 ms per frame, regardless of resolution or pixel
+    # format. Setting it to 0 took capture from p50 100.0 ms to p50
+    # 36.3 ms (~28 fps). Leave this True or gesture latency triples
+    # after dark with nothing in the code to explain it.
+    pin_dynamic_framerate_off: bool = True
+
+    # Ask v4l2 for one buffer, so a frame that arrives while we are busy
+    # is dropped rather than queued. A gesture pipeline wants the CURRENT
+    # hand position; a three-frame backlog is just latency wearing a
+    # frame's clothes.
+    buffer_size: int = 1
+
+
 class Elizabeth(BaseSettings):
     model_config = SettingsConfigDict(
         toml_file="~/.config/elizabeth/config.toml",
@@ -273,6 +310,7 @@ class Elizabeth(BaseSettings):
     endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
     affect: AffectConfig = Field(default_factory=AffectConfig)
     expression: ExpressionConfig = Field(default_factory=ExpressionConfig)
+    camera: CameraConfig = Field(default_factory=CameraConfig)
 
     @classmethod
     def settings_customise_sources(
