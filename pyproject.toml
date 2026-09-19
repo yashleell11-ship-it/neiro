@@ -30,6 +30,25 @@ dependencies = [
 [project.scripts]
 elizabeth = "elizabeth.cli:app"
 
+[project.optional-dependencies]
+# v2's camera work. Optional because v1 is the voice loop and must not
+# be made to carry a vision stack to run.
+#
+# Checked against rules 2 and 3 rather than assumed (docs/DECISIONS.md,
+# 2026-09-19): mediapipe publishes a pure `py3-none-manylinux_2_28`
+# wheel on PyPI — not a GitHub release asset, which rule 3 forbids on
+# this network — and this machine's glibc 2.44 clears the 2.28 floor.
+# It pulls NO torch, NO CUDA and NO TensorFlow, which is what makes it
+# safe to add here at all: the runtime venv deliberately keeps a CPU
+# torch build so ctranslate2's cuBLAS stays the only CUDA runtime in the
+# process, and a vision dep dragging in a second one would break STT the
+# same way the training venv broke on 2026-09-13.
+#
+# Deliberately NOT adding opencv-python-headless alongside it: mediapipe
+# depends on opencv-contrib-python, and two OpenCV distributions install
+# into the same `cv2` namespace and shadow each other.
+vision = ["mediapipe>=1.0.1"]
+
 [dependency-groups]
 dev = ["pytest>=9.1.1", "ruff>=0.16.6"]
 
