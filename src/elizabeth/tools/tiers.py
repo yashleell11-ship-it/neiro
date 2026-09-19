@@ -88,3 +88,30 @@ class Reach(StrEnum):
         if self is Reach.LOCAL:
             return True
         return tier is not StateTier.TUNNEL
+
+
+class Source(StrEnum):
+    """Which surface asked for a tool call.
+
+    A third axis, and independent of the other two for the same reason
+    `Reach` is independent of `Tier`: `Tier` asks how bad this is if it
+    goes wrong, `Reach` asks whose network it crosses, and `Source` asks
+    **who is allowed to ask**. A tool can be cheap, local and still be
+    something a camera must never be able to trigger.
+
+    It exists because v2 puts a second caller behind the registry. Until
+    now every call came from the LLM, having been through a system
+    prompt, a tool schema and (for YELLOW) a confirmation. A gesture has
+    been through none of those — it is a hand moving in a room, and the
+    recogniser cannot tell a deliberate swipe from an identical
+    accidental one. So gesture-eligibility is opt-in per tool
+    (`ToolSpec.gesture_ok`), defaulting to False, exactly as `reach`
+    defaults to LOCAL: the narrow value is the safe one, and a tool that
+    wants the wider surface has to say so in its own definition.
+    """
+
+    VOICE = "voice"
+    """The LLM asked, on the user's spoken turn. The historical default."""
+
+    GESTURE = "gesture"
+    """v2's camera saw a gesture. No language model was involved."""

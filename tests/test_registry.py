@@ -19,12 +19,13 @@ from elizabeth.state import Tier as StateTier
 from elizabeth.tools.registry import (
     RateLimited,
     ReachRefused,
+    SourceRefused,
     ToolNotConfirmed,
     ToolRegistry,
     ToolRejected,
     ToolSpec,
 )
-from elizabeth.tools.tiers import Reach, Tier
+from elizabeth.tools.tiers import Reach, Source, Tier
 
 
 class NoArgs(BaseModel):
@@ -494,3 +495,86 @@ class TestReachGate:
         written = (tmp_path / "audit.jsonl").read_text()
         assert DENIED in written
         assert "internet" in written and "tunnel" in written
+
+
+class TestSourceGate:
+    """v2 puts a second caller behind the registry. Until now every call
+    came from the LLM, having passed a system prompt, a tool schema and
+    (for YELLOW) a confirmation. A gesture has passed none of those, and
+    the recogniser cannot tell a deliberate swipe from an identical
+    accidental one — so eligibility is opt-in per tool.
+    """
+
+    def _registry(self, calls: list, *, gesture_ok: bool) -> ToolRegistry:
+        reg = ToolRegistry(confirm=lambda *a: True)
+        reg.register(
+            ToolSpec(
+                name="swipe",
+                description="d",
+                tier=Tier.GREEN,
+                args_model=NoArgs,
+                handler=lambda: calls.append("ran") or "done",
+                gesture_ok=gesture_ok,
+            )
+        )
+        return reg
+
+    def test_voice_is_the_default_so_existing_callers_are_unchanged(self) -> None:
+        calls: list = []
+        reg = self._registry(calls, gesture_ok=False)
+        assert reg.call("swipe", {}) == "done"
+        assert calls == ["ran"]
+
+    def test_a_gesture_cannot_reach_a_tool_that_did_not_opt_in(self) -> None:
+        calls: list = []
+        reg = self._registry(calls, gesture_ok=False)
+        with pytest.raises(SourceRefused):
+            reg.call("swipe", {}, source=Source.GESTURE)
+        assert calls == [], "the handler must not have run"
+
+    def test_a_gesture_reaches_a_tool_that_opted_in(self) -> None:
+        calls: list = []
+        reg = self._registry(calls, gesture_ok=True)
+        assert reg.call("swipe", {}, source=Source.GESTURE) == "done"
+        assert calls == ["ran"]
+
+    def test_refusal_is_audited_with_the_source(self, tmp_path) -> None:
+        reg = ToolRegistry(confirm=lambda *a: True, audit=AuditLog(tmp_path / "a.jsonl"))
+        reg.register(
+            ToolSpec(
+                name="swipe",
+                description="d",
+                tier=Tier.GREEN,
+                args_model=NoArgs,
+                handler=lambda: "done",
+            )
+        )
+        with pytest.raises(SourceRefused):
+            reg.call("swipe", {}, source=Source.GESTURE)
+        written = (tmp_path / "a.jsonl").read_text()
+        assert DENIED in written and "gesture" in written
+
+    def test_gesture_spam_does_not_exhaust_the_voice_budget(self) -> None:
+        # The bug this prevents: buckets keyed on tool name alone mean a
+        # camera misreading a wave burns the LLM's allowance for the same
+        # tool, and the voice path is rate-limited for something it did
+        # not do.
+        calls: list = []
+        reg = self._registry(calls, gesture_ok=True)
+        for _ in range(6):
+            reg.call("swipe", {}, source=Source.GESTURE)
+        with pytest.raises(RateLimited):
+            reg.call("swipe", {}, source=Source.GESTURE)
+        # The voice path still has its own full allowance.
+        assert reg.call("swipe", {}) == "done"
+
+    def test_the_gesture_bucket_is_still_a_ceiling(self) -> None:
+        # Separating the buckets must not mean the camera is unlimited —
+        # a misread wave becoming forty swipes is exactly the runaway
+        # these buckets exist to stop.
+        calls: list = []
+        reg = self._registry(calls, gesture_ok=True)
+        for _ in range(6):
+            reg.call("swipe", {}, source=Source.GESTURE)
+        with pytest.raises(RateLimited):
+            reg.call("swipe", {}, source=Source.GESTURE)

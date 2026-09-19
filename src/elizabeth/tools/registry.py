@@ -48,7 +48,7 @@ from pydantic import BaseModel, ValidationError
 
 from elizabeth.state import Tier as StateTier
 from elizabeth.tools.audit import AuditLog
-from elizabeth.tools.tiers import Reach, Tier
+from elizabeth.tools.tiers import Reach, Source, Tier
 
 # Types an argument may legally be. `str` is deliberately absent — see
 # the module docstring. A tool that genuinely needs free text opts in
@@ -78,6 +78,14 @@ class ReachRefused(ToolError):
     """A tool that leaves the machine, on a turn that is already remote.
 
     Not a failure — a policy. See `tiers.Reach`.
+    """
+
+
+class SourceRefused(ToolError):
+    """A surface asked for a tool it is not allowed to ask for.
+
+    Today that means a gesture reaching for something not marked
+    `gesture_ok`. Not a failure — a policy. See `tiers.Source`.
     """
 
 
@@ -116,6 +124,14 @@ class ToolSpec:
     # that leaves the machine has to say so — the safe direction for a
     # field that gates network exposure.
     reach: Reach = Reach.LOCAL
+    # May v2's camera trigger this without a language model in the loop?
+    # Defaults False for the same reason `reach` defaults LOCAL: the
+    # narrow value is the safe one. A gesture has been through no system
+    # prompt and no tool schema, and the recogniser cannot tell a
+    # deliberate swipe from an identical accidental one — so a tool that
+    # wants to be reachable that way says so here, in its own definition,
+    # where the decision is visible next to its tier.
+    gesture_ok: bool = False
 
     def to_openai_schema(self) -> dict:
         """The tool definition the model sees — generated from the same
@@ -174,6 +190,8 @@ class ToolRegistry:
     ) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._buckets: dict[str, _Bucket] = {}
+        # Per-(tool, non-voice source) buckets — see `_bucket_for`.
+        self._source_buckets: dict[str, _Bucket] = {}
         self._global = _Bucket(self.SIDE_EFFECT_BUDGET_PER_MIN)
         self._confirm = confirm
         self._clock = clock
@@ -227,6 +245,34 @@ class ToolRegistry:
         self._buckets[spec.name] = _Bucket(spec.max_per_minute)
         return spec
 
+    def _bucket_for(self, spec: ToolSpec, source: Source) -> _Bucket:
+        """The rate-limit bucket for this tool AS ASKED BY THIS SURFACE.
+
+        Keyed on `(name, source)` rather than name alone, because the two
+        surfaces have genuinely different natural rates and sharing one
+        bucket makes each one's limit a function of the other's
+        behaviour. The voice path calls a tool a handful of times a
+        minute at most — a spoken turn is seconds long. A gesture path is
+        continuous input: a few deliberate swipes in quick succession is
+        normal use, not abuse, and with a shared bucket the seventh swipe
+        in a minute would raise `RateLimited` on the LLM's next attempt
+        at the same tool, for something the LLM did not do.
+
+        Separating them is also what lets a gesture-eligible tool keep
+        the voice path's conservative limit while allowing a rate that
+        suits a hand. The per-source ceiling is deliberately still a
+        ceiling: a camera misreading a wave as forty swipes is exactly
+        the runaway these buckets exist to stop.
+        """
+        if source is Source.VOICE:
+            return self._buckets[spec.name]
+        key = f"{spec.name}\x00{source.value}"
+        bucket = self._source_buckets.get(key)
+        if bucket is None:
+            bucket = _Bucket(spec.max_per_minute)
+            self._source_buckets[key] = bucket
+        return bucket
+
     def __contains__(self, name: str) -> bool:
         return name in self._tools
 
@@ -275,12 +321,19 @@ class ToolRegistry:
             raise ToolRejected(f"{name}: {where} — {first.get('msg', 'invalid')}") from exc
         return spec, parsed
 
-    def call(self, name: str, args: dict, turn_id: int = 0) -> str:
+    def call(
+        self, name: str, args: dict, turn_id: int = 0, source: Source = Source.VOICE
+    ) -> str:
         """Validate, gate, and run. Returns what Elizabeth says about it.
 
         A rejected call is not audited: nothing ran, nothing could have,
         and the only arguments to record would be the unvalidated ones —
         the one place free text could reach the log.
+
+        `source` says which surface asked. It defaults to VOICE so every
+        existing caller keeps its exact behaviour, and so that a new
+        surface has to name itself rather than inheriting the LLM's
+        permissions by saying nothing.
         """
         spec, parsed = self.validate(name, args)
         args = parsed.model_dump()
@@ -288,6 +341,16 @@ class ToolRegistry:
         audit = self._audit
         attempt = audit.attempt(spec.name, args, spec.tier.value, turn_id) if audit else None
         call_no = attempt["call"] if attempt else 0
+
+        # First gate, and cheapest: a surface that may not ask for this
+        # tool at all should not spend a bucket slot, reach a
+        # confirmation, or appear in the audit as anything but denied.
+        if source is not Source.VOICE and not spec.gesture_ok:
+            if audit:
+                audit.denied(spec.name, turn_id, f"source {source.value} not permitted", call=call_no)
+            raise SourceRefused(
+                f"{name} cannot be triggered by {source.value} — it is not marked gesture_ok."
+            )
 
         # Checked before the rate limit and before confirmation: a call
         # this turn can never complete should not spend a bucket slot,
@@ -301,7 +364,7 @@ class ToolRegistry:
                 f"the {tier.value}, and that would send it off the machine twice."
             )
 
-        if not self._buckets[spec.name].allow(now):
+        if not self._bucket_for(spec, source).allow(now):
             if audit:
                 audit.rate_limited(spec.name, turn_id, call=call_no)
             raise RateLimited(
