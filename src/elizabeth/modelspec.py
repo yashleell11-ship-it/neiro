@@ -35,7 +35,7 @@ Purpose = Literal["runtime", "training"]
 # both   — small enough, or needed, on either
 Runs = Literal["local", "box", "both"]
 
-Component = Literal["llm", "stt", "tts", "vad", "turn", "ser", "avatar"]
+Component = Literal["llm", "stt", "tts", "vad", "turn", "ser", "wake", "avatar"]
 
 
 class ModelSpec(BaseModel):
@@ -223,6 +223,28 @@ MODELS: tuple[ModelSpec, ...] = (
         license="mit",
         size_gb=13.87,
         note="G5 fallback; whole repo is large because it ships multilingual checkpoints",
+    ),
+    ModelSpec(
+        name="openwakeword-features",
+        component="wake",
+        purpose="runtime",
+        runs="both",
+        hf_id="littlebearlabs/openwakeword-features",
+        license="apache-2.0",
+        size_gb=0.01,
+        revision="5e032d9ecdb798f9182ca8088284cf934f10d68e",
+        allow=["*.onnx", "LICENSE", "README.md"],
+        note=(
+            "Front end for 'Hey Elizabeth': melspectrogram.onnx then "
+            "embedding_model.onnx, 80 ms of audio to one 96-d vector. Only the "
+            "feature extractors -- the wake head itself is trained here, so "
+            "this is the one third-party piece. NOT the openwakeword package: "
+            "its Linux dependency tflite-runtime stops at cp311 and this "
+            "project is 3.12, so the package cannot install without --no-deps. "
+            "Plain onnxruntime runs these two files. NOT davidscripka/"
+            "openwakeword either, which is cc-by-nc-sa-4.0 on the Hub and "
+            "carries no weights; this mirror is apache-2.0 with a LICENSE file."
+        ),
     ),
     ModelSpec(
         name="silero-vad",

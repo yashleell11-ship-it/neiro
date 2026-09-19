@@ -21,11 +21,12 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from typing import get_args
 
 from rich.console import Console
 from rich.table import Table
 
-from elizabeth.modelspec import ModelSpec, select, total_gb
+from elizabeth.modelspec import Component, ModelSpec, select, total_gb
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_DEST = REPO / "models"
@@ -121,7 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--runs", choices=["local", "box"], help="which machine needs it ('both' always included)"
     )
-    ap.add_argument("--component", choices=["llm", "stt", "tts", "vad", "turn", "ser", "avatar"])
+    # Derived from the Literal, not retyped. The hand-written copy had
+    # already gone stale: adding a "wake" component to modelspec left
+    # `--component wake` an argparse error while the spec itself was fine.
+    ap.add_argument("--component", choices=sorted(get_args(Component)))
     ap.add_argument("--only", action="append", help="model name(s) from modelspec.py; repeatable")
     ap.add_argument("--dest", type=Path, default=DEFAULT_DEST)
     ap.add_argument("--force", action="store_true")

@@ -259,6 +259,60 @@ class ExpressionConfig(BaseModel):
     epsilon: float = 0.01
 
 
+class WakeConfig(BaseModel):
+    """"Hey Elizabeth" — the thing that replaces the spacebar.
+
+    The measured cost of listening for a name forever, on this laptop's
+    CPU: 0.18 ms of mel + 1.75 ms of embedding per 80 ms of audio, about
+    2.4% of one core. That number is why there is no VAD gate in front
+    of it — gating would save two percent of a core and add a way for
+    the first syllable of the phrase to be the one that arms the gate.
+
+    The front end is openWakeWord's two feature extractors, the head is
+    ours. See docs/DECISIONS.md, 2026-09-20, for why the openwakeword
+    *package* is not a dependency (its Linux dep tflite-runtime stops at
+    cp311; this project is 3.12) and why the weights come from
+    littlebearlabs/openwakeword-features rather than the author's own
+    Hub mirror, which is cc-by-nc-sa-4.0.
+    """
+
+    enabled: bool = True
+
+    # Informational, and the trainer's target: what the head was taught
+    # to hear. Changing it here does not retrain anything.
+    phrase: str = "hey elizabeth"
+
+    features_dir: str = "models/openwakeword-features"
+    head_path: str = "models/wake-hey-elizabeth/head.onnx"
+
+    # Uncalibrated until the head exists and a threshold sweep has run
+    # against real recordings in this room. 0.5 is a placeholder, and
+    # `elizabeth doctor` says so rather than implying it was measured.
+    threshold: float = 0.5
+
+    # Measured, not chosen: 1280 samples of audio produce exactly 5 mel
+    # frames through melspectrogram.onnx, the embedding model takes
+    # exactly 76 mel frames, and the head takes exactly 16 embeddings.
+    # None of the three is negotiable -- they are the shapes baked into
+    # the ONNX graphs. 16 embeddings at an 80 ms stride is 1.28 s of
+    # context, comfortably longer than the phrase.
+    hop_samples: int = 1280
+    mel_window: int = 76
+    embedding_window: int = 16
+
+    # After a detection, stop scoring for this long and clear the
+    # context. Without it one "hey Elizabeth" crosses the threshold on
+    # several consecutive hops and she answers herself three times.
+    refractory_ms: float = 2000.0
+
+    # melspectrogram.onnx emits raw log-mel; the embedding model was
+    # trained on `mel / 10 + 2`. Skipping it does not error, it just
+    # feeds the classifier a distribution it has never seen -- which
+    # looks like "the wake word never fires" and not like a bug.
+    mel_scale: float = 10.0
+    mel_offset: float = 2.0
+
+
 class CameraConfig(BaseModel):
     """The camera, for v2's hand tracking. Off by default: this is the
     one sensor in the system that can see the room, and it does not turn
@@ -335,6 +389,7 @@ class Elizabeth(BaseSettings):
     affect: AffectConfig = Field(default_factory=AffectConfig)
     expression: ExpressionConfig = Field(default_factory=ExpressionConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
+    wake: WakeConfig = Field(default_factory=WakeConfig)
 
     @classmethod
     def settings_customise_sources(
