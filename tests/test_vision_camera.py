@@ -22,6 +22,7 @@ import pytest
 
 from elizabeth.config import Elizabeth
 from elizabeth.vision import camera as cam
+from elizabeth.vision.camera import WrongCamera, resolve_device
 
 
 class TestPinDynamicFramerate:
@@ -100,6 +101,75 @@ class TestPinDynamicFramerate:
         assert f"--set-ctrl={cam.DYNAMIC_FRAMERATE_CONTROL}=0" in seen[0]
 
 
+class TestResolveDevice:
+    """The defect this class exists for: an earlier version of this
+    module selected the camera by index, with a comment asserting "only
+    video0 is a capture node". Checked on the machine, that was wrong —
+    there are TWO video-capture nodes and the second is an infrared
+    sensor:
+
+        /dev/video0  ASUS FHD webcam   Video Capture
+        /dev/video1  ASUS FHD webcam   Metadata Capture
+        /dev/video2  ASUS IR camera    Video Capture
+        /dev/video3  ASUS IR camera    Metadata Capture
+
+    Enumeration order is a kernel probe-order accident. If it shifts,
+    index 0 is the IR camera, and hand tracking against infrared does
+    not fail loudly — it just quietly gets worse, which is the hardest
+    kind of bug to attribute.
+    """
+
+    # The four real nodes on this laptop, as data.
+    REAL = {
+        0: ("ASUS FHD webcam: ASUS FHD webca", "Video Capture"),
+        1: ("ASUS FHD webcam: ASUS FHD webca", "Metadata Capture"),
+        2: ("ASUS FHD webcam: ASUS IR camera", "Video Capture"),
+        3: ("ASUS FHD webcam: ASUS IR camera", "Metadata Capture"),
+    }
+    WANT = "ASUS FHD webcam: ASUS FHD webca"
+
+    def _fake_nodes(self, monkeypatch: pytest.MonkeyPatch, target: int, tmp_path) -> str:
+        monkeypatch.setattr(cam, "_describe_node", lambda i: self.REAL[i])
+        link = tmp_path / "by-path-link"
+        node = tmp_path / f"video{target}"
+        node.write_text("")
+        link.symlink_to(node)
+        return str(link)
+
+    def test_the_rgb_webcam_resolves(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        path = self._fake_nodes(monkeypatch, 0, tmp_path)
+        index, card = resolve_device(path, self.WANT)
+        assert index == 0 and card == self.WANT
+
+    def test_the_infrared_camera_is_refused_by_name(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        # The whole point. video2 IS a capture device, so capability
+        # checks alone would accept it.
+        path = self._fake_nodes(monkeypatch, 2, tmp_path)
+        with pytest.raises(WrongCamera, match="infrared"):
+            resolve_device(path, self.WANT)
+
+    def test_a_prefix_match_would_have_accepted_the_ir_camera(self) -> None:
+        # Pinning why the comparison is full-equality and not startswith:
+        # the IR node's card string CONTAINS the webcam's as a prefix.
+        assert self.REAL[2][0].startswith("ASUS FHD webcam")
+        assert self.REAL[2][0] != self.WANT
+
+    def test_a_metadata_node_is_refused_for_lacking_capture(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        path = self._fake_nodes(monkeypatch, 1, tmp_path)
+        with pytest.raises(WrongCamera, match="Video Capture"):
+            resolve_device(path, self.WANT)
+
+    def test_a_path_that_is_not_a_video_node_is_refused(self, tmp_path) -> None:
+        stray = tmp_path / "not-a-camera"
+        stray.write_text("")
+        with pytest.raises(WrongCamera, match="not a /dev/videoN node"):
+            resolve_device(str(stray), self.WANT)
+
+
 class TestCameraConfig:
     def test_the_camera_is_off_by_default(self) -> None:
         # The one sensor that can see the room does not turn itself on
@@ -114,3 +184,11 @@ class TestCameraConfig:
         )
         assert (camcfg.width, camcfg.height) == (640, 480)
         assert camcfg.buffer_size == 1, "a queued frame is latency, not data"
+
+    def test_the_device_is_pinned_by_path_not_by_index(self) -> None:
+        # Index selection is the defect this replaced; see
+        # TestResolveDevice's docstring.
+        camcfg = Elizabeth().camera
+        assert camcfg.device.startswith("/dev/v4l/by-path/")
+        assert not hasattr(camcfg, "device_index")
+        assert camcfg.expect_card, "opening any camera that answers is how you get infrared"

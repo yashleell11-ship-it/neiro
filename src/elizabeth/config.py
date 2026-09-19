@@ -267,9 +267,33 @@ class CameraConfig(BaseModel):
 
     enabled: bool = False
 
-    # v4l2 device index. The ASUS FHD webcam on this laptop enumerates
-    # /dev/video0-3 and only video0 is a capture node.
-    device_index: int = 0
+    # Pinned BY PATH, never by index. An earlier version of this comment
+    # claimed "only video0 is a capture node" and that was simply wrong,
+    # checked on the machine: this laptop exposes TWO video-capture
+    # nodes, and the second one is an infrared sensor.
+    #
+    #   /dev/video0  ASUS FHD webcam   Video Capture      <- the one we want
+    #   /dev/video1  ASUS FHD webcam   Metadata Capture
+    #   /dev/video2  ASUS IR camera    Video Capture      <- NOT this one
+    #   /dev/video3  ASUS IR camera    Metadata Capture
+    #
+    # Enumeration order is a kernel probe-order accident, not a
+    # contract. If it ever shifts — a USB re-enumeration, a reboot, a
+    # kernel bump — an index of 0 lands on the IR camera and hand
+    # tracking silently runs against infrared, which will not look like
+    # a device bug, it will look like the model got worse. The by-path
+    # symlink encodes the physical USB topology instead (interface .0 is
+    # the RGB camera, .2 is the IR one) and is stable across all of
+    # those.
+    device: str = "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:8:1.0-video-index0"
+
+    # What the device must call itself for us to open it. Checked after
+    # resolving the path, as a second, independent wall against pointing
+    # a hand tracker at the infrared sensor: the IR node on this machine
+    # reports "ASUS FHD webcam: ASUS IR camera", which contains the
+    # webcam's own name as a prefix, so this is matched in full and not
+    # by prefix.
+    expect_card: str = "ASUS FHD webcam: ASUS FHD webca"
 
     # 640x480 measured as the right working size: hand landmarks do not
     # need more pixels, and it is the cheapest path to the ~28 fps below.

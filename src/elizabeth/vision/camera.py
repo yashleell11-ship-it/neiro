@@ -32,6 +32,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -40,6 +41,77 @@ from elizabeth.config import CameraConfig, Elizabeth
 # v4l2 control names this module touches. Named here rather than inline
 # so a driver that spells them differently fails in one readable place.
 DYNAMIC_FRAMERATE_CONTROL = "exposure_dynamic_framerate"
+
+
+class WrongCamera(RuntimeError):
+    """The configured path resolved to a device that is not the one we
+    mean. Raised rather than shrugged off: the alternative on this
+    laptop is an infrared sensor, and hand tracking against IR does not
+    fail loudly, it just quietly gets worse.
+    """
+
+
+def resolve_device(device: str, expect_card: str) -> tuple[int, str]:
+    """`(v4l2 index, card string)` for a configured device path.
+
+    Follows the by-path symlink, then checks two things before anything
+    opens the camera: that the node calls itself what we expect, and
+    that it actually advertises VIDEO_CAPTURE. Both are needed. The
+    card string alone is not enough because this machine's IR node
+    reports "ASUS FHD webcam: ASUS IR camera" — the webcam's own name is
+    a PREFIX of the infrared one, so a `startswith` check would happily
+    hand back the wrong sensor. The capability alone is not enough
+    either, because both of them are capture devices.
+    """
+    import re
+
+    resolved = Path(device).resolve()
+    match = re.fullmatch(r"video(\d+)", resolved.name)
+    if match is None:
+        raise WrongCamera(f"{device} resolved to {resolved}, which is not a /dev/videoN node")
+    index = int(match.group(1))
+
+    card, caps = _describe_node(index)
+    if card != expect_card:
+        raise WrongCamera(
+            f"{device} resolved to /dev/video{index}, which calls itself {card!r}, "
+            f"not {expect_card!r}. Refusing to open it — on this laptop the other "
+            "capture node is an infrared sensor."
+        )
+    if "Video Capture" not in caps:
+        raise WrongCamera(
+            f"/dev/video{index} ({card!r}) does not advertise Video Capture; "
+            f"it reports: {caps}"
+        )
+    return index, card
+
+
+def _describe_node(index: int) -> tuple[str, str]:
+    """`(card string, device-caps text)` from `v4l2-ctl --info`.
+
+    Returns empty strings when v4l2-ctl is missing, so a machine without
+    it degrades to "cannot verify" rather than crashing — the caller
+    turns that into a refusal with a readable reason.
+    """
+    binary = shutil.which("v4l2-ctl")
+    if binary is None:
+        return "", ""
+    try:
+        proc = subprocess.run(
+            [binary, "-d", f"/dev/video{index}", "--info"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # noqa: BLE001
+        return "", ""
+    card = ""
+    for line in proc.stdout.splitlines():
+        if "Card type" in line:
+            card = line.split(":", 1)[1].strip()
+            break
+    return card, proc.stdout
 
 
 @dataclass(frozen=True)
@@ -59,6 +131,11 @@ class CameraOpenResult:
     fps: float
     fourcc: str
     dynamic_framerate_pinned: bool
+    # Which node the by-path symlink actually resolved to, and what it
+    # called itself — recorded so "which camera was this?" is answerable
+    # from a log rather than by re-running it.
+    device_index: int = -1
+    card: str = ""
     notes: tuple[str, ...] = ()
 
 
@@ -109,9 +186,17 @@ def open_camera(cfg: Elizabeth | None = None) -> Iterator[tuple[object, CameraOp
     """Open the webcam with this project's settings, yield
     `(capture, what_we_actually_got)`, and always release it.
 
-    The release matters more than usual here: a webcam left open keeps
-    its LED lit, which in a system that promises the camera is off when
-    it is off is not a cosmetic bug.
+    The release matters because the v4l2 device is exclusive: the next
+    process to want it gets EBUSY until this one lets go.
+
+    It does NOT matter because of the LED. An earlier version of this
+    docstring claimed releasing the device keeps the indicator honest,
+    and that was a promise this hardware does not let software make —
+    checked: the only related control on either node is
+    `privacy 0x009a0910 (bool) flags=read-only`, there is no settable
+    LED control, and whether the indicator is wired to sensor power on
+    this chassis is not determinable from userspace. Whatever the LED
+    does, it does on its own.
     """
     import cv2
 
@@ -119,21 +204,26 @@ def open_camera(cfg: Elizabeth | None = None) -> Iterator[tuple[object, CameraOp
     cam: CameraConfig = cfg.camera
     notes: list[str] = []
 
+    # Resolve and verify BEFORE touching the device. Opening the wrong
+    # node and noticing afterwards is the failure this guards.
+    index, card = resolve_device(cam.device, cam.expect_card)
+
     pinned = False
     if cam.pin_dynamic_framerate_off:
-        pinned, detail = pin_dynamic_framerate_off(cam.device_index)
+        pinned, detail = pin_dynamic_framerate_off(index)
         if not pinned:
             notes.append(f"capture may be slow in low light: {detail}")
 
     # CAP_V4L2 explicitly: the default backend on this machine has picked
     # a different one before, and the controls below only mean anything
     # to v4l2.
-    cap = cv2.VideoCapture(cam.device_index, cv2.CAP_V4L2)
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
     try:
         if not cap.isOpened():
             raise RuntimeError(
-                f"camera /dev/video{cam.device_index} would not open — "
-                "is it in use by another process, or is the index wrong?"
+                f"camera /dev/video{index} ({card!r}) would not open — the v4l2 "
+                "device is exclusive, so the usual cause is another process "
+                "already holding it."
             )
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam.height)
@@ -146,6 +236,8 @@ def open_camera(cfg: Elizabeth | None = None) -> Iterator[tuple[object, CameraOp
             fps=float(cap.get(cv2.CAP_PROP_FPS)),
             fourcc=_fourcc_of(cap),
             dynamic_framerate_pinned=pinned,
+            device_index=index,
+            card=card,
             notes=tuple(notes),
         )
         yield cap, granted
