@@ -49,6 +49,24 @@ elizabeth = "elizabeth.cli:app"
 # into the same `cv2` namespace and shadow each other.
 vision = ["mediapipe>=1.0.1"]
 
+# Training the "Hey Elizabeth" head. Optional because the RUNTIME needs
+# none of it: detection is two Apache-2.0 ONNX files plus the head, run
+# by the onnxruntime already in the base deps. This extra exists only so
+# `scripts/train_wake.py` can read LibriSpeech's parquet shards for
+# negatives, and so torch can export the trained head to ONNX.
+#
+# `onnx` is in here because it turned out to be required, not because it
+# looked required: torch.onnx.export with dynamo=False still calls
+# `_add_onnxscript_fn`, which imports onnx and raises
+# "Module onnx is not installed!" at the very last step of a completed
+# training run. Found by running the thing, after a comment here
+# confidently said the opposite.
+#
+# The openwakeword package is NOT here and not anywhere: on Linux it
+# requires tflite-runtime, whose wheels stop at cp311 while this project
+# is 3.12, so it cannot resolve. See docs/DECISIONS.md, 2026-09-20.
+wake-train = ["pyarrow>=16", "onnx>=1.17"]
+
 [dependency-groups]
 dev = ["pytest>=9.1.1", "ruff>=0.16.6"]
 
