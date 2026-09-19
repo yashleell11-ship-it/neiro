@@ -1,0 +1,13 @@
+[Unit]
+# Keeps both training lanes on their cards and chains to the next job when
+# one finishes. The script is the policy; this unit only runs it.
+Description=Neiro GPU watchdog - keep both training lanes on the cards
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/yash/code/neiro/ops/gpu-watchdog.sh
+# A tick that finishes the persona LoRA hands off to the chat smoke test,
+# which loads a 4B base model and generates. The oneshot default of 90s
+# would kill that mid-load and mark a healthy tick as failed.
+TimeoutStartSec=3600

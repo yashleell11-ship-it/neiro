@@ -35,3 +35,13 @@ web/dist/
 
 # training datasets — large, and other people's voices; the manifest (data/datasets.toml) is what's committed
 data/datasets/
+
+# Watchdog runtime state: logs, locks, restart stamps, stage markers and the
+# PAUSE/STOP flags. The scripts in ops/ are the project; what they scribble
+# while running is machine-local.
+ops/*.log
+ops/*.out
+ops/*.txt
+ops/.*
+ops/PAUSE
+ops/STOP

@@ -1,0 +1,27 @@
+# Report the 3090 Ti's state in flat lines the watchdog can parse.
+#
+# RUNS, not processes. One healthy lane is three processes -- uv.exe launches a
+# venv python.exe which execs the real python.exe -- so a process count reads 3
+# when nothing is wrong and 6 when there genuinely are two runs fighting over
+# the same --out. Counting only the processes whose PARENT is not itself part of
+# a training command collapses each tree to its launcher, so RUNS is 1 per run.
+#
+# Counting the trainer scripts rather than python matters too: the desktop
+# always has other pythons, and "any python is alive" masks a dead trainer
+# forever. It matches ALL of them, not persona_train alone -- the box's job
+# queue moves on to stt_train.py when the persona LoRA finishes, and a probe
+# that only knew about persona would report a healthy English STT run as
+# RUNS=0 and have the watchdog "restart" a machine that was busy.
+$gpu = (& nvidia-smi --query-gpu=memory.free,utilization.gpu --format=csv,noheader,nounits) -split ','
+"FREE=" + $gpu[0].Trim()
+"UTIL=" + $gpu[1].Trim()
+
+$TRAINERS = 'persona_train.py','stt_train.py','ser_train.py'
+$all = @(Get-CimInstance Win32_Process | Where-Object {
+    $cl = $_.CommandLine
+    $cl -and ($TRAINERS | Where-Object { $cl -like "*$_*" })
+})
+$ids = @($all | ForEach-Object { $_.ProcessId })
+$roots = @($all | Where-Object { $ids -notcontains $_.ParentProcessId })
+"RUNS=" + $roots.Count
+"PROCS=" + $all.Count

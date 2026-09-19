@@ -1,0 +1,45 @@
+[Unit]
+# Bilingual persona LoRA on the laptop's RTX 5070.
+#
+# A PERSISTENT unit, not `systemd-run --transient`, because a transient
+# one dies with the reboot and does not come back. That is exactly what
+# happened on 2026-09-20: the laptop rebooted mid-run at step 7880 and
+# training simply stayed down. The box survives the same event because
+# its scheduled task carries an onstart trigger; this is the laptop's
+# equivalent.
+Description=Elizabeth bilingual persona LoRA (laptop RTX 5070)
+# No start rate-limiting. With Restart=on-failure, systemd's default burst
+# limit (5 starts in 10s) puts a unit that fails fast into a permanent failed
+# state -- and then the watchdog's `systemctl start` is refused too, so the
+# one thing meant to bring training back cannot. A lane that will not start is
+# worth a log line every five minutes, not a silent give-up.
+StartLimitIntervalSec=0
+After=graphical-session.target
+# Boot start belongs to gpu-watchdog.timer (10-minute grace, then every 5
+# minutes) -- this unit is deliberately NOT WantedBy=default.target, so there
+# is exactly one thing deciding when a lane starts.
+
+[Service]
+Type=simple
+WorkingDirectory=/home/yash/code/neiro/training
+# One OpenMP thread per worker. Without this each DataLoader worker
+# spawns a full-width pool, the load average hits ~98 on 24 cores and
+# the desktop stutters while the GPU sits idle — measured, see
+# docs/DECISIONS.md.
+Environment=OMP_NUM_THREADS=1
+ExecStart=/usr/bin/env uv run python -u recipes/persona_train.py \
+  --train ../data/prepared/text-bilingual/train.jsonl \
+  --val ../data/prepared/text-bilingual/val.jsonl \
+  --stats ../data/prepared/text-bilingual/stats.json \
+  --out ../models/persona-lora-bilingual \
+  --batch 1 --accum 16 --epochs 1 --max-hours 240 --save-every 25 \
+  --resume --skip-before-eval
+StandardOutput=append:/home/yash/code/neiro/logs/persona-bilingual.log
+StandardError=append:/home/yash/code/neiro/logs/persona-bilingual.log
+# Come back by itself if the trainer dies for any reason short of a
+# clean finish.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

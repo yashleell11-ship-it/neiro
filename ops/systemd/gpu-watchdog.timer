@@ -1,0 +1,20 @@
+[Unit]
+Description=Check both GPUs every 5 minutes, idle for the first 10 after boot
+
+[Timer]
+# A wall-clock cadence, NOT OnBootSec=10min + OnUnitActiveSec=5min. That
+# pairing looks like it expresses "ten minutes after boot, then every five",
+# and it silently does not: OnBootSec is monotonic, Persistent= applies only
+# to calendar timers, so a timer enabled AFTER its boot window has passed has
+# no anchor to count from and `list-timers` shows NEXT as "-" forever.
+# Checked on this machine at 05:19 on 2026-09-20 -- armed, enabled, and
+# scheduled to fire never.
+#
+# The ten-minute post-boot grace lives in the script instead, where it can be
+# read off /proc/uptime and cannot be lost.
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
