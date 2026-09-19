@@ -100,7 +100,52 @@ class FakePlayer:
         return 0 if self._done else None
 
 
-def _loop(tmp_path: Path, keys: list[str | None], llm: ScriptedLlm) -> tuple[TalkLoop, list[str]]:
+class MonitoringCapture(FakeCapture):
+    """A capture with the wake word's tap on it.
+
+    `monitor()` returns fresh audio exactly once, the way the real one
+    does — returning the same block forever would let a test pass while
+    the loop re-scored the same second of audio on every tick.
+    """
+
+    def __init__(self, utterance: np.ndarray, blocks: list[np.ndarray] | None = None,
+                 dropped: bool = False) -> None:
+        super().__init__(utterance)
+        self.blocks = deque(blocks or [])
+        self.dropped = dropped
+        self.monitor_calls = 0
+
+    def monitor(self) -> tuple[np.ndarray, bool]:
+        self.monitor_calls += 1
+        if self.blocks:
+            return self.blocks.popleft(), self.dropped
+        return np.zeros(0, dtype=np.float32), self.dropped
+
+
+class ScriptedWake:
+    """Fires on the Nth non-empty block it is fed."""
+
+    def __init__(self, fire_on: int = 1) -> None:
+        self.fire_on = fire_on
+        self.fed = 0
+        self.resets = 0
+        self.samples_seen = 0
+
+    def feed(self, audio, *, now: float):
+        from elizabeth.audio.wake import WakeEvent
+
+        self.fed += 1
+        self.samples_seen += int(audio.size)
+        if self.fed == self.fire_on:
+            return WakeEvent(score=0.93, t_detected=now, context_s=1.28)
+        return None
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+def _loop(tmp_path: Path, keys: list[str | None], llm: ScriptedLlm,
+          capture=None, wake=None) -> tuple[TalkLoop, list[str]]:
     cfg = Elizabeth()
     daemon = Daemon(cfg)
     daemon.build(stt=FakeStt(), llm=llm, tts=FakeTts())
@@ -109,11 +154,12 @@ def _loop(tmp_path: Path, keys: list[str | None], llm: ScriptedLlm) -> tuple[Tal
     loop = TalkLoop(
         daemon=daemon,
         cfg=cfg,
-        capture=FakeCapture(np.full(SR, 0.05, dtype=np.float32)),
+        capture=capture or FakeCapture(np.full(SR, 0.05, dtype=np.float32)),
         read_key=lambda: script.popleft() if script else None,
         play=FakePlayer(),
         out=lines.append,
         reply_path=tmp_path / "reply.wav",
+        wake=wake,
     )
     return loop, lines
 
@@ -370,3 +416,67 @@ class TestBrowserWiring:
                 Face(cfg, port=face.port).bind()
         finally:
             face.close()
+
+
+class TestWakeWord:
+    """Hands-free listening, and the four ways it must not break talking.
+
+    The wake word is allowed to fail — an untrained head, a missing file,
+    a stalled loop. None of those may cost the spacebar, and none of them
+    may let the detector score a stream with a hole in it, which is how a
+    detector starts firing on sentences nobody said.
+    """
+
+    BLOCK = np.full(1280, 0.05, dtype=np.float32)
+
+    def test_her_name_starts_a_turn_without_a_key(self, tmp_path: Path) -> None:
+        capture = MonitoringCapture(np.full(SR, 0.05, dtype=np.float32),
+                                    blocks=[self.BLOCK, self.BLOCK])
+        wake = ScriptedWake(fire_on=1)
+        loop, lines = _loop(tmp_path, [None, None, " "], ScriptedLlm(),
+                            capture=capture, wake=wake)
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert loop.woke == 1
+        assert loop.turns_done == 1, "the wake word must start a real turn, not just arm"
+        assert any("heard you" in line for line in lines)
+
+    def test_the_spacebar_still_works_with_no_wake_word(self, tmp_path: Path) -> None:
+        # The whole point of the degradation path: an untrained head
+        # leaves `wake=None`, and that must be the loop as it always was.
+        loop, _ = _loop(tmp_path, [" ", " "], ScriptedLlm(), wake=None)
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert loop.turns_done == 1 and loop.woke == 0
+
+    def test_a_dropped_block_resets_the_context_instead_of_scoring_it(
+        self, tmp_path: Path
+    ) -> None:
+        # A gap in the stream makes the previous two seconds a lie. Scoring
+        # across it is how a detector fires on a sentence nobody spoke.
+        capture = MonitoringCapture(np.full(SR, 0.05, dtype=np.float32),
+                                    blocks=[self.BLOCK], dropped=True)
+        wake = ScriptedWake(fire_on=1)
+        loop, _ = _loop(tmp_path, [None, None, " ", " "], ScriptedLlm(),
+                        capture=capture, wake=wake)
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert wake.fed == 0, "scored audio that had a gap in it"
+        assert wake.resets >= 1
+        assert loop.woke == 0
+
+    def test_nothing_is_scored_while_the_mic_is_armed(self, tmp_path: Path) -> None:
+        # She is already recording; the audio is the question, not the name.
+        capture = MonitoringCapture(np.full(SR, 0.05, dtype=np.float32),
+                                    blocks=[self.BLOCK] * 6)
+        wake = ScriptedWake(fire_on=99)
+        loop, _ = _loop(tmp_path, [" ", None, None, " "], ScriptedLlm(),
+                        capture=capture, wake=wake)
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert wake.resets >= 1, "armed ticks must clear the context, not score it"
+
+    def test_the_queue_is_drained_even_with_no_detector(self, tmp_path: Path) -> None:
+        # Otherwise a run with the wake word off slowly fills a list that
+        # nobody ever reads.
+        capture = MonitoringCapture(np.full(SR, 0.05, dtype=np.float32),
+                                    blocks=[self.BLOCK] * 3)
+        loop, _ = _loop(tmp_path, [" ", " "], ScriptedLlm(), capture=capture, wake=None)
+        assert asyncio.run(loop.run(max_turns=1)) == 0
+        assert capture.monitor_calls > 0

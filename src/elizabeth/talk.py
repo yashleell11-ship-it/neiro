@@ -1,4 +1,4 @@
-"""`elizabeth talk` — spacebar, speak, spacebar, hear her answer.
+"""`elizabeth talk` — say her name, speak, hear her answer.
 
 Stage 0 Task 10 from one command. Until this existed the daemon, the
 orchestrator and every provider were reachable only from tests and
@@ -7,6 +7,16 @@ and nothing joined them. This is the join, kept deliberately thin — the
 loop's logic lives in Daemon and Orchestrator, and this module owns
 only the three things a terminal needs: a keyboard, a microphone and a
 speaker.
+
+**The wake word presses the spacebar for you.** `wake.py` scores the mic
+continuously and `toggle()` runs on the hop that crosses, which is the
+same path the key takes — so hands-free listening adds no second way for
+a turn to start, and the key still works when the head is untrained, the
+model file is missing, or onnxruntime will not load. Each of those
+prints a line and leaves you with the spacebar; none of them is fatal.
+The mic queue is drained every tick either way, and the detector's
+context is thrown away rather than scored whenever the mic is armed or a
+block was dropped, because a gap makes the last two seconds a lie.
 
 **Barge-in is the spacebar.** Pressing it while she is speaking
 cancels the turn in flight (`Daemon.interrupt()`), kills playback and
@@ -58,6 +68,7 @@ import numpy as np
 
 from elizabeth import metrics
 from elizabeth.audio.sink_ws import FIRST_AUDIO_TIMEOUT_S
+from elizabeth.audio.wake import WakeModelMissing, WakeWord
 from elizabeth.config import Elizabeth
 from elizabeth.daemon import AFFECT_INTERVAL_S, Daemon
 from elizabeth.orchestrator import TurnResult
@@ -76,6 +87,11 @@ KEY_POLL_S = 0.05
 # waiting on it at exit. Generous: STT in its executor cannot be
 # interrupted and takes up to ~400 ms.
 DRAIN_TIMEOUT_S = 2.0
+# How much unexamined audio the wake word's queue may hold before the
+# oldest is dropped. Two seconds is more than a 50 ms poll ever needs;
+# reaching it means the loop stalled, and the detector is told so rather
+# than being fed a stream with a hole in it.
+MONITOR_MAX_SECONDS = 2.0
 # Tried in order; the first one present plays the reply.
 PLAYERS: tuple[tuple[str, ...], ...] = (("paplay",), ("aplay", "-q"))
 # The command that opens the face. One attempt, never retried: a desktop
@@ -97,6 +113,8 @@ class Capture(Protocol):
     def disarm(self) -> np.ndarray: ...
 
     def recent(self, seconds: float) -> np.ndarray: ...
+
+    def monitor(self) -> tuple[np.ndarray, bool]: ...
 
 
 @runtime_checkable
@@ -152,6 +170,15 @@ class MicCapture:
         self._armed = False
         self._level = 0.0
         self._utterance: list[np.ndarray] = []
+        # Blocks the wake word has not looked at yet. Appended in the
+        # PortAudio callback and drained by the loop — never processed in
+        # the callback itself, which has a hard deadline and would drop
+        # audio outright if a 1.75 ms ONNX call ran inside it.
+        self._monitor: list[np.ndarray] = []
+        self._monitor_dropped = False
+        self._monitor_max_blocks = max(
+            1, int(MONITOR_MAX_SECONDS * self.samplerate / cfg.audio.input_blocksize)
+        )
         self._stream = sd.InputStream(
             device=device.portaudio_device,
             samplerate=self.samplerate,
@@ -169,6 +196,14 @@ class MicCapture:
             self._level = (1 - self._smoothing) * self._level + self._smoothing * rms
             if self._armed:
                 self._utterance.append(chunk)
+            self._monitor.append(chunk)
+            if len(self._monitor) > self._monitor_max_blocks:
+                # The consumer stalled. Dropping the oldest block is right —
+                # a wake detector fed across a gap is scoring a sentence
+                # that was never spoken — but it must be ADMITTED, so the
+                # loop resets the context instead of trusting it.
+                del self._monitor[0]
+                self._monitor_dropped = True
 
     def __enter__(self) -> Self:
         self._stream.start()
@@ -202,6 +237,21 @@ class MicCapture:
 
     def recent(self, seconds: float) -> np.ndarray:
         return self._ring.read_last(seconds)
+
+    def monitor(self) -> tuple[np.ndarray, bool]:
+        """Everything captured since the last call, and whether a gap opened.
+
+        Separate from `recent()` on purpose: `recent` reads a WINDOW out
+        of the ring and will happily hand back the same audio twice or
+        skip a slice, which is fine for an affect window averaged over
+        three seconds and wrong for a detector whose whole input is an
+        ordered, gapless stream.
+        """
+        with self._lock:
+            chunks, self._monitor = self._monitor, []
+            dropped, self._monitor_dropped = self._monitor_dropped, False
+        audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
+        return audio, dropped
 
 
 def subprocess_player(path: Path) -> Playback | None:
@@ -251,8 +301,12 @@ class TalkLoop:
     # dies first, the loop ends with an error rather than talking to
     # nobody.
     server: Callable[[], Awaitable[None]] | None = None
+    # The always-on wake word. None keeps the loop exactly as it was:
+    # spacebar only. Set, it presses the spacebar for you.
+    wake: WakeWord | None = None
 
     turns_done: int = 0
+    woke: int = 0
     interrupted: int = 0
     results: list[TurnResult] = field(default_factory=list)
     _annotation: str | None = field(default=None, repr=False)
@@ -282,6 +336,8 @@ class TalkLoop:
                     return 0
                 if key == " ":
                     await self.toggle()
+                elif await self._heard_her_name():
+                    await self.toggle()
 
                 if self.capture.armed:
                     now = time.monotonic()
@@ -306,6 +362,34 @@ class TalkLoop:
             if self._server_task is not None and not self._server_task.done():
                 self._server_task.cancel()
                 await asyncio.gather(self._server_task, return_exceptions=True)
+
+    async def _heard_her_name(self) -> bool:
+        """Drain the mic into the wake word; True when it fired.
+
+        The queue is drained on EVERY tick, wake word or not, so a run
+        with the detector off does not slowly fill a list nobody reads.
+        While the mic is armed the context is discarded rather than
+        scored: she is already recording, and the audio she is recording
+        is the question, not the name.
+        """
+        if not hasattr(self.capture, "monitor"):
+            return False
+        audio, dropped = self.capture.monitor()
+        if self.wake is None:
+            return False
+        if self.capture.armed or dropped:
+            # A gap, or a state change. Either makes the last two seconds
+            # of context a lie, and a lie is worse than starting over.
+            self.wake.reset()
+            return False
+        if not audio.size:
+            return False
+        event = self.wake.feed(audio, now=time.monotonic())
+        if event is None:
+            return False
+        self.woke += 1
+        self.out(f"— heard you ({event.score:.2f})")
+        return True
 
     @property
     def phase(self) -> str:
@@ -485,9 +569,25 @@ def run(cfg: Elizabeth | None = None, browser: bool = False) -> int:
     daemon.build()
     console.print("warming…")
     console.print(daemon.warm().describe())
+
+    # The wake word is a NICE-TO-HAVE on top of the spacebar, never a
+    # replacement for it at startup: an untrained head, a missing model
+    # file or a broken onnxruntime must cost you hands-free listening,
+    # not the ability to talk to her at all.
+    wake = None
+    if cfg.wake.enabled:
+        try:
+            wake = WakeWord.with_models(cfg)
+        except WakeModelMissing as exc:
+            console.print(f"[yellow]wake word off:[/yellow] {exc}")
+        except Exception as exc:  # noqa: BLE001 - never fatal, see above
+            console.print(f"[yellow]wake word off:[/yellow] {type(exc).__name__}: {exc}")
+
+    hands_free = f'say "{cfg.wake.phrase}" or ' if wake is not None else ""
     console.print(
         f"[bold]elizabeth talk[/bold] — profile '{cfg.audio.active_profile}'. "
-        "SPACE to start/stop talking (SPACE while she speaks interrupts her), q to quit.\n"
+        f"{hands_free}SPACE to start/stop talking "
+        "(SPACE while she speaks interrupts her), q to quit.\n"
     )
     if face is not None and not xdg_open(face.url):
         console.print(f"open {face.url} in a browser.")
@@ -515,6 +615,7 @@ def run(cfg: Elizabeth | None = None, browser: bool = False) -> int:
                 out=lambda line: console.print(f"\n{line}"),
                 on_tick=lambda phase, level: live.update(f"{_bar(level)}  {labels[phase]}"),
                 turns_path=metrics.TURNS_PATH,
+                wake=wake,
                 **options,
             )
             return asyncio.run(loop.run())
