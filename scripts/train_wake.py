@@ -546,7 +546,10 @@ def main() -> int:
     print(f"  held-out speech: {hours:.2f} h, {len(neg_scores)} windows")
     print("  threshold   recall   false accepts/hour")
     for r in sweep:
-        print(f"    {r['threshold']:.2f}      {r['recall']*100:5.1f}%   "
+        # Four decimals, not two. At two, 0.995 and 0.999 both print as
+        # "1.00" and the table shows the same threshold twice -- ambiguous
+        # in exactly the region a wake word is actually operated in.
+        print(f"    {r['threshold']:.4f}    {r['recall']*100:5.1f}%   "
               f"{r['false_accepts_per_hour']:8.2f}")
 
     args.out.mkdir(parents=True, exist_ok=True)
