@@ -15,6 +15,15 @@ REM Source of truth is ops\box\box_next.bat in the repo. Edit it there
 REM and copy it over; a file that exists only on the box is a file
 REM nobody can review.
 
+REM Stopping for the day is a flag, not a disabled scheduled task. A task
+REM somebody disables by hand at 6pm is a task nobody re-enables, and the
+REM machine is then quietly idle for a week; a file in a directory anyone
+REM can see is the reversible version of the same decision.
+if exist "D:\neiro-data\PAUSE" (
+  echo %date% %time% PAUSE file present -- not starting any training >> D:\neiro-data\watchdog.log
+  exit /b 0
+)
+
 if exist "D:\neiro\models\persona-lora\adapter\adapter_model.safetensors" (
   echo %date% %time% persona LoRA finished -- adapter saved >> D:\neiro-data\watchdog.log
   goto smoke

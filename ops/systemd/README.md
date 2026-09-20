@@ -31,5 +31,6 @@ Three things here were each a real failure first:
   recover it. In `[Service]` this build ignores the directive silently;
   `systemctl show -p StartLimitIntervalUSec` is what proves it took.
 
-To stop: `touch ops/PAUSE` holds the lanes where they are; `touch ops/STOP`
-disarms the timer.
+To stop one lane: `touch ops/PAUSE-laneA` (the box) or `ops/PAUSE-laneB`
+(this laptop). `ops/PAUSE` holds both; `ops/STOP` disarms the timer
+entirely.

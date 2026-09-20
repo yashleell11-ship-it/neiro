@@ -32,8 +32,9 @@
 # It does NOT stop by itself. An earlier version carried a deadline file and
 # ran `systemctl --user disable --now` when it elapsed -- which is what it did
 # at 06:23 on 2026-09-20, silently, while both lanes still had days of work
-# left. Stopping is now a decision somebody makes: `touch ops/PAUSE` to hold
-# the lanes where they are, `touch ops/STOP` to disarm the timer completely.
+# left. Stopping is now a decision somebody makes, and it is per lane:
+# `ops/PAUSE-laneA` holds the box, `ops/PAUSE-laneB` holds this laptop,
+# `ops/PAUSE` holds both, `ops/STOP` disarms the timer completely.
 #
 # One check per invocation; the systemd --user timer supplies the cadence and
 # the ten-minute delay after boot.
@@ -89,7 +90,15 @@ if [[ -f "$OPS/STOP" ]]; then
     exit 0
 fi
 
-paused=0; [[ -f "$OPS/PAUSE" ]] && paused=1
+# Pausing is PER LANE, because the thing actually asked for is almost
+# never "stop everything": it is "stop the box, leave the laptop
+# running". An all-or-nothing PAUSE forces that to be done by editing
+# the watchdog or disabling a scheduled task, which is how a machine
+# ends up silently not coming back a week later.
+pause_a=0; pause_b=0
+[[ -f "$OPS/PAUSE" ]]       && { pause_a=1; pause_b=1; }
+[[ -f "$OPS/PAUSE-laneA" ]] && pause_a=1
+[[ -f "$OPS/PAUSE-laneB" ]] && pause_b=1
 
 # --- lane B: this laptop --------------------------------------------------
 read -r _ _ b_free b_util < <(
@@ -119,8 +128,8 @@ elif lane_b_alive; then
     age=-1
     [[ -e "$LANE_B_CKPT" ]] && age=$(( now - $(stat -c %Y "$LANE_B_CKPT") ))
     b_state="alive ckpt_age=${age}s"
-elif (( paused )); then
-    b_state="down (PAUSE set)"
+elif (( pause_b )); then
+    b_state="down (paused)"
 elif may_restart laneB; then
     say "laneB  DOWN -- starting $LANE_B_UNIT"
     systemctl --user start "$LANE_B_UNIT" >/dev/null 2>&1
@@ -147,15 +156,16 @@ if [[ -z "$a_num" ]]; then
     # trainer -- rule 1, the case that caused a spurious restart before.
     say "laneA  3090Ti PROBE FAILED (desktop asleep/off, tailscale down, or ssh refused) -- no action"
 elif (( a_num > 0 )); then
-    say "laneA  3090Ti free=${a_free:-?}MiB util=${a_util:-?}% alive runs=$a_num procs=${a_procs:-?}"
+    flag=""; (( pause_a )) && flag=" (PAUSED but still running)"
+    say "laneA  3090Ti free=${a_free:-?}MiB util=${a_util:-?}% alive runs=$a_num procs=${a_procs:-?}$flag"
     if [[ -n "$a_util" ]] && (( a_util < 40 )); then
         say "laneA  WARN util ${a_util}% with a live trainer -- stalled or data-starved"
     fi
     if (( a_num > 1 )); then
         say "laneA  WARN $a_num concurrent runs -- duplicates corrupt a shared --out"
     fi
-elif (( paused )); then
-    say "laneA  3090Ti free=${a_free:-?}MiB down (PAUSE set)"
+elif (( pause_a )); then
+    say "laneA  3090Ti free=${a_free:-?}MiB down (paused)"
 elif may_restart laneA; then
     # box_next.bat, NOT a direct trainer launch. The box's dispatcher is the
     # one place that knows whether persona is finished and English STT is what

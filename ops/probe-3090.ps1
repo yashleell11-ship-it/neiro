@@ -16,10 +16,29 @@ $gpu = (& nvidia-smi --query-gpu=memory.free,utilization.gpu --format=csv,nohead
 "FREE=" + $gpu[0].Trim()
 "UTIL=" + $gpu[1].Trim()
 
+# The PROCESS must be a python, not merely a process that mentions one.
+# Broadening the command-line match from persona_train alone to all three
+# trainers introduced a false positive within the day: the box's own
+# dashboard shells out to
+#   ssh ... "pgrep -af 'python.*ser_train.py|...'"
+# to poll the laptop, and that ssh.exe's command line contains all three
+# script names. So the watchdog read a stopped box as "alive runs=1" --
+# and an "alive" lane is never started, which is the silent version of
+# leaving a card idle for a day.
+# THREE conditions, not one. This box is not a neiro appliance -- it is a
+# desktop with games, a browser and other projects on it, and a match on
+# command-line text alone reaches all of them.
+#   1. the process is a python or uv          (not any process that
+#                                              merely MENTIONS a trainer)
+#   2. its command line is under D:\neiro      (not another project that
+#                                              happens to own a file of
+#                                              the same name)
+#   3. it names one of our trainer scripts
 $TRAINERS = 'persona_train.py','stt_train.py','ser_train.py'
 $all = @(Get-CimInstance Win32_Process | Where-Object {
     $cl = $_.CommandLine
-    $cl -and ($TRAINERS | Where-Object { $cl -like "*$_*" })
+    $cl -and ($_.Name -match '^(python|uv)') -and ($cl -like "*neiro*") `
+        -and ($TRAINERS | Where-Object { $cl -like "*$_*" })
 })
 $ids = @($all | ForEach-Object { $_.ProcessId })
 $roots = @($all | Where-Object { $ids -notcontains $_.ParentProcessId })
