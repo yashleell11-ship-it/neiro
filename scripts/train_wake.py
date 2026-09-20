@@ -307,7 +307,7 @@ class Head(__import__("torch").nn.Module):
     graphs start with a Flatten on a [1,16,96] input).
     """
 
-    def __init__(self, n_in: int = 16 * 96, hidden: int = 128) -> None:
+    def __init__(self, n_in: int = 16 * 96, hidden: int = 256) -> None:
         from torch import nn
 
         super().__init__()
@@ -345,11 +345,21 @@ def main() -> int:
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "prepared" / "wake")
     ap.add_argument("--librispeech", type=Path,
                     default=REPO / "data" / "datasets" / "librispeech-asr-corpus" / "clean")
-    ap.add_argument("--shards", type=int, default=6, help="parquet shards to sample")
-    ap.add_argument("--per-shard", type=int, default=60, help="clips per shard")
+    ap.add_argument("--shards", type=int, default=16, help="parquet shards to sample")
+    ap.add_argument("--per-shard", type=int, default=300, help="clips per shard")
     ap.add_argument("--speeds", type=float, nargs="+", default=[0.85, 1.0, 1.15])
     ap.add_argument("--repeats", type=int, default=6, help="augmentations per positive render")
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=60)
+    ap.add_argument("--hidden", type=int, default=256)
+    ap.add_argument(
+        "--mine-rounds", type=int, default=3,
+        help="hard-negative mining passes after the first fit; nearly free, the "
+             "audio is already embedded",
+    )
+    ap.add_argument(
+        "--mine-weight", type=float, default=8.0,
+        help="how much more a mined false positive counts than an ordinary negative",
+    )
     ap.add_argument("--max-voices", type=int, default=0,
                     help="0 = every English Kokoro voice; a small number for a smoke run")
     ap.add_argument("--seed", type=int, default=0)
@@ -386,11 +396,13 @@ def main() -> int:
 
     print("3/5 embedding", flush=True)
     X, y = [], []
+    pos_clips = 0
     for i, f in enumerate(pos_files, 1):
         phrase, _ = sf.read(f, dtype="float32")
         for _ in range(args.repeats):
             bg = bg_pool[rng.randrange(len(bg_pool))] if rng.random() < 0.8 else np.zeros(0, np.float32)
             clip, s, e = augment(phrase, bg, rng, cfg, emb.receptive_samples)
+            pos_clips += 1
             w = positive_windows(emb, clip, s, e, cfg)
             if len(w):
                 X.append(w); y.append(np.ones(len(w), dtype=np.float32))
@@ -417,13 +429,19 @@ def main() -> int:
 
     X = np.concatenate(X).astype(np.float32)
     y = np.concatenate(y).astype(np.float32)
-    if y.sum() < 100:
-        # The first run of this script produced ZERO positive windows and
-        # trained happily on them, reporting recall as nan across the whole
-        # sweep. A dataset with no positives is a bug every time.
+    # The first run of this script produced ZERO positive windows, trained
+    # happily on them, and reported recall as nan across the whole sweep. So
+    # a thin positive set is a hard failure -- but the bar is PROPORTIONAL,
+    # not a flat 100: a deliberately tiny smoke run (10 renders) produced 48
+    # good positives and was rejected by a constant that only ever made sense
+    # for the full run. Each augmented clip should yield roughly three
+    # scoreable windows; fewer than one apiece means the alignment is wrong.
+    expected = max(1, pos_clips // 2)
+    if y.sum() < expected:
         raise SystemExit(
-            f"only {int(y.sum())} positive windows out of {len(y)} — the positive "
-            "alignment is wrong, not the model. Check Embedder.receptive_samples."
+            f"only {int(y.sum())} positive windows from {pos_clips} augmented clips "
+            f"(expected at least {expected}) — the positive alignment is wrong, not "
+            "the model. Check Embedder.receptive_samples."
         )
     print(f"  {len(X)} windows, {int(y.sum())} positive ({y.mean()*100:.1f}%)"
           f"  [{time.monotonic()-t0:.0f}s]", flush=True)
@@ -434,40 +452,77 @@ def main() -> int:
     Xtr, ytr, Xva, yva = X[:cut], y[:cut], X[cut:], y[cut:]
 
     print("4/5 fitting the head on CPU", flush=True)
-    model = Head()
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    lossf = torch.nn.BCELoss(reduction="none")
+    Xtr_t, ytr_t = torch.from_numpy(Xtr), torch.from_numpy(ytr)[:, None]
+    Xva_t, yva_t = torch.from_numpy(Xva), torch.from_numpy(yva)[:, None]
     # The classes are wildly unbalanced by construction -- hours of speech
     # against a few thousand positive windows -- so the loss is weighted
     # rather than the data resampled, which would throw away negatives
     # that are the entire point of the false-accept metric.
-    pos_weight = torch.tensor([(len(ytr) - ytr.sum()) / max(ytr.sum(), 1.0)])
-    lossf = torch.nn.BCELoss(reduction="none")
-    Xtr_t, ytr_t = torch.from_numpy(Xtr), torch.from_numpy(ytr)[:, None]
-    Xva_t, yva_t = torch.from_numpy(Xva), torch.from_numpy(yva)[:, None]
-    best, best_state = 1e9, None
-    for ep in range(args.epochs):
-        model.train()
-        perm = torch.randperm(len(Xtr_t))
-        for b in range(0, len(perm), 512):
-            sel = perm[b:b + 512]
-            opt.zero_grad()
-            out = model(Xtr_t[sel])
-            w = torch.where(ytr_t[sel] > 0.5, pos_weight, torch.ones(1))
-            (lossf(out, ytr_t[sel]) * w).mean().backward()
-            opt.step()
+    pos_weight = float((len(ytr) - ytr.sum()) / max(ytr.sum(), 1.0))
+    # Per-example weights, so mined false positives can be made to hurt more
+    # than an ordinary negative without duplicating rows.
+    w_tr = torch.where(ytr_t > 0.5, torch.tensor(pos_weight), torch.ones(1))
+    w_va = torch.where(yva_t > 0.5, torch.tensor(pos_weight), torch.ones(1))
+
+    def fit(weights: torch.Tensor, label: str) -> torch.nn.Module:
+        model = Head(hidden=args.hidden)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+        best, best_state = 1e9, None
+        for ep in range(args.epochs):
+            model.train()
+            perm = torch.randperm(len(Xtr_t))
+            for b in range(0, len(perm), 512):
+                sel = perm[b:b + 512]
+                opt.zero_grad()
+                out = model(Xtr_t[sel])
+                (lossf(out, ytr_t[sel]) * weights[sel]).mean().backward()
+                opt.step()
+            model.eval()
+            with torch.no_grad():
+                vl = float((lossf(model(Xva_t), yva_t) * w_va).mean())
+            if vl < best:
+                best, best_state = vl, {k: v.clone() for k, v in model.state_dict().items()}
+            if ep % 20 == 0 or ep == args.epochs - 1:
+                print(f"  {label} epoch {ep:3d} val {vl:.4f}", flush=True)
+        model.load_state_dict(best_state)
         model.eval()
+        return model
+
+    model = fit(w_tr, "fit0")
+
+    # ---- hard-negative mining -------------------------------------------
+    #
+    # The first version of this script reported 96 false accepts an hour and
+    # 99.5% recall: rejection was the problem, not detection. Uniformly
+    # weighted negatives are why. Almost every window of ordinary speech is
+    # trivially not the wake word, so the loss is dominated by examples the
+    # head already gets right, and the few hundred windows that actually
+    # sound like "hey elizabeth" -- a stressed vowel in the right place, the
+    # cadence, a name ending in -eth -- are a rounding error in the average.
+    #
+    # Mining is nearly free here because the AUDIO IS ALREADY EMBEDDED. The
+    # expensive half of this script is the ONNX front end, and it ran once;
+    # a mining round is a forward pass over vectors already in memory.
+    neg_idx = np.flatnonzero(ytr <= 0.5)
+    for rnd in range(args.mine_rounds):
         with torch.no_grad():
-            out = model(Xva_t)
-            w = torch.where(yva_t > 0.5, pos_weight, torch.ones(1))
-            vl = float((lossf(out, yva_t) * w).mean())
-        if vl < best:
-            best, best_state = vl, {k: v.clone() for k, v in model.state_dict().items()}
-        if ep % 5 == 0 or ep == args.epochs - 1:
-            print(f"  epoch {ep:3d} val {vl:.4f}{'  *' if vl == best else ''}", flush=True)
-    model.load_state_dict(best_state)
+            scored = model(Xtr_t[neg_idx]).numpy().reshape(-1)
+        hard = neg_idx[scored >= 0.5]
+        if not len(hard):
+            print(f"  mine {rnd}: no negative scores above 0.5 left -- stopping", flush=True)
+            break
+        w_tr[hard] = args.mine_weight
+        print(f"  mine {rnd}: {len(hard)} hard negatives "
+              f"({len(hard) / len(neg_idx) * 100:.2f}% of negatives), "
+              f"weight {args.mine_weight}", flush=True)
+        model = fit(w_tr, f"fit{rnd + 1}")
 
     print("5/5 scoring on held-out speech and exporting", flush=True)
     model.eval()
+    # Held-out speech: negatives this head has never been fitted to, and
+    # never mined from. Mining against the TRAIN negatives and reporting
+    # against the same ones would measure memorisation, not rejection.
     ho = [emb.windows(c) for c in held_out]
     ho = np.concatenate([w for w in ho if len(w)]).astype(np.float32)
     with torch.no_grad():
@@ -475,7 +530,13 @@ def main() -> int:
         pos_scores = model(torch.from_numpy(X[y > 0.5])).numpy().reshape(-1)
 
     sweep = []
-    for th in (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95):
+    # Up to 0.999, not 0.95. The first run stopped at 0.95 and reported 96
+    # false accepts an hour there, which reads as "this does not work" when
+    # the honest reading is "nobody looked at the thresholds a wake word is
+    # actually run at". A detector that interrupts you once an hour is
+    # already bad; the interesting region is where it interrupts you once a
+    # day, and that is past three nines.
+    for th in (0.5, 0.7, 0.9, 0.95, 0.99, 0.995, 0.999, 0.9995):
         sweep.append({
             "threshold": th,
             "recall": float((pos_scores >= th).mean()),

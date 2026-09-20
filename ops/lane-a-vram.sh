@@ -18,7 +18,7 @@
 # without this the TTS model simply never runs.
 #
 # Lane A carries --resume and checkpoints every 25 steps, so the switch costs at
-# most those steps, never the run. PAUSE is set for the duration so the watchdog
+# most those steps, never the run. PAUSE-laneA is set for the duration so the watchdog
 # does not read the gap as a crash and start a second trainer on the same --out.
 
 set -uo pipefail
@@ -32,8 +32,21 @@ case "$MODE" in
   *) echo "usage: $0 {shrink|restore|status}" >&2; exit 2 ;;
 esac
 
-enc() { python3 "$(dirname "$0")/psenc.py" "$1"; }
-runps() { timeout 60 ssh -o BatchMode=yes box "powershell -NoProfile -EncodedCommand $(enc "$1")" 2>/dev/null; }
+enc() { python3 "$OPS/psenc.py" "$1"; }
+
+# Tailscale and the LAN fail independently; try both. Without this, `status`
+# printed NOTHING AT ALL the evening tailscale went down on an otherwise
+# healthy box -- no output, exit 0, nothing to tell you which it was.
+source "$OPS/box-host.sh"
+BOX=$(box_host) || { echo "box unreachable on both tailscale and the LAN" >&2; exit 1; }
+[[ "$BOX" == "box-lan" ]] && echo "(reaching the box on the LAN; tailscale is down)" >&2
+
+runps() {
+    local payload
+    payload=$(enc "$1") || { echo "cannot encode $1 -- see psenc.py" >&2; return 1; }
+    timeout 60 ssh -o BatchMode=yes "$BOX" \
+        "powershell -NoProfile -EncodedCommand $payload" 2>/dev/null
+}
 
 if [[ "$MODE" == status ]]; then
     runps "$OPS/probe-3090.ps1" | grep -aE "FREE=|UTIL=|RUNS="
@@ -41,13 +54,16 @@ if [[ "$MODE" == status ]]; then
     exit 0
 fi
 
-echo "==> pausing the watchdog so the restart is not read as a crash"
-touch "$OPS/PAUSE"
+echo "==> pausing lane A so the restart is not read as a crash"
+# PAUSE-laneA, not PAUSE. This script only touches the box, and the
+# all-lanes flag would stop the LAPTOP's trainer too -- silently, for the
+# duration, for a change that has nothing to do with it.
+touch "$OPS/PAUSE-laneA"
 
 echo "==> setting lane A to --batch $BATCH --accum $ACCUM (effective batch stays 24)"
 # Via the scheduled task's .bat, not by respawning a process: Neiro re-chains
 # the task, so a hand-started replacement is overwritten within seconds.
-timeout 120 ssh -o BatchMode=yes box \
+timeout 120 ssh -o BatchMode=yes "$BOX" \
   "powershell -NoProfile -Command \"\$env:MM_BATCH='$BATCH'; \$env:MM_ACCUM='$ACCUM'; & powershell -NoProfile -EncodedCommand $(enc "$OPS/lane-a-set-batch.ps1")\"" \
   2>/dev/null | grep -aE "RUNS=|NOW_BATCH=|ERR=|WARN="
 
@@ -56,5 +72,5 @@ sleep 60
 runps "$OPS/probe-3090.ps1" | grep -aE "FREE=|RUNS="
 runps "$OPS/lane-a-settings.ps1" | grep -a "BATCH="
 
-rm -f "$OPS/PAUSE"
+rm -f "$OPS/PAUSE-laneA"
 echo "==> watchdog re-armed"

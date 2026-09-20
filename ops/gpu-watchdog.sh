@@ -156,15 +156,7 @@ enc() { python3 "$OPS/psenc.py" "$1"; }
 # touched a perfectly healthy 24 GB card. Which route worked is logged,
 # because "reachable only on the LAN" is a fact about the network worth
 # seeing, not an implementation detail to paper over.
-box_host() {
-    local host
-    for host in box box-lan; do
-        if timeout 20 ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "exit 0" >/dev/null 2>&1; then
-            printf '%s' "$host"; return 0
-        fi
-    done
-    return 1
-}
+source "$OPS/box-host.sh"
 
 BOX=$(box_host) || BOX=""
 PROBE=$(enc "$OPS/probe-3090.ps1" 2>&1) || PROBE=""
