@@ -395,8 +395,13 @@ def main() -> int:
     import soundfile as sf
 
     print("3/5 embedding", flush=True)
-    X, y = [], []
+    X, y, g = [], [], []
     pos_clips = 0
+    # One id per SOURCE CLIP. Splitting by window lets several windows of the
+    # same render land on both sides of the split -- they overlap by 15 of
+    # their 16 embeddings, so that is not a train/test split, it is the same
+    # audio scored twice and called a generalisation result.
+    group = 0
     for i, f in enumerate(pos_files, 1):
         phrase, _ = sf.read(f, dtype="float32")
         for _ in range(args.repeats):
@@ -406,6 +411,7 @@ def main() -> int:
             w = positive_windows(emb, clip, s, e, cfg)
             if len(w):
                 X.append(w); y.append(np.ones(len(w), dtype=np.float32))
+                g.append(np.full(len(w), group)); group += 1
         if i % 50 == 0:
             print(f"  positives {i}/{len(pos_files)}  [{time.monotonic()-t0:.0f}s]", flush=True)
 
@@ -417,6 +423,7 @@ def main() -> int:
             w = emb.windows(clip)
             if len(w):
                 X.append(w); y.append(np.zeros(len(w), dtype=np.float32))
+                g.append(np.full(len(w), group)); group += 1
         if i % 50 == 0:
             print(f"  confusables {i}/{len(neg_files)}  [{time.monotonic()-t0:.0f}s]", flush=True)
 
@@ -424,11 +431,13 @@ def main() -> int:
         w = emb.windows(clip)
         if len(w):
             X.append(w); y.append(np.zeros(len(w), dtype=np.float32))
+            g.append(np.full(len(w), group)); group += 1
         if i % 50 == 0:
             print(f"  bulk speech {i}/{len(bg_pool)}  [{time.monotonic()-t0:.0f}s]", flush=True)
 
     X = np.concatenate(X).astype(np.float32)
     y = np.concatenate(y).astype(np.float32)
+    g = np.concatenate(g)
     # The first run of this script produced ZERO positive windows, trained
     # happily on them, and reported recall as nan across the whole sweep. So
     # a thin positive set is a hard failure -- but the bar is PROPORTIONAL,
@@ -446,10 +455,17 @@ def main() -> int:
     print(f"  {len(X)} windows, {int(y.sum())} positive ({y.mean()*100:.1f}%)"
           f"  [{time.monotonic()-t0:.0f}s]", flush=True)
 
-    idx = np.arange(len(X)); np.random.shuffle(idx)
-    X, y = X[idx], y[idx]
-    cut = int(len(X) * 0.9)
-    Xtr, ytr, Xva, yva = X[:cut], y[:cut], X[cut:], y[cut:]
+    # Split by CLIP, never by window. Windows from one render share 15 of
+    # their 16 embeddings; shuffling windows puts near-duplicates on both
+    # sides and turns the validation number into a memorisation number.
+    groups = np.unique(g)
+    np.random.shuffle(groups)
+    held = set(groups[: max(1, int(len(groups) * 0.1))].tolist())
+    is_val = np.fromiter((gi in held for gi in g), dtype=bool, count=len(g))
+    Xtr, ytr = X[~is_val], y[~is_val]
+    Xva, yva = X[is_val], y[is_val]
+    print(f"  split by clip: {len(groups)} clips -> {len(Xtr)} train / {len(Xva)} val windows, "
+          f"{int(yva.sum())} held-out positives", flush=True)
 
     print("4/5 fitting the head on CPU", flush=True)
     lossf = torch.nn.BCELoss(reduction="none")
@@ -527,7 +543,11 @@ def main() -> int:
     ho = np.concatenate([w for w in ho if len(w)]).astype(np.float32)
     with torch.no_grad():
         neg_scores = model(torch.from_numpy(ho)).numpy().reshape(-1)
-        pos_scores = model(torch.from_numpy(X[y > 0.5])).numpy().reshape(-1)
+        # HELD-OUT positives, not every positive. Scoring recall over the
+        # training set reports how well the head remembers clips it was
+        # fitted on, which is not the question anyone is asking.
+        held_pos = Xva[yva > 0.5]
+        pos_scores = model(torch.from_numpy(held_pos)).numpy().reshape(-1)
 
     sweep = []
     # Up to 0.999, not 0.95. The first run stopped at 0.95 and reported 96
@@ -544,6 +564,7 @@ def main() -> int:
         })
     hours = len(neg_scores) * cfg.hop_samples / SAMPLE_RATE / 3600.0
     print(f"  held-out speech: {hours:.2f} h, {len(neg_scores)} windows")
+    print(f"  held-out positives: {len(pos_scores)} windows from clips never trained on")
     print("  threshold   recall   false accepts/hour")
     for r in sweep:
         # Four decimals, not two. At two, 0.995 and 0.999 both print as
