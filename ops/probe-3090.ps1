@@ -30,9 +30,18 @@ $gpu = (& nvidia-smi --query-gpu=memory.free,utilization.gpu --format=csv,nohead
 # command-line text alone reaches all of them.
 #   1. the process is a python or uv          (not any process that
 #                                              merely MENTIONS a trainer)
-#   2. its command line is under D:\neiro      (not another project that
+#   2. its command line names neiro           (not another project that
 #                                              happens to own a file of
-#                                              the same name)
+#                                              the same name). In
+#                                              practice this is the venv
+#                                              path, D:\neiro\training\
+#                                              .venv\...\python.exe, so
+#                                              the uv.exe LAUNCHER does
+#                                              not match and PROCS reads
+#                                              1 per run rather than 3.
+#                                              That is the number we
+#                                              want: the launcher is not
+#                                              what trains.
 #   3. it names one of our trainer scripts
 $TRAINERS = 'persona_train.py','stt_train.py','ser_train.py'
 $all = @(Get-CimInstance Win32_Process | Where-Object {

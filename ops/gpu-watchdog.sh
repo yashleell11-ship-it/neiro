@@ -141,11 +141,34 @@ else
 fi
 say "laneB  5070   free=${b_free:-?}MiB util=${b_util:-?}% $b_state"
 
-# --- lane A: the 3090 Ti, over tailscale ----------------------------------
+# --- lane A: the 3090 Ti, over tailscale OR the LAN ------------------------
 enc() { python3 -c "import base64,pathlib,sys;print(base64.b64encode(pathlib.Path(sys.argv[1]).read_text().encode('utf-16-le')).decode())" "$1"; }
 
-pc=$(timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=30 box \
-        "powershell -NoProfile -EncodedCommand $(enc "$OPS/probe-3090.ps1")" 2>/dev/null)
+# Two routes to the same machine, tried in order. On 2026-09-20 the box's
+# TAILSCALE link dropped while the machine itself stayed up and answered on
+# the LAN in 0.37 ms -- `ssh box` timed out, and a watchdog with one route
+# would have logged PROBE FAILED every five minutes all night and never
+# touched a perfectly healthy 24 GB card. Which route worked is logged,
+# because "reachable only on the LAN" is a fact about the network worth
+# seeing, not an implementation detail to paper over.
+box_host() {
+    local host
+    for host in box box-lan; do
+        if timeout 20 ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "exit 0" >/dev/null 2>&1; then
+            printf '%s' "$host"; return 0
+        fi
+    done
+    return 1
+}
+
+BOX=$(box_host) || BOX=""
+if [[ -z "$BOX" ]]; then
+    pc=""
+else
+    [[ "$BOX" == "box-lan" ]] && say "laneA  reachable on the LAN only -- tailscale is down on the box"
+    pc=$(timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=30 "$BOX" \
+            "powershell -NoProfile -EncodedCommand $(enc "$OPS/probe-3090.ps1")" 2>/dev/null)
+fi
 a_free=$(grep -ao 'FREE=[0-9]*'  <<<"$pc" | head -1 | cut -d= -f2)
 a_util=$(grep -ao 'UTIL=[0-9]*'  <<<"$pc" | head -1 | cut -d= -f2)
 a_num=$( grep -ao 'RUNS=[0-9]*'  <<<"$pc" | head -1 | cut -d= -f2)
@@ -154,7 +177,7 @@ a_procs=$(grep -ao 'PROCS=[0-9]*' <<<"$pc" | head -1 | cut -d= -f2)
 if [[ -z "$a_num" ]]; then
     # Unreachable, asleep, or the probe itself broke. Explicitly NOT a dead
     # trainer -- rule 1, the case that caused a spurious restart before.
-    say "laneA  3090Ti PROBE FAILED (desktop asleep/off, tailscale down, or ssh refused) -- no action"
+    say "laneA  3090Ti PROBE FAILED on both routes (tailscale AND LAN) -- desktop asleep, off, or ssh refused. No action"
 elif (( a_num > 0 )); then
     flag=""; (( pause_a )) && flag=" (PAUSED but still running)"
     say "laneA  3090Ti free=${a_free:-?}MiB util=${a_util:-?}% alive runs=$a_num procs=${a_procs:-?}$flag"
@@ -171,10 +194,10 @@ elif may_restart laneA; then
     # one place that knows whether persona is finished and English STT is what
     # comes next; launching persona_train.py from here would relaunch a job
     # that had already completed (rule 3).
-    say "laneA  DOWN (probe confirmed 0 runs) -- running the box dispatcher"
-    timeout 90 ssh -o BatchMode=yes box "D:\\neiro-data\\box_next.bat" >/dev/null 2>&1
+    say "laneA  DOWN (probe confirmed 0 runs) -- running the box dispatcher over $BOX"
+    timeout 90 ssh -o BatchMode=yes "$BOX" "D:\\neiro-data\\box_next.bat" >/dev/null 2>&1
     sleep 20
-    again=$(timeout 60 ssh -o BatchMode=yes box \
+    again=$(timeout 60 ssh -o BatchMode=yes "$BOX" \
         "powershell -NoProfile -EncodedCommand $(enc "$OPS/probe-3090.ps1")" 2>/dev/null \
         | grep -ao 'RUNS=[0-9]*' | head -1 | cut -d= -f2)
     say "laneA  dispatcher run; runs now=${again:-unknown}"
