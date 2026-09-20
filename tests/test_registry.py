@@ -14,8 +14,8 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from elizabeth.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
 from elizabeth.state import Tier as StateTier
+from elizabeth.tools.audit import ATTEMPTED, DENIED, FAILED, RATE_LIMITED, SUCCEEDED, AuditLog
 from elizabeth.tools.registry import (
     RateLimited,
     ReachRefused,

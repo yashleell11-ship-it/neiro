@@ -20,6 +20,7 @@ shells out for its reads). Run them with the training interpreter:
 from __future__ import annotations
 
 import io
+import json
 import math
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from elizabeth.training.stt_data import (
     index_shard,
     pad_labels,
     plan_split,
+    read_checkpoint_meta,
     read_checkpoint_step,
     select_shards,
     shard_split,
@@ -823,3 +825,65 @@ class TestCorpusRegistry:
         for name, spec in CORPORA.items():
             if not spec.duration_column:
                 assert spec.audio_column, f"{name}: no duration_column and no audio_column"
+
+
+class TestCheckpointsCarryTheDataPosition:
+    """A checkpoint that records only the step number is why the box's
+    persona run never finished an epoch.
+
+    `--resume` restored the weights and the step count, and the data
+    stream restarted at row zero. So every restart re-walked the corpus
+    from the top while the step number carried on climbing — and a run
+    that had never reached the end of a single pass produced a log that
+    looked exactly like steady progress. The adapter is only written
+    when the loop exits, so none was ever written.
+
+    The position is stored next to the ORDER it indexes (seed, epoch,
+    shuffle), because an offset into a different permutation skips an
+    arbitrary slice of the corpus and still looks correct.
+    """
+
+    def test_extra_fields_land_next_to_the_step(self, tmp_path: Path) -> None:
+        ckpt = tmp_path / "checkpoint"
+        write_checkpoint_atomically(
+            lambda dest: dest.mkdir(parents=True), ckpt, 10775,
+            extra={"records": 258_112, "seed": 0, "epoch": 0, "shuffle": True},
+        )
+        meta = read_checkpoint_meta(ckpt)
+        assert meta == {"step": 10775, "records": 258_112, "seed": 0,
+                        "epoch": 0, "shuffle": True}
+        assert read_checkpoint_step(ckpt) == 10775
+
+    def test_a_checkpoint_from_before_this_still_resumes(self, tmp_path: Path) -> None:
+        # Every checkpoint on both machines right now is step-only. They
+        # must keep loading — they just resume without a data position,
+        # which is the old behaviour: safe, only wasteful.
+        ckpt = tmp_path / "checkpoint"
+        ckpt.mkdir()
+        (ckpt / "step.json").write_text(json.dumps({"step": 7875}))
+        assert read_checkpoint_step(ckpt) == 7875
+        assert read_checkpoint_meta(ckpt).get("records", 0) == 0
+
+    def test_a_missing_or_corrupt_meta_is_empty_not_an_exception(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope"
+        assert read_checkpoint_meta(missing) == {}
+        corrupt = tmp_path / "corrupt"
+        corrupt.mkdir()
+        (corrupt / "step.json").write_text("{not json")
+        assert read_checkpoint_meta(corrupt) == {}
+        assert read_checkpoint_step(corrupt) == 0
+
+    def test_the_position_survives_the_atomic_rename(self, tmp_path: Path) -> None:
+        ckpt = tmp_path / "checkpoint"
+        write_checkpoint_atomically(lambda d: d.mkdir(parents=True), ckpt, 1,
+                                    extra={"records": 5})
+
+        def cut_mid_save(dest: Path) -> None:
+            dest.mkdir(parents=True)
+            raise RuntimeError("power cut")
+
+        with pytest.raises(RuntimeError):
+            write_checkpoint_atomically(cut_mid_save, ckpt, 2, extra={"records": 99})
+        # The half-written one is discarded; the complete one keeps its
+        # position, so the resume lands where the last good save was.
+        assert read_checkpoint_meta(ckpt) == {"step": 1, "records": 5}

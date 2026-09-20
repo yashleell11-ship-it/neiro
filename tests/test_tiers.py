@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from elizabeth.state import Locality, Tier
-from elizabeth.tools.tiers import Reach
 from elizabeth.tiers import FAILURES_TO_DEMOTE, SUCCESSES_TO_PROMOTE, TierResolver
+from elizabeth.tools.tiers import Reach
 
 
 class TestHysteresis:

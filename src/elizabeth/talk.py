@@ -334,9 +334,7 @@ class TalkLoop:
                 key = self.read_key()
                 if key == "q":
                     return 0
-                if key == " ":
-                    await self.toggle()
-                elif await self._heard_her_name():
+                if key == " " or await self._heard_her_name():
                     await self.toggle()
 
                 if self.capture.armed:

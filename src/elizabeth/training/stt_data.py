@@ -891,7 +891,10 @@ def ct2_convert_command(
 
 
 def write_checkpoint_atomically(
-    save_fn: Callable[[Path], None], checkpoint_dir: Path, step: int
+    save_fn: Callable[[Path], None],
+    checkpoint_dir: Path,
+    step: int,
+    extra: Mapping[str, object] | None = None,
 ) -> None:
     """Save to a temp directory, then rename over the live checkpoint.
 
@@ -906,12 +909,20 @@ def write_checkpoint_atomically(
     as source and destination share a filesystem — `checkpoint.tmp` and
     `checkpoint` are always siblings under the same `--out`, so that
     holds here without the caller having to think about it.
+
+    `extra` goes into `step.json` beside the step. It exists so a resume
+    can restore WHERE IN THE DATA the run was, not just how many
+    optimiser steps it had taken. Those are not the same thing, and
+    conflating them meant every restart re-walked the corpus from row
+    zero while the step counter carried on climbing — so a run that had
+    never once finished an epoch looked, in the log, exactly like one
+    making steady progress.
     """
     tmp_dir = checkpoint_dir.with_name(checkpoint_dir.name + ".tmp")
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
     save_fn(tmp_dir)
-    (tmp_dir / "step.json").write_text(json.dumps({"step": step}))
+    (tmp_dir / "step.json").write_text(json.dumps({"step": step, **dict(extra or {})}))
     if checkpoint_dir.exists():
         shutil.rmtree(checkpoint_dir)
     tmp_dir.rename(checkpoint_dir)
@@ -926,7 +937,22 @@ def read_checkpoint_step(checkpoint_dir: Path) -> int:
     just means resuming re-plays from the start of the optimiser
     schedule, which is safe, only wasteful.
     """
+    return int(read_checkpoint_meta(checkpoint_dir).get("step", 0))
+
+
+def read_checkpoint_meta(checkpoint_dir: Path) -> dict:
+    """Everything a checkpoint recorded about itself, or `{}`.
+
+    Separate from `read_checkpoint_step` so a checkpoint written before
+    this file carried anything but a step number still resumes — it just
+    resumes without a data position, which is the old behaviour and is
+    safe, only wasteful.
+    """
     meta = checkpoint_dir / "step.json"
     if not meta.exists():
-        return 0
-    return int(json.loads(meta.read_text())["step"])
+        return {}
+    try:
+        loaded = json.loads(meta.read_text())
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}

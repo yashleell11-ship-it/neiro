@@ -28,9 +28,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 try:
-    from elizabeth.llm.prompt import system_message  # noqa: E402
+    from elizabeth.llm.prompt import system_message
 except ModuleNotFoundError:  # pragma: no cover - the box still runs the pre-rename package
-    from neiro.llm.prompt import system_message  # type: ignore[no-redef]  # noqa: E402
+    from neiro.llm.prompt import system_message  # type: ignore[no-redef]
 
 DEFAULT_MODEL = REPO / "models" / "qwen3.5-4b-safetensors"
 DEFAULT_CHECKPOINT = REPO / "models" / "persona-lora-bilingual" / "checkpoint"

@@ -51,7 +51,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from elizabeth.config import Elizabeth, WakeConfig  # noqa: E402
+from elizabeth.config import Elizabeth, WakeConfig
 
 SAMPLE_RATE = 16000
 KOKORO_RATE = 24000
@@ -308,7 +308,7 @@ class Head(__import__("torch").nn.Module):
     """
 
     def __init__(self, n_in: int = 16 * 96, hidden: int = 128) -> None:
-        import torch.nn as nn
+        from torch import nn
 
         super().__init__()
         self.net = nn.Sequential(
@@ -494,7 +494,7 @@ def main() -> int:
                       input_names=["embeddings"], output_names=["score"], dynamo=False)
     (args.out / "report.json").write_text(json.dumps({
         "phrase": cfg.phrase,
-        "windows": int(len(X)),
+        "windows": len(X),
         "positive_windows": int(y.sum()),
         "held_out_hours": hours,
         "sweep": sweep,

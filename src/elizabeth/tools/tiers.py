@@ -79,7 +79,7 @@ class Reach(StrEnum):
     INTERNET = "internet"
     """Crosses onto the open internet — today only `web_search`."""
 
-    def allows(self, tier: "StateTier") -> bool:
+    def allows(self, tier: StateTier) -> bool:
         """May a tool with this reach run on `tier`?
 
         Mirrors `state.Locality.allows()` on purpose: the rule lives in

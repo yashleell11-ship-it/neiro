@@ -161,16 +161,26 @@ class SkipLog:
 # reading the prepared JSONL
 
 
-def iter_jsonl(path: str | Path) -> Iterator[dict[str, Any]]:
+def iter_jsonl(path: str | Path, skip: int = 0) -> Iterator[dict[str, Any]]:
     """One dict per non-blank line. Never loads the file into memory: this
     is the lazy read `scripts/prep_text.py`'s writer and this reader agree
     on, so 437k rows never sit in RAM as one list.
+
+    `skip` drops that many records before yielding, so an unshuffled run
+    can resume where it left off. It counts NON-BLANK lines, the same
+    thing the yields count — skipping raw lines instead would drift by
+    however many blanks the file happens to contain.
     """
+    seen = 0
     with Path(path).open(encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if line:
-                yield json.loads(line)
+            if not line:
+                continue
+            seen += 1
+            if seen <= skip:
+                continue
+            yield json.loads(line)
 
 
 def index_jsonl_lines(path: str | Path) -> list[int]:

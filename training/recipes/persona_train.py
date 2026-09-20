@@ -176,7 +176,10 @@ from elizabeth.training.llm_data import (
     parse_tool_call_arguments,
     render_and_mask,
 )
-from elizabeth.training.stt_data import read_checkpoint_step, write_checkpoint_atomically
+from elizabeth.training.stt_data import (
+    read_checkpoint_meta,
+    write_checkpoint_atomically,
+)
 
 MODEL_DIR = REPO / "models" / "qwen3.5-4b-safetensors"
 DATA_DIR = REPO / "data" / "prepared" / "text"
@@ -254,8 +257,20 @@ class PersonaStream(IterableDataset):
         self.seed = seed
         self.epoch = 0
         self._offsets: list[int] | None = None
+        # How far into THIS epoch's record order the run has read, and how
+        # far a resume should jump before reading anything. Records, not
+        # optimiser steps: rows get dropped (not publishable, bad tool
+        # args, nothing to score), so the two counts drift apart and only
+        # one of them can be used to find your place again.
+        self.consumed = 0
+        self.skip_records = 0
 
     def set_epoch(self, epoch: int) -> None:
+        if epoch != self.epoch:
+            # A resume position belongs to the epoch it was taken in. The
+            # order is reshuffled per epoch, so carrying an offset across
+            # one would skip an arbitrary slice of a different permutation.
+            self.skip_records = 0
         self.epoch = epoch
 
     def _record_stream(self):
@@ -264,14 +279,19 @@ class PersonaStream(IterableDataset):
                 self._offsets = index_jsonl_lines(self.path)
             order = list(self._offsets)
             random.Random(self.seed + self.epoch).shuffle(order)
-            return iter_jsonl_at_offsets(self.path, order)
-        return iter_jsonl(self.path)
+            # Skipping is a SLICE, not a loop that reads and discards: the
+            # order is already a list of byte offsets, so resuming 400,000
+            # records in costs nothing and touches no disk.
+            return iter_jsonl_at_offsets(self.path, order[self.skip_records:])
+        return iter_jsonl(self.path, skip=self.skip_records)
 
     def __iter__(self):
+        self.consumed = self.skip_records
         records = self._record_stream()
         if self.publishable_only:
             records = filter_publishable(records, self.per_source, self.log)
         for record in records:
+            self.consumed += 1
             messages = parse_tool_call_arguments(record["messages"], self.log)
             if messages is None:
                 continue
@@ -973,11 +993,39 @@ def main(argv: list[str] | None = None) -> int:
         # freshly-initialised weights with the saved ones rather than
         # stacking a second adapter on top of the first.
         model.load_adapter(str(checkpoint_dir), adapter_name="default", is_trainable=True)
-        resumed_step = read_checkpoint_step(checkpoint_dir)
+        meta = read_checkpoint_meta(checkpoint_dir)
+        resumed_step = int(meta.get("step", 0))
         print(
             f"resumed from {checkpoint_dir} at step {resumed_step} — optimiser and "
             "schedule restart fresh from here, cheaper than losing the run"
         )
+        # Restore the place in the DATA, not just the step count. Only when
+        # the order it was taken from is the order we are about to build:
+        # a different seed, a different epoch or a flipped --shuffle is a
+        # different permutation, and an offset into the wrong permutation
+        # skips an arbitrary slice of the corpus while looking correct.
+        records = int(meta.get("records", 0))
+        same_order = (
+            records > 0
+            and meta.get("seed") == args.seed
+            and meta.get("shuffle") == stream.shuffle
+            and int(meta.get("epoch", 0)) == 0
+        )
+        if same_order and args.workers == 0:
+            stream.skip_records = records
+            print(
+                f"  resuming {records} records into the epoch — without this the run "
+                "re-walks the corpus from row zero every restart, which is why the "
+                "box never once reached the end of one"
+            )
+        elif records and args.workers:
+            # With workers > 0 each worker holds its own copy of the stream
+            # and `consumed` counts only what this process saw, so the
+            # position is not the run's position. Say so instead of
+            # skipping the wrong amount.
+            print(f"  NOT resuming the data position: --workers {args.workers} shards the stream")
+        elif records:
+            print("  NOT resuming the data position: the record order would differ from the saved one")
 
     model.train()
     step, micro = resumed_step, 0
@@ -1039,7 +1087,21 @@ def main(argv: list[str] | None = None) -> int:
                     m.save_pretrained(str(dest))
                     tokenizer.save_pretrained(str(dest))
 
-                write_checkpoint_atomically(_save, checkpoint_dir, step)
+                # The data position travels WITH the weights. Recording the
+                # seed, the epoch and the shuffle flag alongside it is what
+                # lets the resume refuse the offset when the order it
+                # indexes no longer exists.
+                write_checkpoint_atomically(
+                    _save,
+                    checkpoint_dir,
+                    step,
+                    extra={
+                        "records": stream.consumed,
+                        "seed": args.seed,
+                        "epoch": epoch,
+                        "shuffle": stream.shuffle,
+                    },
+                )
                 print(f"  checkpointed at step {step} -> {checkpoint_dir}")
             if total_steps and step >= total_steps:
                 stop_reason = "max_steps"

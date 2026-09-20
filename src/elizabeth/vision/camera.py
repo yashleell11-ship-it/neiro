@@ -34,8 +34,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 from elizabeth.config import CameraConfig, Elizabeth
 
 # v4l2 control names this module touches. Named here rather than inline
@@ -104,7 +102,7 @@ def _describe_node(index: int) -> tuple[str, str]:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):  # noqa: BLE001
+    except (OSError, subprocess.SubprocessError):
         return "", ""
     card = ""
     for line in proc.stdout.splitlines():
@@ -163,7 +161,7 @@ def pin_dynamic_framerate_off(device_index: int) -> tuple[bool, str]:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+    except (OSError, subprocess.SubprocessError) as exc:
         return False, f"v4l2-ctl failed: {type(exc).__name__}"
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
