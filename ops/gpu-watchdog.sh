@@ -142,7 +142,12 @@ fi
 say "laneB  5070   free=${b_free:-?}MiB util=${b_util:-?}% $b_state"
 
 # --- lane A: the 3090 Ti, over tailscale OR the LAN ------------------------
-enc() { python3 -c "import base64,pathlib,sys;print(base64.b64encode(pathlib.Path(sys.argv[1]).read_text().encode('utf-16-le')).decode())" "$1"; }
+# Comments stripped, and a hard refusal rather than a truncation when a
+# script still will not fit. Writing a better comment in probe-3090.ps1 once
+# pushed the encoded command past cmd.exe's 8191-character limit and the box
+# answered "The command line is too long." -- which reached this script as an
+# empty probe and got logged as the machine being unreachable. See psenc.py.
+enc() { python3 "$OPS/psenc.py" "$1"; }
 
 # Two routes to the same machine, tried in order. On 2026-09-20 the box's
 # TAILSCALE link dropped while the machine itself stayed up and answered on
@@ -162,12 +167,20 @@ box_host() {
 }
 
 BOX=$(box_host) || BOX=""
+PROBE=$(enc "$OPS/probe-3090.ps1" 2>&1) || PROBE=""
+pc=""
 if [[ -z "$BOX" ]]; then
-    pc=""
+    : # no route; the message below says so
+elif [[ -z "$PROBE" || "$PROBE" == *psenc* ]]; then
+    # Distinguished from an unreachable box ON PURPOSE. These two produce
+    # an identical empty result and have nothing in common as a fix: one is
+    # a desktop that is off, the other is a script this repo broke.
+    say "laneA  CANNOT ENCODE probe-3090.ps1 -- $PROBE"
+    BOX=""
 else
     [[ "$BOX" == "box-lan" ]] && say "laneA  reachable on the LAN only -- tailscale is down on the box"
     pc=$(timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=30 "$BOX" \
-            "powershell -NoProfile -EncodedCommand $(enc "$OPS/probe-3090.ps1")" 2>/dev/null)
+            "powershell -NoProfile -EncodedCommand $PROBE" 2>/dev/null)
 fi
 a_free=$(grep -ao 'FREE=[0-9]*'  <<<"$pc" | head -1 | cut -d= -f2)
 a_util=$(grep -ao 'UTIL=[0-9]*'  <<<"$pc" | head -1 | cut -d= -f2)
@@ -177,7 +190,14 @@ a_procs=$(grep -ao 'PROCS=[0-9]*' <<<"$pc" | head -1 | cut -d= -f2)
 if [[ -z "$a_num" ]]; then
     # Unreachable, asleep, or the probe itself broke. Explicitly NOT a dead
     # trainer -- rule 1, the case that caused a spurious restart before.
-    say "laneA  3090Ti PROBE FAILED on both routes (tailscale AND LAN) -- desktop asleep, off, or ssh refused. No action"
+    if [[ -z "$BOX" ]]; then
+        say "laneA  3090Ti UNREACHABLE on both routes (tailscale AND LAN) -- desktop asleep, off, or ssh refused. No action"
+    else
+        # Connected, and the probe still came back empty. Saying "both routes
+        # failed" here was a lie the log told for one tick and it sent the
+        # diagnosis in exactly the wrong direction.
+        say "laneA  connected over $BOX but the probe returned NOTHING -- the probe is broken, not the network. No action"
+    fi
 elif (( a_num > 0 )); then
     flag=""; (( pause_a )) && flag=" (PAUSED but still running)"
     say "laneA  3090Ti free=${a_free:-?}MiB util=${a_util:-?}% alive runs=$a_num procs=${a_procs:-?}$flag"
@@ -198,7 +218,7 @@ elif may_restart laneA; then
     timeout 90 ssh -o BatchMode=yes "$BOX" "D:\\neiro-data\\box_next.bat" >/dev/null 2>&1
     sleep 20
     again=$(timeout 60 ssh -o BatchMode=yes "$BOX" \
-        "powershell -NoProfile -EncodedCommand $(enc "$OPS/probe-3090.ps1")" 2>/dev/null \
+        "powershell -NoProfile -EncodedCommand $PROBE" 2>/dev/null \
         | grep -ao 'RUNS=[0-9]*' | head -1 | cut -d= -f2)
     say "laneA  dispatcher run; runs now=${again:-unknown}"
 else

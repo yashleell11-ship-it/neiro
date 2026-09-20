@@ -32,7 +32,7 @@ case "$MODE" in
   *) echo "usage: $0 {shrink|restore|status}" >&2; exit 2 ;;
 esac
 
-enc() { python3 -c "import base64,pathlib,sys;print(base64.b64encode(pathlib.Path(sys.argv[1]).read_text().encode('utf-16-le')).decode())" "$1"; }
+enc() { python3 "$(dirname "$0")/psenc.py" "$1"; }
 runps() { timeout 60 ssh -o BatchMode=yes box "powershell -NoProfile -EncodedCommand $(enc "$1")" 2>/dev/null; }
 
 if [[ "$MODE" == status ]]; then
