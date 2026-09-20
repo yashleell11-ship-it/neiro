@@ -84,6 +84,19 @@ mapping` on a string. `parse_tool_call_arguments` does that parse
 before anything is rendered; a record whose arguments do not parse as
 JSON is dropped and counted rather than guessed at.
 
+Parsing is not enough, and assuming it was cost days. `"[5, 10, 15]"`
+and `"null"` are both perfectly valid JSON that parse to a list and to
+None -- neither is a mapping, so `|items` raises on them exactly as it
+does on a string. Seventeen such rows out of 171,843 tool calls in the
+English set (eleven lists, six nulls, all from
+glaive-function-calling-v2) were enough to kill the box's persona run
+roughly every six hours: the stream is shuffled with a seed that
+restarts with the process, so every resume walked into the same row at
+the same point and died there. The result was a training run that had
+never once reached the end of an epoch, with a step counter that kept
+climbing and made it look like progress. So the check is `isinstance(
+arguments, Mapping)`, not "did json.loads survive".
+
 **The labels are next-token-shifted, same as any causal LM loss.** The
 mask `apply_assistant_mask` builds lines up 1:1 with `input_ids`; the
 one-position shift between a hidden state and the token it predicts is
@@ -115,8 +128,9 @@ IGNORE_INDEX = -100
 # `elizabeth.training.stt_data.SkipLog` uses.
 SKIP_KINDS: tuple[str, ...] = (
     "not_publishable",  # source's weights_publishable is not "yes", --publishable-only
-    "bad_tool_args",  # tool_calls[].function.arguments did not parse as JSON
+    "bad_tool_args",  # arguments did not parse as JSON, or parsed to a non-mapping
     "no_assistant_tokens",  # after templating (and any truncation), nothing to score
+    "render_failed",  # the chat template itself raised on this record
 )
 
 
@@ -232,6 +246,14 @@ def parse_tool_call_arguments(
                     if log is not None:
                         log.skip("bad_tool_args")
                     return None
+            # Valid JSON is not the bar -- a MAPPING is. `"[5, 10, 15]"`
+            # and `"null"` both parse cleanly and both blow up the
+            # template's `|items`. See the module docstring for what
+            # seventeen of these cost.
+            if not isinstance(arguments, Mapping):
+                if log is not None:
+                    log.skip("bad_tool_args")
+                return None
             function["arguments"] = arguments
             new_calls.append({**call, "function": function})
         out.append({**message, "tool_calls": new_calls})

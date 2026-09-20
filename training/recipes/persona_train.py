@@ -275,9 +275,24 @@ class PersonaStream(IterableDataset):
             messages = parse_tool_call_arguments(record["messages"], self.log)
             if messages is None:
                 continue
-            example = render_and_mask(
-                self.tokenizer, messages, record.get("tools"), self.chat_template, self.max_length
-            )
+            try:
+                example = render_and_mask(
+                    self.tokenizer, messages, record.get("tools"),
+                    self.chat_template, self.max_length,
+                )
+            except Exception:  # noqa: BLE001 - see below
+                # ONE BAD RECORD MUST NOT KILL A THIRTY-HOUR RUN. The
+                # chat template is a Jinja program written by someone
+                # else and run against 245,638 rows from seven corpora;
+                # `arguments` being a list instead of a mapping was the
+                # first way it raised, and assuming it was the only way
+                # is what made the first one so expensive. Seventeen
+                # rows killed the box's persona run every six hours for
+                # days, and because the data stream restarts from the
+                # top on every resume while the step counter carries on
+                # climbing, it looked like progress the whole time.
+                self.log.skip("render_failed")
+                continue
             if example is None:
                 self.log.skip("no_assistant_tokens")
                 continue

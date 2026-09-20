@@ -30,6 +30,7 @@ import pytest
 from elizabeth.evals.latency import percentile
 from elizabeth.training.llm_data import (
     IGNORE_INDEX,
+    SKIP_KINDS,
     SkipLog,
     ToolCallCheck,
     apply_assistant_mask,
@@ -462,3 +463,73 @@ class TestGgufConvertCommands:
     def test_quant_type_defaults_to_q4_k_m(self) -> None:
         _convert, quantize = gguf_convert_commands("m", "f16.gguf", "out.gguf")
         assert quantize[-1] == "Q4_K_M"
+
+
+class TestToolArgumentsMustBeAMapping:
+    """The seventeen rows that stopped the box, as a test.
+
+    `parse_tool_call_arguments` used to ask only whether the arguments
+    string was valid JSON. `"[5, 10, 15, 20, 25]"` and `"null"` both
+    are — and both parse to something Qwen3.5's chat template cannot
+    take `|items` of, so both raise `TypeError: Can only get item pairs
+    from a mapping` and kill the process.
+
+    Seventeen such tool calls out of 171,843 in the English set (eleven
+    lists, six nulls, all glaive-function-calling-v2) ended the box's
+    persona run roughly every six hours for days. The stream is shuffled
+    with a seed that restarts with the process, so every resume walked
+    into the same row at the same distance in and died there — 1,300
+    steps each time, three times running, which is what gave it away.
+    The step counter carried on climbing across those restarts, so it
+    read as progress the whole time.
+
+    Both payloads below are verbatim from `data/prepared/text/train.jsonl`.
+    """
+
+    def _call(self, arguments: str) -> list[dict]:
+        return [{
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_0", "type": "function",
+                            "function": {"name": "f", "arguments": arguments}}],
+        }]
+
+    def test_a_json_list_is_refused_not_passed_to_the_template(self) -> None:
+        log = SkipLog()
+        assert parse_tool_call_arguments(self._call("[5, 10, 15, 20, 25]"), log) is None
+        assert log.counts["bad_tool_args"] == 1
+
+    def test_a_json_null_is_refused(self) -> None:
+        log = SkipLog()
+        assert parse_tool_call_arguments(self._call("null"), log) is None
+        assert log.counts["bad_tool_args"] == 1
+
+    def test_a_bare_json_string_is_refused(self) -> None:
+        # Not in this corpus, but the same class: valid JSON, not a
+        # mapping. The check is on the TYPE, not on whether parsing threw.
+        assert parse_tool_call_arguments(self._call('"just a string"')) is None
+
+    def test_an_ordinary_mapping_still_passes(self) -> None:
+        out = parse_tool_call_arguments(self._call('{"country": "United States"}'))
+        assert out is not None
+        assert out[0]["tool_calls"][0]["function"]["arguments"] == {"country": "United States"}
+
+    def test_an_already_parsed_mapping_passes(self) -> None:
+        messages = [{
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"function": {"name": "f", "arguments": {"a": 1}}}],
+        }]
+        out = parse_tool_call_arguments(messages)
+        assert out is not None
+        assert out[0]["tool_calls"][0]["function"]["arguments"] == {"a": 1}
+
+    def test_render_failed_is_a_countable_skip_reason(self) -> None:
+        # The other half of the fix: the trainer catches whatever the
+        # template raises and counts it. "arguments was a list" was the
+        # FIRST way a Jinja program written by someone else blew up on
+        # 245,638 rows from seven corpora, not the only way it can.
+        assert "render_failed" in SKIP_KINDS
+        log = SkipLog()
+        log.skip("render_failed")
+        assert log.counts["render_failed"] == 1
